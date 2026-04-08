@@ -1,0 +1,25 @@
+<script>
+  document.addEventListener('keydown', e => {
+    if (e.key === 'F2') { e.preventDefault(); window.location.href = '/pdv'; }
+    if (e.key === 'F3') { e.preventDefault(); window.location.href = '/stock'; }
+    if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+  });
+
+  
+  const globalSearchEl = document.getElementById('globalSearch');
+  if (globalSearchEl) {
+    globalSearchEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.value.trim()) {
+        const val = e.target.value.toLowerCase();
+        const { products, clients } = window.appData;
+        const prods = products.filter(p => p.name.toLowerCase().includes(val));
+        if (prods.length > 0) {
+          showToast(`Encontrado "${prods[0].name}"`, 'info');
+        } else {
+          const clis = clients.filter(c => c.name.toLowerCase().includes(val));
+          if (clis.length > 0) showToast(`Encontrado "${clis[0].name}"`, 'info');
+        }
+      }
+    });
+  }
+</script>

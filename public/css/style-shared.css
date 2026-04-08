@@ -1,0 +1,143 @@
+.search-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    transition: all var(--transition);
+}
+
+.search-bar:focus-within {
+    border-color: var(--gold2);
+    box-shadow: 0 0 0 3px var(--gold-glow);
+}
+
+.search-bar input {
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.85rem;
+    flex: 1;
+}
+
+.search-bar input::placeholder {
+    color: var(--text3);
+}
+
+.filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.filter-btn {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-family: inherit;
+    transition: all var(--transition);
+}
+
+.filter-btn:hover {
+    border-color: var(--border2);
+    color: var(--text);
+}
+
+.filter-btn.active {
+    background: var(--gold-glow);
+    border-color: rgba(240, 192, 64, 0.4);
+    color: var(--gold);
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text3);
+}
+
+.empty-state .empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 12px;
+}
+
+.empty-state p {
+    font-size: 0.9rem;
+}
+
+.progress-bar {
+    height: 6px;
+    background: var(--bg3);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.editable-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.editable-input {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    color: var(--text);
+    font-family: "Inter", sans-serif;
+    font-size: 0.8rem;
+    outline: none;
+    width: 90px;
+    transition: border-color var(--transition);
+}
+
+.editable-input:focus {
+    border-color: var(--gold2);
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.detail-item {
+    background: var(--bg3);
+    border-radius: 10px;
+    padding: 14px 16px;
+}
+
+.detail-item-label {
+    font-size: 0.7rem;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.detail-item-value {
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.shimmer {
+    background: linear-gradient(90deg, var(--bg3) 25%, var(--border) 50%, var(--bg3) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite;
+    border-radius: 6px;
+}

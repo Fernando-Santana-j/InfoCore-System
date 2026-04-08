@@ -1,0 +1,194 @@
+.pdv-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 20px;
+    height: calc(100vh - 140px);
+}
+
+.pdv-products {
+    overflow-y: auto;
+}
+
+.pdv-products-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.pdv-product-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 12px;
+    cursor: pointer;
+    transition: all var(--transition);
+    text-align: center;
+}
+
+.pdv-product-card:hover {
+    border-color: var(--gold2);
+    background: var(--gold-glow);
+    transform: translateY(-2px);
+}
+
+.pdv-product-card .prod-emoji {
+    font-size: 2rem;
+    margin-bottom: 6px;
+}
+
+.pdv-product-card .prod-name {
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.pdv-product-card .prod-price {
+    font-size: 0.9rem;
+    font-weight: 800;
+    color: var(--gold);
+    font-family: "Inter", sans-serif;
+}
+
+.cart-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.cart-header {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.cart-title {
+    font-size: 1rem;
+    font-weight: 800;
+}
+
+.cart-items {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cart-item {
+    background: var(--bg3);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: slideIn 0.2s ease;
+}
+
+.cart-item-name {
+    flex: 1;
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.cart-item-qty {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.qty-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: var(--border);
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--transition);
+}
+
+.qty-btn:hover {
+    background: var(--gold-glow);
+    color: var(--gold);
+}
+
+.qty-num {
+    font-family: "Inter", sans-serif;
+    font-size: 0.85rem;
+    min-width: 20px;
+    text-align: center;
+}
+
+.cart-item-price {
+    font-family: "Inter", sans-serif;
+    font-size: 0.85rem;
+    color: var(--gold);
+    min-width: 72px;
+    text-align: right;
+}
+
+.cart-item-remove {
+    color: var(--text3);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: color var(--transition);
+}
+
+.cart-item-remove:hover {
+    color: var(--red);
+}
+
+.cart-footer {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cart-totals {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cart-total-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: var(--text2);
+}
+
+.cart-total-row.grand {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--text);
+}
+
+.cart-total-row.grand .val {
+    color: var(--gold);
+    font-family: "Inter", sans-serif;
+}
+
+@media (max-width: 1024px) {
+    .pdv-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .cart-panel {
+        max-height: 300px;
+    }
+}
+
+@media (max-width: 768px) {
+    .pdv-products-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    }
+}

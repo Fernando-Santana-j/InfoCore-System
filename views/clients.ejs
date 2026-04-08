@@ -1,0 +1,66 @@
+<div class="page" id="page-clientes">
+  <div class="flex flex-wrap gap-12 mb-16">
+    <div class="search-bar" style="flex:1;max-width:360px">
+      <span>🔍</span>
+      <input type="text" placeholder="Pesquisar cliente..." id="clientSearch" oninput="filterClients(this.value)">
+    </div>
+    <button class="btn btn-primary" onclick="openModal('addClient')">✨ Novo Cliente</button>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Base de Clientes</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Nome</th>
+            <th>CPF/CNPJ</th>
+            <th>Telefone</th>
+            <th>Email</th>
+            <th>Compras</th>
+            <th>Total Gasto</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody id="clientsTable"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-addClient">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">+ Adicionar Cliente</div>
+      <button class="modal-close" onclick="closeModal('addClient')">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">Nome Completo</label>
+        <input class="form-input" id="newClientName" placeholder="João da Silva">
+      </div>
+      <div class="form-group">
+        <label class="form-label">CPF / CNPJ</label>
+        <input class="form-input mono" id="newClientDoc" placeholder="000.000.000-00">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Telefone</label>
+        <input class="form-input" id="newClientPhone" placeholder="(11) 99999-9999">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input class="form-input" id="newClientEmail" placeholder="email@exemplo.com">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">Endereço</label>
+        <input class="form-input" id="newClientAddr" placeholder="Rua, número, cidade...">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('addClient')">Cancelar</button>
+      <button class="btn btn-primary" onclick="addClient()">✅ Cadastrar Cliente</button>
+    </div>
+  </div>
+</div>

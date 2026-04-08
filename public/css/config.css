@@ -1,0 +1,86 @@
+
+.config-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.config-section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.config-button-group {
+    display: flex;
+    gap: 8px;
+}
+
+.config-button-group .btn {
+    flex: 1;
+}
+
+.config-info-box {
+    background: var(--bg3);
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 0.78rem;
+    color: var(--text2);
+}
+
+.config-info-box .font-bold {
+    color: var(--text);
+    margin-bottom: 6px;
+    display: block;
+}
+
+.config-info-box code {
+    display: block;
+    background: var(--bg);
+    padding: 2px 4px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-family: "Inter", monospace;
+    color: var(--text3);
+    line-height: 1.6;
+}
+
+.config-label-info {
+    font-size: 0.7rem;
+    color: var(--text3);
+    margin-top: 2px;
+}
+
+.config-test-result {
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    margin-top: 8px;
+}
+
+.config-test-result.success {
+    background: rgba(61, 220, 132, 0.15);
+    color: var(--green);
+}
+
+.config-test-result.error {
+    background: rgba(255, 90, 90, 0.15);
+    color: var(--red);
+}
+
+/* ====== RESPONSIVE ====== */
+@media (max-width: 1024px) {
+    .config-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .config-section {
+        gap: 12px;
+    }
+
+    .config-button-group {
+        flex-direction: column;
+    }
+}

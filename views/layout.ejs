@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <%- include('reusable/head') %>
+  <link rel="stylesheet" href="/public/css/<%= body %>.css">
+</head>
+<body>
+<div class="app">
+  
+  <%- include('reusable/sidebar') %>
+
+ 
+  <main class="main">
+    <%- include('reusable/topbar') %>
+
+    <div class="content" id="content">
+      <%- include(`./${body}`) %>
+    </div>
+  </main>
+</div>
+
+
+<div class="toast-container" id="toastContainer"></div>
+
+
+<script src="/js/shared.js"></script>
+
+
+<script src="/js/<%= body %>.js"></script>
+
+
+<%- include('reusable/script') %>
+</body>
+</html>

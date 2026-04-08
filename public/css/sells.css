@@ -1,0 +1,56 @@
+.sales-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+}
+
+.sales-summary-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}
+
+.sales-summary-card .stat-icon {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+}
+
+.sales-summary-card .value {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--gold);
+    font-family: "Inter", sans-serif;
+    margin-bottom: 4px;
+}
+
+.sales-summary-card .label {
+    font-size: 0.75rem;
+    color: var(--text2);
+    font-weight: 600;
+}
+
+.sales-table-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+}
+
+.sales-table-actions .btn {
+    padding: 4px 8px;
+    font-size: 0.7rem;
+}
+
+.sale-total-row td {
+    font-weight: 700;
+    border-top: 2px solid var(--border2);
+    color: var(--gold);
+}
+
+@media (max-width: 768px) {
+    .sales-summary {
+        grid-template-columns: 1fr;
+    }
+}

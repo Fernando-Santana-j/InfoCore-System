@@ -1,0 +1,158 @@
+<div class="page" id="page-estoque">
+  <div class="flex flex-between flex-wrap gap-12 mb-16">
+    <div class="search-bar" style="flex:1;max-width:380px;">
+      <span>🔍</span>
+      <input type="text" placeholder="Pesquisar produto, SKU, categoria..." id="stockSearch" oninput="filterStock(this.value)">
+    </div>
+    <div class="filter-bar">
+      <button class="filter-btn active" onclick="setStockFilter('todos',this)">Todos</button>
+      <button class="filter-btn" onclick="setStockFilter('baixo',this)">⚠️ Crítico</button>
+      <button class="filter-btn" onclick="setStockFilter('normal',this)">✅ Normal</button>
+      <button class="filter-btn" onclick="setStockFilter('alto',this)">📦 Abundante</button>
+    </div>
+    <button class="btn btn-primary" onclick="openModal('addProduct')">✨ Novo Produto</button>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Controle de Estoque</div>
+        <div class="card-subtitle" id="stockCount">Carregando...</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="exportData('estoque')">📥 Exportar</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Produto</th>
+            <th>Categoria</th>
+            <th>Qtd. Atual</th>
+            <th>Mín.</th>
+            <th>Preço Custo</th>
+            <th>Preço Venda</th>
+            <th>Status</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody id="stockTable"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-addProduct">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">+ Adicionar Produto</div>
+      <button class="modal-close" onclick="closeModal('addProduct')">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">SKU</label>
+        <input class="form-input mono" id="newSku" placeholder="SKU-001">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome do Produto</label>
+        <input class="form-input" id="newName" placeholder="Ex: Coca-Cola 2L">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Categoria</label>
+        <select class="form-select" id="newCategory">
+          <option>Alimentos</option>
+          <option>Bebidas</option>
+          <option>Limpeza</option>
+          <option>Eletrônicos</option>
+          <option>Papelaria</option>
+          <option>Higiene</option>
+          <option>Outros</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Emoji / Ícone</label>
+        <input class="form-input" id="newEmoji" placeholder="🍺" maxlength="2">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Preço de Custo (R$)</label>
+        <input class="form-input mono" id="newCost" type="number" step="0.01" placeholder="0,00">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Preço de Venda (R$)</label>
+        <input class="form-input mono" id="newPrice" type="number" step="0.01" placeholder="0,00">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Quantidade Inicial</label>
+        <input class="form-input mono" id="newQty" type="number" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Estoque Mínimo</label>
+        <input class="form-input mono" id="newMin" type="number" placeholder="10">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">Descrição</label>
+        <textarea class="form-textarea" id="newDesc" placeholder="Descrição do produto..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('addProduct')">Cancelar</button>
+      <button class="btn btn-primary" onclick="addProduct()">✅ Adicionar Produto</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-editProduct">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">✏️ Editar Produto</div>
+      <button class="modal-close" onclick="closeModal('editProduct')">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">SKU</label>
+        <input class="form-input mono" id="editSku" readonly style="opacity:0.5">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome do Produto</label>
+        <input class="form-input" id="editName">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Categoria</label>
+        <select class="form-select" id="editCategory">
+          <option>Alimentos</option>
+          <option>Bebidas</option>
+          <option>Limpeza</option>
+          <option>Eletrônicos</option>
+          <option>Papelaria</option>
+          <option>Higiene</option>
+          <option>Outros</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Emoji</label>
+        <input class="form-input" id="editEmoji" maxlength="2">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Preço Custo (R$)</label>
+        <input class="form-input mono" id="editCost" type="number" step="0.01">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Preço Venda (R$)</label>
+        <input class="form-input mono" id="editPrice" type="number" step="0.01">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Qtd. Atual</label>
+        <input class="form-input mono" id="editQty" type="number">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Estoque Mínimo</label>
+        <input class="form-input mono" id="editMin" type="number">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="deleteProductModal()">🗑️ Excluir</button>
+      <button class="btn btn-ghost" onclick="closeModal('editProduct')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveEditProduct()">💾 Salvar Alterações</button>
+    </div>
+  </div>
+</div>

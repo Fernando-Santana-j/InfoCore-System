@@ -1,0 +1,12 @@
+<header class="topbar">
+      <div class="topbar-title" id="topbarTitle">Dashboard <span>↗</span></div>
+      <div class="topbar-search">
+        <span class="search-icon">🔍</span>
+        <input type="text" placeholder="Pesquisa rápida..." id="globalSearch" oninput="globalSearchHandler(this.value)">
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" title="Notificações" onclick="showToast('2 alertas de estoque baixo', 'error')">🔔</button>
+        <button class="icon-btn" title="Exportar" onclick="showToast('Exportando dados...', 'info')">📤</button>
+        <button class="icon-btn" title="Sincronizar Backend" onclick="syncBackend()">🔄</button>
+      </div>
+    </header>

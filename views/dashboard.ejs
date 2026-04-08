@@ -1,0 +1,111 @@
+<div class="page active" id="page-dashboard">
+  <div class="stats-grid">
+    <div class="stat-card gold fade-in">
+      <div class="stat-icon">💰</div>
+      <div class="stat-value mono" id="statTotal">R$ 0</div>
+      <div class="stat-label">Vendas do dia</div>
+      <div class="stat-change up" id="statTotalChange">▲ 0% vs ontem</div>
+    </div>
+    <div class="stat-card green fade-in">
+      <div class="stat-icon">🧾</div>
+      <div class="stat-value" id="statSales">0</div>
+      <div class="stat-label">Transações</div>
+      <div class="stat-change up" id="statSalesChange">▲ 0</div>
+    </div>
+    <div class="stat-card blue fade-in">
+      <div class="stat-icon">📦</div>
+      <div class="stat-value" id="statStock">0</div>
+      <div class="stat-label">Itens em estoque</div>
+      <div class="stat-change down" id="statStockChange">▼ 0</div>
+    </div>
+    <div class="stat-card red fade-in">
+      <div class="stat-icon">👥</div>
+      <div class="stat-value" id="statClients">0</div>
+      <div class="stat-label">Clientes</div>
+      <div class="stat-change up" id="statClientsChange">▲ 0</div>
+    </div>
+  </div>
+
+  <div class="alert-banner" id="alertLowStock" style="display: none;">
+    <div class="alert-banner-icon">⚠️</div>
+    <div class="alert-banner-text">
+      <span id="lowStockCount">0 produtos</span> estão com estoque abaixo do mínimo. Verifique com urgência.
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="navigate('/stock')">Ver Estoque →</button>
+  </div>
+
+  <div class="grid-dashboard">
+    <div class="card fade-in">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📈 Vendas — Últimos 7 dias</div>
+          <div class="card-subtitle">Receita bruta diária com crescimento</div>
+        </div>
+      </div>
+      <div class="chart-bars" id="weekChart"></div>
+      <div class="chart-bars-labels" id="weekLabels"></div>
+      <div class="flex gap-10 mt-12">
+        <div class="detail-item" style="flex: 1;">
+          <div class="detail-item-label">Maior venda</div>
+          <div class="detail-item-value" id="maxSaleValue">R$ 0</div>
+        </div>
+        <div class="detail-item" style="flex: 1;">
+          <div class="detail-item-label">Média diária</div>
+          <div class="detail-item-value" id="avgSaleValue">R$ 0</div>
+        </div>
+        <div class="detail-item" style="flex: 1;">
+          <div class="detail-item-label">Total 7 dias</div>
+          <div class="detail-item-value" id="totalPeriodValue">R$ 0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card fade-in">
+      <div class="card-header">
+        <div>
+          <div class="card-title">⭐ Top Categorias</div>
+          <div class="card-subtitle">Por volume de vendas</div>
+        </div>
+      </div>
+      <div id="topCategories" class="flex-col gap-14"></div>
+    </div>
+  </div>
+
+  <div class="card fade-in">
+    <div class="card-header">
+      <div>
+        <div class="card-title">💳 Métodos de Pagamento</div>
+        <div class="card-subtitle">Distribuição por tipo de pagamento</div>
+      </div>
+    </div>
+    <div class="payment-grid" id="paymentMethods"></div>
+  </div>
+
+  <div class="card fade-in">
+    <div class="card-header">
+      <div>
+        <div class="card-title">📋 Últimas Transações</div>
+        <div class="card-subtitle">Histórico recente de vendas</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="navigate('/pdv')">
+        ➕ Nova Venda
+      </button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#ID</th>
+            <th>Cliente</th>
+            <th>Itens</th>
+            <th>Total</th>
+            <th>Pagamento</th>
+            <th>Horário</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="recentSales"></tbody>
+      </table>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,10 @@
+.product-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.product-actions .btn {
+    padding: 4px 8px;
+    font-size: 0.7rem;
+}

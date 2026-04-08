@@ -1,0 +1,51 @@
+<div class="page" id="page-pdv">
+  <div class="pdv-layout">
+    <div class="pdv-products">
+      <div class="flex gap-12 mb-16">
+        <div class="search-bar" style="flex:1">
+          <span>🔍</span>
+          <input type="text" placeholder="Buscar produto..." id="pdvSearch" oninput="filterPDV(this.value)">
+        </div>
+        <div class="filter-bar">
+          <button class="filter-btn active" onclick="setPDVFilter('todos',this)">Todos</button>
+          <button class="filter-btn" onclick="setPDVFilter('Alimentos',this)">🍔</button>
+          <button class="filter-btn" onclick="setPDVFilter('Bebidas',this)">🥤</button>
+          <button class="filter-btn" onclick="setPDVFilter('Eletrônicos',this)">💻</button>
+          <button class="filter-btn" onclick="setPDVFilter('Limpeza',this)">🧹</button>
+        </div>
+      </div>
+      <div class="pdv-products-grid" id="pdvGrid"></div>
+    </div>
+
+    <div class="cart-panel">
+      <div class="cart-header">
+        <div class="cart-title">🛒 Carrinho</div>
+        <div class="text-xs text-muted mt-4" id="cartCount">0 itens</div>
+      </div>
+      <div class="cart-items" id="cartItems">
+        <div class="empty-state" id="cartEmpty">
+          <div class="empty-icon">🛍️</div>
+          <p>Nenhum item adicionado</p>
+        </div>
+      </div>
+      <div class="cart-footer">
+        <div class="cart-totals">
+          <div class="cart-total-row"><span>Subtotal</span><span class="val mono" id="cartSubtotal">R$ 0,00</span></div>
+          <div class="cart-total-row"><span>Desconto</span><span class="val mono text-green" id="cartDiscount">- R$ 0,00</span></div>
+          <div class="divider"></div>
+          <div class="cart-total-row grand"><span>Total</span><span class="val" id="cartTotal">R$ 0,00</span></div>
+        </div>
+        <div class="flex gap-8">
+          <select class="form-select" id="paymentMethod" style="flex:1">
+            <option value="dinheiro">💵 Dinheiro</option>
+            <option value="cartao_credito">💳 Crédito</option>
+            <option value="cartao_debito">💳 Débito</option>
+            <option value="pix">⚡ Pix</option>
+          </select>
+        </div>
+        <button class="btn btn-primary w-full" style="justify-content:center;" onclick="finalizarVenda()">✅ Finalizar Venda</button>
+        <button class="btn btn-ghost btn-sm w-full" style="justify-content:center;" onclick="clearCart()">🗑️ Limpar</button>
+      </div>
+    </div>
+  </div>
+</div>

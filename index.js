@@ -6,6 +6,7 @@ const session = require('express-session')
 const path = require('path');
 const multer = require('multer')
 const cookieParser = require("cookie-parser");
+const mercadopago = require('mercadopago');
 // const config = require('./config/config.json');
 
 //TODO------------Configs--------------
@@ -56,17 +57,66 @@ const upload = multer({ storage });
 
 
 
+
+
+
+
+
 //TODO------------WEB PAGE--------------
 
 app.get('/', (req, res) => {
-    res.render('index');
+    res.render('layout', { body: 'dashboard' });
 });
 
+app.get('/dashboard', (req, res) => {
+    res.render('layout', { body: 'dashboard' });
+});
 
-app.listen(3131, () => {
+app.get('/pdv', (req, res) => {
+    res.render('layout', { body: 'pdv' });
+});
+
+app.get('/stock', (req, res) => {
+    res.render('layout', { body: 'stock' });
+});
+
+app.get('/sells', (req, res) => {
+    res.render('layout', { body: 'sells' });
+});
+
+app.get('/products', (req, res) => {
+    res.render('layout', { body: 'products' });
+});
+
+app.get('/clients', (req, res) => {
+    res.render('layout', { body: 'clients' });
+});
+
+app.get('/analytics', (req, res) => {
+    res.render('layout', { body: 'analytics' });
+});
+
+app.get('/config', (req, res) => {
+    res.render('layout', { body: 'config' });
+});
+
+let port = process.env.PORT || 3131;
+app.listen(port, () => {
     const dataHora = new Date();
     const formatado = d => ('0' + d).slice(-2);
     const dataHoraFormatada = `${formatado(dataHora.getDate())}/${formatado(dataHora.getMonth() + 1)}/${dataHora.getFullYear()} ${formatado(dataHora.getHours())}:${formatado(dataHora.getMinutes())}:${formatado(dataHora.getSeconds())}`;
-    console.log(`${dataHoraFormatada} [WEB-SYSTEM] Servidor rodando na porta 3131`);
+    console.log(`
+  ╔══════════════════════════════════════════╗
+  ║    InfoCore System - Servidor Rodando    ║
+  ╚══════════════════════════════════════════╝
+  
+  🌐 Local: http://localhost:${port}
+  
+  🕒 Iniciado em: ${dataHoraFormatada}
+  
+  
+  ⚡ Pressione Ctrl+C para parar o servidor
+  
+  `);
 });
 

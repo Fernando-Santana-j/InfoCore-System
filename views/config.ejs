@@ -1,0 +1,99 @@
+<div class="page" id="page-configuracoes">
+  <div class="grid-2 gap-20">
+    <div class="card">
+      <div class="card-header"><div class="card-title">🏪 Dados da Loja</div></div>
+      <div class="flex-col gap-14">
+        <div class="form-group">
+          <label class="form-label">Nome da Loja</label>
+          <input class="form-input" value="StoreOS - Minha Loja">
+        </div>
+        <div class="form-group">
+          <label class="form-label">CNPJ</label>
+          <input class="form-input mono" value="00.000.000/0001-00">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Endereço</label>
+          <input class="form-input" value="Rua Exemplo, 123 - São Paulo/SP">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Telefone</label>
+          <input class="form-input" value="(11) 99999-9999">
+        </div>
+        <button class="btn btn-primary btn-sm w-full" onclick="showToast('Dados salvos com sucesso!','success')">💾 Salvar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">🔗 Integração Backend</div></div>
+      <div class="flex-col gap-14">
+        <div class="form-group">
+          <label class="form-label">URL da API</label>
+          <input class="form-input mono" value="https://api.sualoja.com/v1" id="apiUrl">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Chave de API</label>
+          <input class="form-input mono" type="password" value="sk-xxxxxxxxxxxxxxxxxxxx" id="apiKey">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Intervalo de Sync (seg)</label>
+          <input class="form-input" type="number" value="30">
+        </div>
+        <div class="flex gap-8">
+          <button class="btn btn-ghost btn-sm flex-1" onclick="testConnection()">🔌 Testar</button>
+          <button class="btn btn-primary btn-sm flex-1" onclick="showToast('Config. salva!','success')">💾 Salvar</button>
+        </div>
+        <div style="background:var(--bg3);border-radius:10px;padding:14px;font-size:0.78rem;color:var(--text2);">
+          <div class="font-bold text-muted mb-6">Endpoints disponíveis:</div>
+          <div class="mono flex-col gap-4" style="color:var(--text3)">
+            <span><span style="color:var(--green)">GET</span>  /products</span>
+            <span><span style="color:var(--blue)">POST</span> /products</span>
+            <span><span style="color:var(--green)">GET</span>  /sales</span>
+            <span><span style="color:var(--blue)">POST</span> /sales</span>
+            <span><span style="color:var(--green)">GET</span>  /stock</span>
+            <span><span style="color:var(--blue)">PUT</span>  /stock/:id</span>
+            <span><span style="color:var(--green)">GET</span>  /clients</span>
+            <span><span style="color:var(--blue)">POST</span> /clients</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">🎨 Preferências</div></div>
+      <div class="flex-col gap-14">
+        <div class="form-group">
+          <label class="form-label">Moeda</label>
+          <select class="form-select"><option>BRL — Real Brasileiro</option><option>USD — Dólar</option></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Estoque mínimo padrão</label>
+          <input class="form-input" type="number" value="10">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Desconto máximo permitido (%)</label>
+          <input class="form-input" type="number" value="20">
+        </div>
+        <button class="btn btn-primary btn-sm w-full" onclick="showToast('Preferências salvas!','success')">💾 Salvar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><div class="card-title">🔐 Segurança</div></div>
+      <div class="flex-col gap-14">
+        <div class="form-group">
+          <label class="form-label">Senha Atual</label>
+          <input class="form-input" type="password" placeholder="••••••••">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nova Senha</label>
+          <input class="form-input" type="password" placeholder="••••••••">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirmar Nova Senha</label>
+          <input class="form-input" type="password" placeholder="••••••••">
+        </div>
+        <button class="btn btn-primary btn-sm w-full" onclick="showToast('Senha alterada com sucesso!','success')">🔒 Alterar</button>
+      </div>
+    </div>
+  </div>
+</div>
