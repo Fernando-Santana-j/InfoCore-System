@@ -8,10 +8,10 @@
         </div>
         <div class="filter-bar">
           <button class="filter-btn active" onclick="setPDVFilter('todos',this)">Todos</button>
-          <button class="filter-btn" onclick="setPDVFilter('Alimentos',this)">🍔</button>
-          <button class="filter-btn" onclick="setPDVFilter('Bebidas',this)">🥤</button>
-          <button class="filter-btn" onclick="setPDVFilter('Eletrônicos',this)">💻</button>
-          <button class="filter-btn" onclick="setPDVFilter('Limpeza',this)">🧹</button>
+          <button class="filter-btn" onclick="setPDVFilter('cell',this)">📱</button>
+          <button class="filter-btn" onclick="setPDVFilter('laptop',this)">💻</button>
+          <button class="filter-btn" onclick="setPDVFilter('pc',this)">🖥️</button>
+          <button class="filter-btn" onclick="setPDVFilter('others',this)">📦</button>
         </div>
       </div>
       <div class="pdv-products-grid" id="pdvGrid"></div>
@@ -32,20 +32,69 @@
         <div class="cart-totals">
           <div class="cart-total-row"><span>Subtotal</span><span class="val mono" id="cartSubtotal">R$ 0,00</span></div>
           <div class="cart-total-row"><span>Desconto</span><span class="val mono text-green" id="cartDiscount">- R$ 0,00</span></div>
+          <div class="cart-total-row"><span>Acréscimo</span><span class="val mono text-red" id="cartExtra">+ R$ 0,00</span></div>
           <div class="divider"></div>
           <div class="cart-total-row grand"><span>Total</span><span class="val" id="cartTotal">R$ 0,00</span></div>
         </div>
-        <div class="flex gap-8">
-          <select class="form-select" id="paymentMethod" style="flex:1">
-            <option value="dinheiro">💵 Dinheiro</option>
-            <option value="cartao_credito">💳 Crédito</option>
-            <option value="cartao_debito">💳 Débito</option>
-            <option value="pix">⚡ Pix</option>
-          </select>
+        <div class="payment-methods" id="paymentMethodsButtons"></div>
+        <div class="cart-adjust-actions">
+          <button class="btn btn-ghost btn-sm" type="button" id="btnOpenDiscountModal">Desconto</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="btnOpenExtraModal">Acréscimo</button>
         </div>
         <button class="btn btn-primary w-full" style="justify-content:center;" onclick="finalizarVenda()">✅ Finalizar Venda</button>
         <button class="btn btn-ghost btn-sm w-full" style="justify-content:center;" onclick="clearCart()">🗑️ Limpar</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="cartAdjustmentModal">
+  <div class="pdv-modal-card pdv-adjustment-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title" id="cartAdjustmentTitle">Ajustar valor</div>
+      <button class="pdv-modal-close" id="closeCartAdjustmentModalBtn">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <p class="text-sm text-muted" id="cartAdjustmentHint">Escolha o tipo e o valor.</p>
+      <div class="adjustment-type-group">
+        <label class="adjustment-type-option">
+          <input type="radio" name="adjustmentType" value="fixed" checked>
+          <span>Valor fixo (R$)</span>
+        </label>
+        <label class="adjustment-type-option">
+          <input type="radio" name="adjustmentType" value="percent">
+          <span>Porcentagem (%)</span>
+        </label>
+      </div>
+      <div class="adjustment-quick-values" id="cartAdjustmentQuickValues"></div>
+      <input class="form-input" id="cartAdjustmentValue" type="number" min="0" step="0.01" placeholder="0,00">
+    </div>
+    <div class="pdv-modal-footer">
+      <button class="btn btn-ghost btn-sm" id="cancelCartAdjustmentBtn">Cancelar</button>
+      <button class="btn btn-primary btn-sm" id="saveCartAdjustmentBtn">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="confirmActionModal">
+  <div class="pdv-modal-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title" id="confirmActionTitle">Confirmar ação</div>
+      <button class="pdv-modal-close" id="closeConfirmActionModalBtn">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <p class="text-sm text-muted" id="confirmActionMessage">Deseja continuar?</p>
+      <div class="pdv-confirm-summary" id="confirmActionSummary">
+        <div class="pdv-confirm-totals" id="confirmActionTotals"></div>
+        <div class="pdv-confirm-items-wrap">
+          <div class="text-xs text-muted">Itens da compra</div>
+          <div class="pdv-confirm-items" id="confirmActionItems"></div>
+        </div>
+      </div>
+    </div>
+    <div class="pdv-modal-footer">
+      <button class="btn btn-ghost btn-sm" id="cancelConfirmActionBtn">Cancelar</button>
+      <button class="btn btn-primary btn-sm" id="confirmActionBtn">Confirmar</button>
     </div>
   </div>
 </div>

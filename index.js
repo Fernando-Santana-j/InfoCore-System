@@ -7,6 +7,7 @@ const path = require('path');
 const multer = require('multer')
 const cookieParser = require("cookie-parser");
 const mercadopago = require('mercadopago');
+const db = require('./firebase/models.js');
 // const config = require('./config/config.json');
 
 //TODO------------Configs--------------
@@ -63,21 +64,51 @@ const upload = multer({ storage });
 
 
 //TODO------------WEB PAGE--------------
+function verifyLogin(req, res, next) {
+    if (!req.session.user) {
+        return res.redirect('/login');
+    }
+    next();
+}
 
-app.get('/', (req, res) => {
-    res.render('layout', { body: 'dashboard' });
+app.post('/login', async (req, res) => {
+    let { email, pass } = req.body;
+    let user = await db.findOne({ colecao: 'users', where: ['email', '==', email] });
+    if (!user) {
+        return res.json({ error: true, message: 'Usuário não encontrado' });
+    }
+    if (user.pass !== pass) {
+        return res.json({ error: true, message: 'Senha incorreta' });
+    }
+    req.session.user = user;
+    return res.json({ error: false, message: 'Login realizado com sucesso' });
 });
 
-app.get('/dashboard', (req, res) => {
-    res.render('layout', { body: 'dashboard' });
+
+app.get('/', async (req, res) => {
+    return res.redirect('/login');
 });
 
-app.get('/pdv', (req, res) => {
-    res.render('layout', { body: 'pdv' });
+app.get('/login', (req, res) => {
+    if (req.session.user) {
+        return res.redirect('/dashboard');
+    }
+    res.render('login');
 });
 
-app.get('/stock', (req, res) => {
-    res.render('layout', { body: 'stock' });
+app.get('/dashboard',verifyLogin, async (req, res) => {
+    let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    res.render('layout', { body: 'dashboard',appData:{configs:configs} });
+});
+
+app.get('/pdv',verifyLogin, async (req, res) => {
+    let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    res.render('layout', { body: 'pdv',appData:{configs:configs} });
+});
+
+app.get('/stock',verifyLogin, async (req, res) => {
+    let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    res.render('layout', { body: 'stock',appData:{configs:configs} });
 });
 
 app.get('/sells', (req, res) => {

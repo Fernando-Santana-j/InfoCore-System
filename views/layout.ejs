@@ -1,34 +1,71 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <%- include('reusable/head') %>
   <link rel="stylesheet" href="/public/css/<%= body %>.css">
 </head>
+
 <body>
-<div class="app">
-  
-  <%- include('reusable/sidebar') %>
+  <div class="app">
 
- 
-  <main class="main">
-    <%- include('reusable/topbar') %>
+    <%- include('reusable/sidebar') %>
 
-    <div class="content" id="content">
-      <%- include(`./${body}`) %>
-    </div>
-  </main>
-</div>
+      <script id="appData" type="application/json">
+    <%- JSON.stringify( appData) %>
+  </script>
+  <script>
+    const serverData = JSON.parse(document.getElementById('appData').textContent);
+
+    const fallbackData = {
+      
+      sales: [
+        {
+          id: "VD-001",
+          date: "2025-04-05 08:32",
+          client: "Ana Souza",
+          items: [
+            { name: "capinha para celular", qty: 2, price: 8.99, category: "cell" },
+            { name: "fonte 500w", qty: 1, price: 300.99, category: "pc" }
+          ],
+          discount: 0,
+          total: 318.97,
+          payment: "pix"
+        }
+      ],
+      products: [
+        { id: 1, sku: "SKU-001", name: "Fonte 500w", category: "pc", emoji: "🥤", cost: 4.5, price: 8.99, qty: 45, min: 10, active: true }
+      ],
+      clients: [],
+      cart: []
+    };
+    let appData = {
+      ...fallbackData,
+      ...serverData,
+    }
+    window.appData = appData;
+  </script>
+  <script src="/js/shared.js"></script>
+    <main class="main">
+      <%- include('reusable/topbar') %>
+
+      <div class="content" id="content">
+        <%- include(`./${body}`) %>
+      </div>
+    </main>
+  </div>
 
 
-<div class="toast-container" id="toastContainer"></div>
+  <div class="toast-container" id="toastContainer"></div>
 
 
-<script src="/js/shared.js"></script>
 
 
-<script src="/js/<%= body %>.js"></script>
+
+  <script src="/js/<%= body %>.js"></script>
 
 
-<%- include('reusable/script') %>
+  <%- include('reusable/script') %>
 </body>
+
 </html>

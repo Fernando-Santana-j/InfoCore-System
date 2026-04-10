@@ -60,6 +60,23 @@ body {
     background: var(--gold2);
 }
 
+.svgStroke * {
+    stroke: var(--text);
+}
+
+.svgFill * {
+    fill: var(--text);
+}
+
+.svgNoFill * {
+    fill: none;
+}
+
+.svgNoStroke * {
+    stroke: none;
+}
+
+
 
 @keyframes fadeIn {
     from {
