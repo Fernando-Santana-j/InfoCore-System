@@ -173,14 +173,19 @@ function renderPDV(filter) {
         list = list.filter((p) => String(p.category) === String(currentPDVFilter));
     }
 
-    grid.innerHTML = list.map((p) => `
-    <div class="pdv-product-card" onclick="addToCart(${p.id})">
-      <div class="prod-emoji">${p.emoji || '📦'}</div>
+    grid.innerHTML = list.map((p) => {
+        const img = p.image
+            ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt=""></div>`
+            : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || '📦'}</span></div>`;
+        return `
+    <div class="pdv-product-card" onclick='addToCart(${JSON.stringify(p.id)})'>
+      ${img}
       <div class="prod-name">${p.name || 'Produto'}</div>
       <div class="prod-price">${formatCurrency(asNumber(p.price))}</div>
       <div style="font-size:0.65rem;color:var(--text3);margin-top:2px;">${categories[p.category]?.name || p.category || 'Sem categoria'} • ${asNumber(p.qty)} em estoque</div>
     </div>
-  `).join('') || `<div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum produto</p></div>`;
+  `;
+    }).join('') || `<div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum produto</p></div>`;
 }
 
 function setPDVFilter(filter, btn) {
@@ -198,13 +203,13 @@ function addToCart(id) {
     ensureAppDataShape();
     const products = window.appData.products;
     const cart = window.appData.cart;
-    const product = products.find((x) => x.id === id);
+    const product = products.find((x) => String(x.id) === String(id));
     if (!product || asNumber(product.qty) <= 0) {
         showToast('Produto sem estoque!', 'error');
         return;
     }
 
-    const existing = cart.find((x) => x.id === id);
+    const existing = cart.find((x) => String(x.id) === String(id));
     if (existing) {
         if (asNumber(existing.qty) >= asNumber(product.qty)) {
             showToast('Estoque insuficiente!', 'error');
@@ -298,8 +303,8 @@ function closeConfirmActionModal() {
     confirmActionType = null;
 }
 
-function executeConfirmedAction() {
-    if (confirmActionType === 'finalizar') finalizeSaleCore();
+async function executeConfirmedAction() {
+    if (confirmActionType === 'finalizar') await finalizeSaleCore();
     if (confirmActionType === 'limpar') clearCartCore();
     closeConfirmActionModal();
 }
@@ -317,12 +322,12 @@ function renderCart() {
       <div class="cart-item">
         <div class="cart-item-name">${item.name || 'Produto'}</div>
         <div class="cart-item-qty">
-          <button class="qty-btn" onclick="changeQty(${item.id},-1)">−</button>
+          <button class="qty-btn" onclick='changeQty(${JSON.stringify(item.id)},-1)'>−</button>
           <span class="qty-num">${asNumber(item.qty)}</span>
-          <button class="qty-btn" onclick="changeQty(${item.id},1)">+</button>
+          <button class="qty-btn" onclick='changeQty(${JSON.stringify(item.id)},1)'>+</button>
         </div>
         <div class="cart-item-price">${formatCurrency(asNumber(item.price) * asNumber(item.qty))}</div>
-        <div class="cart-item-remove" onclick="removeFromCart(${item.id})">✕</div>
+        <div class="cart-item-remove" onclick='removeFromCart(${JSON.stringify(item.id)})'>✕</div>
       </div>
     `).join('');
     }
@@ -344,10 +349,10 @@ function renderCart() {
 function changeQty(id, delta) {
     const cart = asArray(window.appData?.cart);
     const products = asArray(window.appData?.products);
-    const item = cart.find((x) => x.id === id);
+    const item = cart.find((x) => String(x.id) === String(id));
     if (!item) return;
 
-    const product = products.find((x) => x.id === id);
+    const product = products.find((x) => String(x.id) === String(id));
     const maxQty = asNumber(product?.qty || 0);
     const next = asNumber(item.qty) + delta;
     if (next <= 0) return removeFromCart(id);
@@ -361,7 +366,7 @@ function changeQty(id, delta) {
 
 function removeFromCart(id) {
     const cart = asArray(window.appData?.cart);
-    const idx = cart.findIndex((x) => x.id === id);
+    const idx = cart.findIndex((x) => String(x.id) === String(id));
     if (idx !== -1) cart.splice(idx, 1);
     renderCart();
 }
@@ -377,43 +382,83 @@ function clearCartCore() {
     renderCart();
 }
 
-function finalizeSaleCore() {
+let finalizeSaleInFlight = false;
+
+async function finalizeSaleCore() {
     ensureAppDataShape();
-    const cart = window.appData.cart;
-    const products = window.appData.products;
-    const sales = window.appData.sales;
+    const cart = asArray(window.appData.cart);
     if (cart.length === 0) {
         showToast('Carrinho vazio!', 'error');
         return;
     }
+    if (finalizeSaleInFlight) return;
 
     const totals = getCurrentTotals();
     const payment = normalizePaymentKey(selectedPaymentMethod);
-    const id = `VD-${String(sales.length + 1).padStart(3, '0')}`;
-    const now = new Date();
-    const dateStr = `${now.toISOString().slice(0, 10)} ${now.toTimeString().slice(0, 5)}`;
+    const payload = {
+        items: cart.map((i) => ({ id: i.id, qty: asNumber(i.qty) })),
+        discount: { ...cartAdjustments.discount },
+        extra: { ...cartAdjustments.extra },
+        payment,
+        client: 'Balcão'
+    };
 
-    cart.forEach((item) => {
-        const product = products.find((x) => x.id === item.id);
-        if (product) product.qty = Math.max(0, asNumber(product.qty) - asNumber(item.qty));
-    });
+    finalizeSaleInFlight = true;
+    const confirmBtn = document.getElementById('confirmActionBtn');
+    const prevBtnText = confirmBtn ? confirmBtn.textContent : '';
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Salvando...';
+    }
 
-    sales.push({
-        id,
-        date: dateStr,
-        client: 'Balcao',
-        items: cart.map((i) => ({ ...i })),
-        discount: totals.discount,
-        extra: totals.extra,
-        subtotal: totals.subtotal,
-        total: totals.total,
-        payment
-    });
+    try {
+        const res = await fetch('/api/sales', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        });
+        let data = {};
+        try {
+            data = await res.json();
+        } catch {
+            data = {};
+        }
+        if (!res.ok || data.error) {
+            showToast(data.message || 'Não foi possível salvar a venda.', 'error');
+            return;
+        }
 
-    window.appData.cart = [];
-    renderCart();
-    renderPDV(currentPDVFilter);
-    showToast(`Venda ${id} finalizada! ${formatCurrency(totals.total)}`, 'success');
+        const sale = data.sale;
+        if (Array.isArray(data.products)) {
+            data.products.forEach((p) => {
+                const idx = window.appData.products.findIndex((x) => String(x.id) === String(p.id));
+                if (idx !== -1) window.appData.products[idx] = p;
+            });
+        }
+
+        window.appData.sales = asArray(window.appData.sales);
+        window.appData.sales.unshift(sale);
+
+        window.appData.cart = [];
+        setAdjustment('discount', 'fixed', 0);
+        setAdjustment('extra', 'fixed', 0);
+        renderCart();
+        renderPDV(currentPDVFilter);
+
+        const label = sale?.code || sale?.id || 'Venda';
+        const totalVal = sale?.total != null ? asNumber(sale.total) : totals.total;
+        showToast(`${label} finalizada! ${formatCurrency(totalVal)}`, 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('Erro de rede ao finalizar a venda.', 'error');
+    } finally {
+        finalizeSaleInFlight = false;
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = prevBtnText || 'Confirmar';
+        }
+    }
 }
 
 function finalizarVenda() {

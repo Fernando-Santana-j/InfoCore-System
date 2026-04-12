@@ -1,3 +1,17 @@
+<% 
+  const _cfg = (typeof appData !== 'undefined' && appData && appData.configs && !appData.configs.error) ? appData.configs : {};
+  const _catObj = (_cfg && _cfg.category && typeof _cfg.category === 'object') ? _cfg.category : null;
+  let stockCategoryEntries;
+  if (_catObj && Object.keys(_catObj).length) {
+    stockCategoryEntries = Object.keys(_catObj).map((k) => [k, _catObj[k] || {}]).sort((a, b) => {
+      const na = String(a[1].name != null ? a[1].name : a[0]);
+      const nb = String(b[1].name != null ? b[1].name : b[0]);
+      return na.localeCompare(nb, 'pt-BR');
+    });
+  } else {
+    stockCategoryEntries = [['others', { name: 'Outros', color: 'var(--text2)' }]];
+  }
+%>
 <div class="page" id="page-estoque">
   <div class="flex flex-between flex-wrap gap-12 mb-16">
     <div class="search-bar" style="flex:1;max-width:380px;">
@@ -10,7 +24,7 @@
       <button class="filter-btn" onclick="setStockFilter('normal',this)">✅ Normal</button>
       <button class="filter-btn" onclick="setStockFilter('alto',this)">📦 Abundante</button>
     </div>
-    <button class="btn btn-primary" onclick="openModal('addProduct')">✨ Novo Produto</button>
+    <button class="btn btn-primary" onclick="openStockAddProductModal()">✨ Novo Produto</button>
   </div>
 
   <div class="card">
@@ -49,9 +63,9 @@
       <button class="modal-close" onclick="closeModal('addProduct')">✕</button>
     </div>
     <div class="form-grid">
-      <div class="form-group">
+      <div class="form-group form-full">
         <label class="form-label">SKU</label>
-        <input class="form-input mono" id="newSku" placeholder="SKU-001">
+        <div class="form-readonly-hint mono" id="newSkuHint">Será gerado automaticamente ao salvar (ex.: PRD-A1B2C3D4E5).</div>
       </div>
       <div class="form-group">
         <label class="form-label">Nome do Produto</label>
@@ -60,26 +74,25 @@
       <div class="form-group">
         <label class="form-label">Categoria</label>
         <select class="form-select" id="newCategory">
-          <option>Alimentos</option>
-          <option>Bebidas</option>
-          <option>Limpeza</option>
-          <option>Eletrônicos</option>
-          <option>Papelaria</option>
-          <option>Higiene</option>
-          <option>Outros</option>
+          <% stockCategoryEntries.forEach(function (entry) { var key = entry[0], meta = entry[1] || {}; %>
+          <option value="<%= key %>"><%= meta.name != null ? meta.name : key %></option>
+          <% }); %>
         </select>
       </div>
-      <div class="form-group">
-        <label class="form-label">Emoji / Ícone</label>
-        <input class="form-input" id="newEmoji" placeholder="🍺" maxlength="2">
+      <div class="form-group form-full">
+        <label class="form-label">Foto do produto</label>
+        <input type="file" id="newProductImage" class="form-input" accept="image/jpeg,image/png,image/gif,image/webp">
+        <div class="stock-img-preview-wrap" id="newImagePreviewWrap">
+          <img id="newImagePreview" class="stock-img-preview is-empty" alt="Pré-visualização">
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Preço de Custo (R$)</label>
-        <input class="form-input mono" id="newCost" type="number" step="0.01" placeholder="0,00">
+        <input class="form-input mono input-money" id="newCost" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00">
       </div>
       <div class="form-group">
         <label class="form-label">Preço de Venda (R$)</label>
-        <input class="form-input mono" id="newPrice" type="number" step="0.01" placeholder="0,00">
+        <input class="form-input mono input-money" id="newPrice" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00">
       </div>
       <div class="form-group">
         <label class="form-label">Quantidade Inicial</label>
@@ -119,26 +132,25 @@
       <div class="form-group">
         <label class="form-label">Categoria</label>
         <select class="form-select" id="editCategory">
-          <option>Alimentos</option>
-          <option>Bebidas</option>
-          <option>Limpeza</option>
-          <option>Eletrônicos</option>
-          <option>Papelaria</option>
-          <option>Higiene</option>
-          <option>Outros</option>
+          <% stockCategoryEntries.forEach(function (entry) { var key = entry[0], meta = entry[1] || {}; %>
+          <option value="<%= key %>"><%= meta.name != null ? meta.name : key %></option>
+          <% }); %>
         </select>
       </div>
-      <div class="form-group">
-        <label class="form-label">Emoji</label>
-        <input class="form-input" id="editEmoji" maxlength="2">
+      <div class="form-group form-full">
+        <label class="form-label">Foto do produto</label>
+        <input type="file" id="editProductImage" class="form-input" accept="image/jpeg,image/png,image/gif,image/webp">
+        <div class="stock-img-preview-wrap">
+          <img id="editImagePreview" class="stock-img-preview is-empty" alt="Foto atual">
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Preço Custo (R$)</label>
-        <input class="form-input mono" id="editCost" type="number" step="0.01">
+        <input class="form-input mono input-money" id="editCost" type="text" inputmode="numeric" autocomplete="off">
       </div>
       <div class="form-group">
         <label class="form-label">Preço Venda (R$)</label>
-        <input class="form-input mono" id="editPrice" type="number" step="0.01">
+        <input class="form-input mono input-money" id="editPrice" type="text" inputmode="numeric" autocomplete="off">
       </div>
       <div class="form-group">
         <label class="form-label">Qtd. Atual</label>
@@ -156,3 +168,4 @@
     </div>
   </div>
 </div>
+

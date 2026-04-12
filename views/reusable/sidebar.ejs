@@ -1,27 +1,24 @@
 <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">🏪</div>
-      <div class="logo-text">Store<span>OS</span></div>
+        <div class="logo-icon"><img src="/public/img/logo_bg.png"></div>
+        <div class="logo-text">InfoCore</div>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-section-label">Principal</div>
-      <a href="/dashboard" class="nav-item active">
-        <span class="icon">📊</span> Dashboard
-      </a>
-      <a href="/pdv" class="nav-item">
-        <span class="icon">🛒</span> PDV
-        <span class="badge green">Novo</span>
-      </a>
-      <div class="nav-section-label">Gestão</div>
-      <a href="/stock" class="nav-item">
-        <span class="icon">📦</span> Estoque
-        <span class="badge" id="lowStockBadge" style="display:none">!</span>
-      </a>
-      <a href="/sells" class="nav-item">
+        <div class="nav-section-label">Principal</div>
+        <a href="/dashboard" class="nav-item active">
+            <span class="icon">📊</span> Dashboard
+        </a>
+        <a href="/pdv" class="nav-item">
+            <span class="icon">🛒</span> PDV
+            <span class="badge green">Novo</span>
+        </a>
+        <div class="nav-section-label">Gestão</div>
+        <a href="/stock" class="nav-item">
+            <span class="icon">📦</span> Estoque
+            <span class="badge" id="lowStockBadge" style="display:none">!</span>
+        </a>
+        <!-- <a href="/sells" class="nav-item">
         <span class="icon">💰</span> Vendas
-      </a>
-      <a href="/products" class="nav-item">
-        <span class="icon">🏷️</span> Produtos
       </a>
       <a href="/clients" class="nav-item">
         <span class="icon">👥</span> Clientes
@@ -32,15 +29,19 @@
       </a>
       <a href="/config" class="nav-item">
         <span class="icon">⚙️</span> Configurações
-      </a>
+      </a> -->
     </nav>
     <div class="sidebar-bottom">
-      <div class="user-card">
-        <div class="user-avatar">JA</div>
-        <div class="user-info">
-          <div class="user-name">João Admin</div>
-          <div class="user-role">Administrador</div>
+        <div class="user-card">
+            <div class="user-avatar">IC</div>
+            <div class="user-info">
+                <div class="user-name">
+                    <%= appData.user.name %>
+                </div>
+                <div class="user-role">
+                    <%= appData.user.type %>
+                </div>
+            </div>
         </div>
-      </div>
     </div>
-  </aside>
+</aside>

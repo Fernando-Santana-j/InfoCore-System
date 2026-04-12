@@ -1,33 +1,10 @@
 
 const db = require('./db.js')
-const { Readable } = require('stream');
 
 module.exports = {
     findAll: async (props) => {
-        let firebaseData = db.collection(props.colecao)
-
-        return new Promise((resolve, reject) => {
-            const outputStream = new Readable({ objectMode: true });
-            outputStream._read = () => { };
-
-            firebaseData.get().then((snapshot) => {
-                snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    outputStream.push(data);
-                });
-
-                outputStream.push(null); // Indica o fim da stream
-                resolve(outputStream.toArray());
-            }).catch((error) => {
-                console.error('Erro ao buscar dados do Firestore:', error);
-                reject(error);
-            });
-
-            outputStream.on('error', (err) => {
-                console.error(err);
-                reject(err);
-            });
-        });
+        const snap = await db.collection(props.colecao).get();
+        return snap.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
     },
 
     findOne: async (props) => {
@@ -42,12 +19,13 @@ module.exports = {
             let data 
             if (props.hasOwnProperty('where')) {
                 if (res.docs.length > 0) {
-                    data = res.docs[0].data()
+                    const doc = res.docs[0]
+                    data = { ...doc.data(), id: doc.id }
                 }else{
                     return {error:true,err:'Nenhum dado encontrado'}
                 }
             }else{
-                data = res.data()
+                data = { ...res.data(), id: res.id }
             }
             data.error = false
             return data
