@@ -153,6 +153,7 @@ function initPDV() {
     renderPaymentButtons();
     renderPDV();
     renderCart();
+    requestAnimationFrame(() => focusPDVBarcodeInput());
 }
 
 function renderPDV(filter) {
@@ -197,6 +198,92 @@ function setPDVFilter(filter, btn) {
 
 function filterPDV() {
     renderPDV(currentPDVFilter);
+}
+
+function findProductByProductCode(code) {
+    const c = String(code || '').trim();
+    if (!c) return null;
+    const lower = c.toLowerCase();
+    const products = asArray(window.appData.products);
+    return products.find((p) => p.active !== false && String(p.sku || '').trim().toLowerCase() === lower) || null;
+}
+
+function addToCartByProductCode(code) {
+    const product = findProductByProductCode(code);
+    if (!product) {
+        showToast('Produto não encontrado para este código.', 'error');
+        return;
+    }
+    addToCart(product.id);
+}
+
+function focusPDVBarcodeInput() {
+    const el = document.getElementById('pdvBarcodeInput');
+    if (el) el.focus();
+}
+
+function isPDVModalOpen() {
+    return Boolean(
+        document.getElementById('cartAdjustmentModal')?.classList.contains('open')
+        || document.getElementById('confirmActionModal')?.classList.contains('open')
+    );
+}
+
+function bindPDVBarcodeCapture() {
+    const barcodeEl = document.getElementById('pdvBarcodeInput');
+    const searchEl = document.getElementById('pdvSearch');
+
+    if (barcodeEl) {
+        barcodeEl.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const raw = barcodeEl.value;
+            barcodeEl.value = '';
+            const code = String(raw || '').trim();
+            if (code) addToCartByProductCode(code);
+        });
+    }
+
+    if (searchEl) {
+        searchEl.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            const code = String(searchEl.value || '').trim();
+            if (!code || !findProductByProductCode(code)) return;
+            e.preventDefault();
+            searchEl.value = '';
+            filterPDV();
+            addToCartByProductCode(code);
+        });
+    }
+
+    let scanBuf = '';
+    let scanLast = 0;
+    window.addEventListener(
+        'keydown',
+        (e) => {
+            if (isPDVModalOpen()) return;
+            const t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+                if (t.id === 'pdvBarcodeInput' || t.id === 'pdvSearch') return;
+                return;
+            }
+            const now = Date.now();
+            if (now - scanLast > 70) scanBuf = '';
+            scanLast = now;
+            if (e.key === 'Enter') {
+                if (scanBuf.length >= 3) {
+                    e.preventDefault();
+                    addToCartByProductCode(scanBuf);
+                }
+                scanBuf = '';
+                return;
+            }
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                scanBuf += e.key;
+            }
+        },
+        true
+    );
 }
 
 function addToCart(id) {
@@ -445,6 +532,7 @@ async function finalizeSaleCore() {
         setAdjustment('extra', 'fixed', 0);
         renderCart();
         renderPDV(currentPDVFilter);
+        focusPDVBarcodeInput();
 
         const label = sale?.code || sale?.id || 'Venda';
         const totalVal = sale?.total != null ? asNumber(sale.total) : totals.total;
@@ -546,9 +634,11 @@ if (document.readyState === 'loading') {
         initPDV();
         bindConfirmModal();
         bindCartAdjustmentModal();
+        bindPDVBarcodeCapture();
     });
 } else {
     initPDV();
     bindConfirmModal();
     bindCartAdjustmentModal();
+    bindPDVBarcodeCapture();
 }

@@ -9,7 +9,7 @@ const cookieParser = require("cookie-parser");
 const mercadopago = require('mercadopago');
 const db = require('./firebase/models.js');
 const firestore = require('./firebase/db.js');
-const { randomUUID } = require('crypto');
+const { randomUUID, randomInt } = require('crypto');
 // const config = require('./config/config.json');
 
 const PRODUCTS_COLLECTION = 'products';
@@ -66,17 +66,102 @@ function saleDisplayCode() {
     return `VD-${t.slice(-6)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
 }
 
-function productSkuFromId(id) {
-    const hex = String(id || '').replace(/-/g, '');
-    const part = (hex.slice(0, 10) || randomUUID().replace(/-/g, '').slice(0, 10)).toUpperCase();
-    return `PRD-${part}`;
+/** SKU / código de barras: apenas dígitos, 1–8 caracteres, valor 1..99999999; armazenado sempre com 8 dígitos (zeros à esquerda). */
+const BARCODE_SKU_MIN = 1;
+const BARCODE_SKU_MAX = 99999999;
+
+function canonicalBarcodeSku(raw) {
+    const t = String(raw ?? '').trim();
+    if (!/^\d{1,8}$/.test(t)) return null;
+    const n = Number.parseInt(t, 10);
+    if (!Number.isFinite(n) || n < BARCODE_SKU_MIN || n > BARCODE_SKU_MAX) return null;
+    return String(n).padStart(8, '0');
+}
+
+function pickUnusedBarcodeSku(usedSet) {
+    for (let attempt = 0; attempt < 500; attempt++) {
+        const n = randomInt(BARCODE_SKU_MIN, BARCODE_SKU_MAX + 1);
+        const s = String(n).padStart(8, '0');
+        if (!usedSet.has(s)) {
+            usedSet.add(s);
+            return s;
+        }
+    }
+    for (let n = BARCODE_SKU_MIN; n <= BARCODE_SKU_MAX; n++) {
+        const s = String(n).padStart(8, '0');
+        if (!usedSet.has(s)) {
+            usedSet.add(s);
+            return s;
+        }
+    }
+    throw new Error('Esgotados os códigos numéricos de produto (SKU).');
+}
+
+async function fetchProductRows() {
+    const rows = await db.findAll({ colecao: PRODUCTS_COLLECTION });
+    return Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * Garante que cada produto tenha SKU numérico único (8 dígitos) e persiste correções no Firestore.
+ */
+async function reconcileProductBarcodeSkus(rows) {
+    const used = new Set();
+    const plannedKeep = new Map();
+
+    for (const row of rows) {
+        const id = row.id != null ? String(row.id) : '';
+        if (!id) continue;
+        const c = canonicalBarcodeSku(row.sku);
+        if (!c) continue;
+        if (!used.has(c)) {
+            used.add(c);
+            plannedKeep.set(id, c);
+        }
+    }
+
+    const updates = [];
+    for (const row of rows) {
+        const id = row.id != null ? String(row.id) : '';
+        if (!id) continue;
+        const raw = row.sku != null ? String(row.sku).trim() : '';
+        const c = canonicalBarcodeSku(raw);
+        const kept = plannedKeep.get(id);
+
+        if (c && kept === c) {
+            if (raw !== c) updates.push({ id, sku: c });
+            row.sku = c;
+            continue;
+        }
+
+        const nu = pickUnusedBarcodeSku(used);
+        updates.push({ id, sku: nu });
+        row.sku = nu;
+    }
+
+    if (updates.length === 0) return;
+
+    let batch = firestore.batch();
+    let ops = 0;
+    for (const u of updates) {
+        batch.update(firestore.collection(PRODUCTS_COLLECTION).doc(u.id), { sku: u.sku });
+        ops++;
+        if (ops >= 400) {
+            await batch.commit();
+            batch = firestore.batch();
+            ops = 0;
+        }
+    }
+    if (ops) await batch.commit();
 }
 
 function normalizeProduct(row) {
     const d = row && typeof row === 'object' ? row : {};
     const id = d.id != null ? d.id : '';
-    let sku = String(d.sku || '');
-    if (!sku && id) sku = productSkuFromId(id);
+    let sku = String(d.sku || '').trim();
+    const c = canonicalBarcodeSku(sku);
+    if (c) sku = c;
+    else if (!sku && id) sku = '';
     const imageRaw = d.image != null ? String(d.image).trim() : '';
     const image = imageRaw.startsWith('/') ? imageRaw : (imageRaw ? `/uploads/${imageRaw}` : '');
     return {
@@ -107,8 +192,8 @@ function parseMoneyField(v) {
 
 async function loadProductsFromDb() {
     try {
-        const rows = await db.findAll({ colecao: PRODUCTS_COLLECTION });
-        const list = Array.isArray(rows) ? rows : [];
+        const list = await fetchProductRows();
+        await reconcileProductBarcodeSkus(list);
         return list.map(normalizeProduct);
     } catch (e) {
         console.error('Erro ao carregar produtos:', e);
@@ -295,7 +380,19 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
     const min = Number.parseInt(String(body.min), 10) || 10;
 
     const id = randomUUID();
-    const sku = productSkuFromId(id);
+    const existingRows = await fetchProductRows();
+    const usedSkus = new Set();
+    for (const r of existingRows) {
+        const c = canonicalBarcodeSku(r.sku != null ? String(r.sku).trim() : '');
+        if (c) usedSkus.add(c);
+    }
+    let sku;
+    try {
+        sku = pickUnusedBarcodeSku(usedSkus);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Não foi possível gerar código do produto.' });
+    }
     const image = req.file ? `/uploads/${req.file.filename}` : '';
 
     const payload = {

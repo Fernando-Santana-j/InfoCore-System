@@ -1,10 +1,14 @@
 <div class="page" id="page-pdv">
   <div class="pdv-layout">
     <div class="pdv-products">
-      <div class="flex gap-12 mb-16">
-        <div class="search-bar" style="flex:1">
+      <div class="flex gap-12 mb-16" style="flex-wrap:wrap">
+        <div class="search-bar" style="flex:1;min-width:160px">
           <span>🔍</span>
-          <input type="text" placeholder="Buscar produto..." id="pdvSearch" oninput="filterPDV(this.value)">
+          <input type="text" placeholder="Buscar produto..." id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
+        </div>
+        <div class="search-bar pdv-barcode-wrap" style="flex:0 1 260px;min-width:200px">
+          <span>📷</span>
+          <input type="text" id="pdvBarcodeInput" autocomplete="off" spellcheck="false" inputmode="text" placeholder="Código de barras / SKU…" aria-label="Leitor de código de barras">
         </div>
         <div class="filter-bar">
           <button class="filter-btn active" onclick="setPDVFilter('todos',this)">Todos</button>

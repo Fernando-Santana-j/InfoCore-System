@@ -180,7 +180,7 @@ const Stock = (() => {
             const catKey = String(p.category || '').toLowerCase();
             const catLabel = stockCategoryLabel(p.category).toLowerCase();
             return p.name.toLowerCase().includes(s) ||
-                p.sku.toLowerCase().includes(s) ||
+                String(p.sku || '').toLowerCase().includes(s) ||
                 catKey.includes(s) ||
                 catLabel.includes(s);
         });
