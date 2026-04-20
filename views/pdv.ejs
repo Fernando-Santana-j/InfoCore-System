@@ -90,6 +90,15 @@
       <p class="text-sm text-muted" id="confirmActionMessage">Deseja continuar?</p>
       <div class="pdv-confirm-summary" id="confirmActionSummary">
         <div class="pdv-confirm-totals" id="confirmActionTotals"></div>
+        <div id="pdvCashPaymentSection" class="pdv-cash-section" hidden>
+          <label class="pdv-cash-label" for="pdvCashReceivedInput">Valor recebido (R$) <span class="text-muted" style="font-weight:500;">— opcional</span></label>
+          <input class="form-input" type="number" id="pdvCashReceivedInput" min="0" step="0.01" inputmode="decimal" autocomplete="off" placeholder="Vazio = pagou o valor exato" aria-describedby="pdvCashPaymentHint">
+          <div class="pdv-cash-change-row">
+            <span>Troco</span>
+            <strong class="mono" id="pdvCashChangeDisplay">R$ 0,00</strong>
+          </div>
+          <p class="text-xs text-muted" id="pdvCashPaymentHint">Só preencha se o cliente der um valor maior que o total (para calcular o troco). Se pagar em cédulas/moedas exatas, deixe em branco.</p>
+        </div>
         <div class="pdv-confirm-items-wrap">
           <div class="text-xs text-muted">Itens da compra</div>
           <div class="pdv-confirm-items" id="confirmActionItems"></div>
@@ -99,6 +108,56 @@
     <div class="pdv-modal-footer">
       <button class="btn btn-ghost btn-sm" id="cancelConfirmActionBtn">Cancelar</button>
       <button class="btn btn-primary btn-sm" id="confirmActionBtn">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="paymentWaitingModal">
+  <div class="pdv-modal-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title" id="paymentWaitingTitle">Aguardando pagamento</div>
+      <button class="pdv-modal-close" id="closePaymentWaitingModalBtn">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <div class="pdv-payment-waiting-top">
+        <div class="pdv-payment-loader" aria-hidden="true"></div>
+        <div class="pdv-payment-status-wrap">
+          <p class="text-sm text-muted" id="paymentWaitingMessage">Finalize o pagamento na maquininha.</p>
+          <div class="pdv-payment-status-chip" id="paymentWaitingStatusChip">Iniciando cobrança...</div>
+        </div>
+      </div>
+      <div id="paymentWaitingQrWrap" class="pdv-payment-qr-wrap" style="display:none;">
+        <div id="paymentWaitingQrLoader" class="pdv-payment-qr-loader">
+          <div class="pdv-payment-loader" aria-hidden="true"></div>
+          <div class="text-xs text-muted">Gerando QR Code PIX...</div>
+        </div>
+        <img id="paymentWaitingQrImage" alt="QR Code PIX" class="pdv-payment-qr-image" />
+      </div>
+      <div id="paymentWaitingQrTextWrap" style="display:none;">
+        <label class="text-xs text-muted" for="paymentWaitingQrText">Código PIX (copia e cola)</label>
+        <textarea id="paymentWaitingQrText" class="form-input" rows="3" readonly></textarea>
+        <button class="btn btn-ghost btn-sm mt-8" type="button" id="copyPixCodeBtn">Copiar código PIX</button>
+      </div>
+      <div class="text-xs text-muted mt-8" id="paymentWaitingHint">Não feche esta tela até o pagamento ser concluído.</div>
+    </div>
+    <div class="pdv-modal-footer">
+      <button class="btn btn-ghost btn-sm" id="cancelPaymentWaitingBtn">Cancelar pagamento</button>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="paymentResultModal">
+  <div class="pdv-modal-card pdv-payment-result-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title" id="paymentResultTitle">Resultado do pagamento</div>
+      <button class="pdv-modal-close" id="closePaymentResultModalBtn">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <p class="text-sm text-muted" id="paymentResultMessage"></p>
+      <div class="pdv-result-list" id="paymentResultDetails"></div>
+    </div>
+    <div class="pdv-modal-footer">
+      <button class="btn btn-primary btn-sm" id="paymentResultOkBtn">Entendi</button>
     </div>
   </div>
 </div>

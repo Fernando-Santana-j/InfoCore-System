@@ -488,6 +488,13 @@ const Stock = (() => {
         render();
     };
 
+    const getVisibleProducts = () => {
+        if (!window.appData?.products) return [];
+        let products = search();
+        products = applyFilter(products);
+        return products;
+    };
+
     return {
         init,
         render,
@@ -500,11 +507,42 @@ const Stock = (() => {
         deleteEditing,
         add,
         setFilter: (f) => { filter = f; render(); },
-        filterSearch: () => render()
+        filterSearch: () => render(),
+        getVisibleProducts
     };
 })();
 
 window.Stock = Stock;
+
+/** Exporta para .xlsx os produtos da visualização atual (pesquisa + filtros). Requer SheetJS (layout stock). */
+function exportStockExcel() {
+    if (typeof XLSX === 'undefined') {
+        showToast('Exportação Excel indisponível. Recarregue a página.', 'error');
+        return;
+    }
+    const products = Stock.getVisibleProducts?.() || [];
+    if (!products.length) {
+        showToast('Não há produtos para exportar nesta visualização.', 'info');
+        return;
+    }
+    const rows = products.map((p) => ({
+        SKU: p.sku != null ? String(p.sku) : '',
+        Produto: p.name != null ? String(p.name) : '',
+        Categoria: stockCategoryLabel(p.category) || String(p.category || ''),
+        'Qtd. atual': Number(p.qty) || 0,
+        'Estoque mín.': Number(p.min) || 0,
+        'Preço custo (R$)': Number.isFinite(Number(p.cost)) ? Number(p.cost) : 0,
+        'Preço venda (R$)': Number.isFinite(Number(p.price)) ? Number(p.price) : 0,
+        Status: typeof getStockStatus === 'function' ? getStockStatus(p).label : '',
+        Descrição: p.description != null ? String(p.description) : ''
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Estoque');
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `estoque_${stamp}.xlsx`);
+    showToast(`${products.length} produto(s) exportado(s) para Excel.`, 'success');
+}
 
 function filterStock() {
     Stock.filterSearch();

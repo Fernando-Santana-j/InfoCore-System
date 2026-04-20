@@ -3,6 +3,7 @@
     grid-template-columns: 1fr 430px;
     gap: 20px;
     height: calc(100vh - 140px);
+    animation: pdvFadeUp .4s ease;
 }
 
 .pdv-products {
@@ -16,19 +17,36 @@
 }
 
 .pdv-product-card {
-    background: var(--bg3);
-    border: 1px solid var(--border);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.005));
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
     padding: 14px 12px;
     cursor: pointer;
     transition: all var(--transition);
     text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.pdv-product-card::before {
+    content: "";
+    position: absolute;
+    inset: -120% 40% auto -40%;
+    height: 180%;
+    transform: rotate(20deg);
+    background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.08), transparent);
+    transition: transform .55s ease;
 }
 
 .pdv-product-card:hover {
     border-color: var(--gold2);
     background: var(--gold-glow);
     transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
+}
+
+.pdv-product-card:hover::before {
+    transform: translateX(150%) rotate(20deg);
 }
 
 .pdv-product-card .prod-emoji {
@@ -70,12 +88,13 @@
 }
 
 .cart-panel {
-    background: var(--bg2);
-    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.15));
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    backdrop-filter: blur(8px);
 }
 
 .cart-header {
@@ -98,7 +117,8 @@
 }
 
 .cart-item {
-    background: var(--bg3);
+    background: linear-gradient(140deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 10px;
     padding: 12px 14px;
     display: flex;
@@ -204,8 +224,8 @@
 }
 
 .payment-method-btn {
-    border: 1px solid var(--border);
-    background: var(--bg3);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.005));
     color: var(--text2);
     border-radius: 10px;
     padding: 8px 10px;
@@ -219,12 +239,15 @@
 
 .payment-method-btn:hover {
     border-color: var(--gold2);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
 }
 
 .payment-method-btn.active {
     border-color: var(--gold2);
     background: var(--gold-glow);
     color: var(--text);
+    box-shadow: 0 10px 20px rgba(255, 184, 77, 0.18);
 }
 
 .payment-method-icon {
@@ -284,10 +307,12 @@
 
 .pdv-modal-card {
     width: min(620px, 100%);
-    background: var(--bg2);
-    border: 1px solid var(--border);
+    background: linear-gradient(160deg, rgba(22, 22, 28, 0.98), rgba(12, 12, 16, 0.96));
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
     overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+    animation: pdvModalPop .25s ease;
 }
 
 .pdv-modal-header {
@@ -373,6 +398,40 @@
 .pdv-confirm-row.total strong {
     color: var(--gold);
     font-size: 1.05rem;
+}
+
+.pdv-cash-section {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.pdv-cash-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text2);
+}
+
+.pdv-cash-change-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.95rem;
+    color: var(--text2);
+}
+
+.pdv-cash-change-row strong {
+    color: var(--gold);
+    font-size: 1.05rem;
+}
+
+.pdv-cash-change-row strong.pdv-cash-change-negative {
+    color: var(--red, #e85d5d);
 }
 
 .pdv-confirm-items-wrap {
@@ -469,4 +528,130 @@
     border-color: var(--gold2);
     background: var(--gold-glow);
     color: var(--text);
+}
+
+.pdv-payment-waiting-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+}
+
+.pdv-payment-loader {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 3px solid rgba(255, 255, 255, 0.15);
+    border-top-color: var(--gold);
+    animation: pdvSpin .9s linear infinite;
+    flex: 0 0 auto;
+}
+
+.pdv-payment-status-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pdv-payment-status-chip {
+    font-size: 0.75rem;
+    color: var(--gold);
+    background: rgba(255, 184, 77, 0.12);
+    border: 1px solid rgba(255, 184, 77, 0.3);
+    border-radius: 999px;
+    padding: 4px 10px;
+    width: fit-content;
+    font-weight: 600;
+    animation: pdvPulse 1.6s ease-in-out infinite;
+}
+
+.pdv-payment-qr-wrap {
+    align-items: center;
+    justify-content: center;
+    margin: 4px 0;
+    padding: 12px;
+    border-radius: 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+}
+
+.pdv-payment-qr-loader {
+    display: flex;
+    min-height: 220px;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.pdv-payment-qr-image {
+    max-width: 220px;
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: #fff;
+}
+
+.pdv-payment-result-card {
+    width: min(520px, 100%);
+}
+
+.pdv-result-list {
+    display: grid;
+    gap: 8px;
+}
+
+.pdv-result-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 0.86rem;
+}
+
+.pdv-result-item strong {
+    color: var(--text);
+    text-align: right;
+    font-family: "Inter", sans-serif;
+}
+
+@keyframes pdvSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes pdvModalPop {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes pdvFadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pdvPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .72; }
 }

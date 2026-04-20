@@ -13,10 +13,12 @@
             <span class="badge green">Novo</span>
         </a>
         <div class="nav-section-label">Gestão</div>
-        <a href="/stock" class="nav-item">
-            <span class="icon">📦</span> Estoque
-            <span class="badge" id="lowStockBadge" style="display:none">!</span>
-        </a>
+        <% if (appData.user.type === 'admin') { %>
+            <a href="/stock" class="nav-item">
+                <span class="icon">📦</span> Estoque
+                <span class="badge" id="lowStockBadge" style="display:none">!</span>
+            </a>
+        <% } %>
         <!-- <a href="/sells" class="nav-item">
         <span class="icon">💰</span> Vendas
       </a>

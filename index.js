@@ -9,7 +9,9 @@ const cookieParser = require("cookie-parser");
 const mercadopago = require('mercadopago');
 const db = require('./firebase/models.js');
 const firestore = require('./firebase/db.js');
-const { randomUUID, randomInt } = require('crypto');
+const { randomInt } = require('crypto');
+const axios = require('axios');
+const { randomUUID } = require("crypto");
 // const config = require('./config/config.json');
 
 const PRODUCTS_COLLECTION = 'products';
@@ -283,8 +285,6 @@ function uploadProductImageIfMultipart(req, res, next) {
 
 //TODO------------WEB PAGE--------------
 function verifyLogin(req, res, next) {
-    next()
-    return
     if (!req.session.user) {
         return res.redirect('/login');
     }
@@ -324,26 +324,12 @@ app.get('/login', (req, res) => {
 app.get('/dashboard',verifyLogin, async (req, res) => {
     let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     const products = await loadProductsFromDb();
-    req.session.user = {
-        name: 'fernando',
-        type: 'admin',
-        email: 'admin@infocoretech.com.br',
-        pass: 'Junio132sj.',
-        error: false
-      }
 
     res.render('layout', { body: 'dashboard',appData:{configs:configs, user:req.session.user, products} });
 });
 
 app.get('/pdv',verifyLogin, async (req, res) => {
-    req.session.user = {
-        name: 'fernando',
-        type: 'admin',
-        email: 'admin@infocoretech.com.br',
-        pass: 'Junio132sj.',
-        error: false
-      }
-
+   
     let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     
     const products = await loadProductsFromDb();
@@ -351,14 +337,9 @@ app.get('/pdv',verifyLogin, async (req, res) => {
 });
 
 app.get('/stock',verifyLogin, async (req, res) => {
-    req.session.user = {
-        name: 'fernando',
-        type: 'admin',
-        email: 'admin@infocoretech.com.br',
-        pass: 'Junio132sj.',
-        error: false
-      };
-
+    if (req.session.user.type !== 'admin') {
+        return res.redirect('/dashboard');
+    }
     const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     const products = await loadProductsFromDb();
     res.render('layout', { body: 'stock', appData: { configs, user: req.session.user, products } });
@@ -487,6 +468,208 @@ app.delete('/api/products/:id', verifyLogin, async (req, res) => {
 
     return res.json({ error: false });
 });
+const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
+const MP_DEVICE_ID = process.env.MERCADOPAGO_DEVICE_ID || "PAX_Q92__Q92-1733817193";
+const MP_ENABLED = Boolean(MP_TOKEN && MP_DEVICE_ID);
+
+const api = axios.create({
+    baseURL: "https://api.mercadopago.com",
+    headers: { Authorization: `Bearer ${MP_TOKEN}`, "Content-Type": "application/json" },
+});
+
+const POINT_PAYMENT_TYPE_MAP = {
+    credit_card: 'credit_card',
+    debit_card: 'debit_card',
+    pix: 'bank_transfer'
+};
+const POINT_FINAL_STATUSES = new Set(['processed', 'canceled', 'expired', 'failed']);
+const POINT_FAILURE_REASON = {
+    canceled: 'Pagamento cancelado na maquininha.',
+    expired: 'Tempo para pagamento expirou na maquininha.',
+    failed: 'Falha ao processar pagamento na maquininha.'
+};
+
+let cachedPointTerminal = null;
+let activePointOrderId = null;
+const pendingPointSales = new Map();
+const PIX_PENDING_STATUSES = new Set(['pending', 'in_process']);
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toMoneyAmount(value) {
+    return (Math.round((Number(value) || 0) * 100) / 100).toFixed(2);
+}
+
+async function resolvePointTerminalId() {
+    if (cachedPointTerminal) return cachedPointTerminal.id;
+    const { data: res } = await api.get('/terminals/v1/list?limit=50&offset=0');
+    const terminals = Array.isArray(res?.data?.terminals) ? res.data.terminals : [];
+    if (terminals.length === 0) throw new Error('Nenhum terminal Mercado Pago encontrado.');
+
+    const byDevice = terminals.find((t) =>
+        String(t?.device_id || '') === String(MP_DEVICE_ID)
+        || String(t?.id || '') === String(MP_DEVICE_ID)
+    );
+    const terminal = byDevice || terminals[0];
+    cachedPointTerminal = terminal;
+    return terminal.id;
+}
+
+async function cancelPointOrder(orderId) {
+    if (!orderId) return;
+    try {
+        await api.put(`/v1/orders/${orderId}/cancel`, {}, { headers: { "X-Idempotency-Key": randomUUID() } });
+    } catch (err) {
+        const status = err?.response?.status;
+        if (status && [400, 404, 409].includes(status)) return;
+        throw err;
+    }
+}
+
+async function cancelAnyPendingPointOrder() {
+    if (!activePointOrderId) return;
+    await cancelPointOrder(activePointOrderId);
+    activePointOrderId = null;
+}
+
+async function cancelAllKnownPendingSales() {
+    const orderIds = new Set();
+    if (activePointOrderId) orderIds.add(activePointOrderId);
+    for (const pending of pendingPointSales.values()) {
+        if (pending?.mode === 'point' && pending?.pointOrderId) {
+            orderIds.add(pending.pointOrderId);
+        }
+    }
+    for (const orderId of orderIds) {
+        try {
+            await cancelPointOrder(orderId);
+        } catch (e) {
+            console.error('Falha ao cancelar order pendente:', e?.response?.data || e);
+        }
+    }
+    activePointOrderId = null;
+    pendingPointSales.clear();
+}
+
+function extractPointReason(order) {
+    const payment = Array.isArray(order?.transactions?.payments) ? order.transactions.payments[0] : null;
+    return (
+        payment?.status_detail
+        || payment?.status
+        || order?.status_detail
+        || POINT_FAILURE_REASON[order?.status]
+        || 'Pagamento não aprovado pela maquininha.'
+    );
+}
+
+async function waitPointOrderFinal(orderId) {
+    for (let i = 0; i < 45; i++) {
+        await sleep(2000);
+        const { data: order } = await api.get(`/v1/orders/${orderId}`);
+        if (POINT_FINAL_STATUSES.has(order?.status)) return order;
+    }
+    throw new Error('Tempo limite aguardando confirmação da maquininha.');
+}
+
+async function createPointOrder({ amount, payment, saleCode }) {
+    if (!MP_ENABLED) {
+        throw new Error('Mercado Pago não configurado. Defina MERCADOPAGO_ACCESS_TOKEN e MERCADOPAGO_DEVICE_ID.');
+    }
+    const defaultType = POINT_PAYMENT_TYPE_MAP[payment];
+    if (!defaultType && payment !== 'pix') throw new Error('Forma de pagamento não suportada na maquininha.');
+
+    await cancelAllKnownPendingSales();
+    const terminalId = await resolvePointTerminalId();
+    const payload = {
+        type: 'point',
+        external_reference: saleCode,
+        description: `Venda ${saleCode}`,
+        expiration_time: 'PT10M',
+        transactions: { payments: [{ amount: toMoneyAmount(amount) }] },
+        config: {
+            point: { terminal_id: terminalId, print_on_terminal: 'seller_ticket' }
+        }
+    };
+    if (defaultType) {
+        let paymentMethod = { default_type: defaultType, default_installments: 1};
+        if (defaultType === 'credit_card') {
+            paymentMethod.installments_cost = 'buyer';
+        }
+        payload.config.payment_method = paymentMethod;
+    }
+
+    let createdOrder;
+    try {
+        ({ data: createdOrder } = await api.post('/v1/orders', payload, { headers: { "X-Idempotency-Key": randomUUID() } }));
+    } catch (err) {
+        const code = err?.response?.data?.errors?.[0]?.code;
+        // Fallback para PIX: alguns terminais rejeitam default_type para QR.
+        if (payment === 'pix' && payload.config.payment_method) {
+            delete payload.config.payment_method;
+            ({ data: createdOrder } = await api.post('/v1/orders', payload, { headers: { "X-Idempotency-Key": randomUUID() } }));
+        } else if (code === 'already_queued_order_on_terminal') {
+            await cancelAllKnownPendingSales();
+            ({ data: createdOrder } = await api.post('/v1/orders', payload, { headers: { "X-Idempotency-Key": randomUUID() } }));
+        } else {
+            throw err;
+        }
+    }
+
+    activePointOrderId = createdOrder.id;
+    return createdOrder;
+}
+
+async function getPointOrderStatus(orderId) {
+    const { data: order } = await api.get(`/v1/orders/${orderId}`);
+    if (POINT_FINAL_STATUSES.has(order?.status)) {
+        activePointOrderId = null;
+    }
+    return order;
+}
+
+async function processPointPayment({ amount, payment, saleCode }) {
+    const createdOrder = await createPointOrder({ amount, payment, saleCode });
+    const finalOrder = await waitPointOrderFinal(createdOrder.id);
+    activePointOrderId = null;
+    return finalOrder;
+}
+
+async function createOnlinePixPayment({ amount, saleCode }) {
+    await cancelAllKnownPendingSales();
+    const payerEmail = process.env.MERCADOPAGO_PIX_PAYER_EMAIL || 'fernandoj132sj@gmail.com';
+    const payload = {
+        transaction_amount: Math.round((Number(amount) || 0) * 100) / 100,
+        description: `Venda ${saleCode}`,
+        payment_method_id: 'pix',
+        external_reference: saleCode,
+        payer: { email: payerEmail }
+    };
+    const { data } = await api.post('/v1/payments', payload, { headers: { "X-Idempotency-Key": randomUUID() } });
+    console.log(data);
+    return data;
+}
+
+async function getOnlinePixPaymentStatus(paymentId) {
+    const { data } = await api.get(`/v1/payments/${paymentId}`);
+    return data;
+}
+
+async function finalizeSaleInDb({ saleId, saleRecord, stockUpdates }) {
+    const batch = firestore.batch();
+    const saleRef = firestore.collection(SALES_COLLECTION).doc(saleId);
+    batch.set(saleRef, saleRecord);
+
+    const updatedProducts = [];
+    for (const u of stockUpdates) {
+        const ref = firestore.collection(PRODUCTS_COLLECTION).doc(u.id);
+        batch.update(ref, { qty: u.nextQty });
+        updatedProducts.push(normalizeProduct({ ...u.p, id: u.id, qty: u.nextQty }));
+    }
+    await batch.commit();
+    return updatedProducts;
+}
 
 app.post('/api/sales', verifyLogin, async (req, res) => {
     const body = req.body || {};
@@ -573,6 +756,127 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         total,
         createdAt: FieldValue.serverTimestamp()
     };
+
+    let pointPaymentInfo = null;
+    if (payment === 'money') {
+        const raw = body.cashReceived;
+        const str = raw == null ? '' : String(raw).trim();
+        let receivedRounded;
+        let changeRounded;
+        if (str === '') {
+            receivedRounded = Math.round(total * 100) / 100;
+            changeRounded = 0;
+        } else {
+            const rawReceived = Number(raw);
+            if (!Number.isFinite(rawReceived) || rawReceived <= 0) {
+                return res.status(400).json({ error: true, message: 'Valor recebido inválido.' });
+            }
+            receivedRounded = Math.round(rawReceived * 100) / 100;
+            if (receivedRounded + 1e-6 < total) {
+                return res.status(400).json({ error: true, message: 'Valor recebido menor que o total da venda.' });
+            }
+            changeRounded = Math.round((receivedRounded - total) * 100) / 100;
+        }
+        saleRecord.cashReceived = receivedRounded;
+        saleRecord.change = changeRounded;
+    } else if (payment === 'pix') {
+        let pixPayment;
+        try {
+            pixPayment = await createOnlinePixPayment({ amount: total, saleCode: code });
+        } catch (e) {
+            const details = e?.response?.data?.errors?.[0]?.details;
+            console.error('Falha Mercado Pago PIX:', e?.response?.data || e);
+            return res.status(502).json({
+                error: true,
+                message: e.message || 'Falha ao gerar PIX online.',
+                payment: {
+                    provider: 'mercado_pago_pix_online',
+                    approved: false,
+                    reason: 'Erro ao gerar QR Code PIX.',
+                    details: Array.isArray(details) ? details.join(' | ') : undefined
+                }
+            });
+        }
+        const pendingToken = randomUUID();
+        pendingPointSales.set(pendingToken, {
+            mode: 'pix_online',
+            saleId,
+            saleRecord,
+            stockUpdates,
+            resolvedItems,
+            discountAmount,
+            extraAmount,
+            subtotal,
+            total,
+            client,
+            payment,
+            code,
+            pixPaymentId: pixPayment?.id || null,
+            createdAtMs: Date.now()
+        });
+        return res.json({
+            error: false,
+            pending: true,
+            token: pendingToken,
+            payment: {
+                provider: 'mercado_pago_pix_online',
+                status: pixPayment?.status || 'pending',
+                paymentId: pixPayment?.id || null,
+                qrData: pixPayment?.point_of_interaction?.transaction_data?.qr_code || '',
+                qrBase64: pixPayment?.point_of_interaction?.transaction_data?.qr_code_base64 || '',
+                qrTicketUrl: pixPayment?.point_of_interaction?.transaction_data?.ticket_url || ''
+            }
+        });
+    } else {
+        let pointOrder;
+        try {
+            pointOrder = await createPointOrder({ amount: total, payment, saleCode: code });
+        } catch (e) {
+            const details = e?.response?.data?.errors?.[0]?.details;
+            console.error('Falha Mercado Pago:', e?.response?.data || e);
+            return res.status(502).json({
+                error: true,
+                message: e.message || 'Falha ao comunicar com a maquininha.',
+                payment: {
+                    provider: 'mercado_pago_point',
+                    approved: false,
+                    reason: 'Erro de comunicação com a maquininha.',
+                    details: Array.isArray(details) ? details.join(' | ') : undefined
+                }
+            });
+        }
+        const pendingToken = randomUUID();
+        pendingPointSales.set(pendingToken, {
+            mode: 'point',
+            saleId,
+            saleRecord,
+            stockUpdates,
+            resolvedItems,
+            discountAmount,
+            extraAmount,
+            subtotal,
+            total,
+            client,
+            payment,
+            code,
+            pointOrderId: pointOrder?.id || null,
+            createdAtMs: Date.now()
+        });
+        return res.json({
+            error: false,
+            pending: true,
+            token: pendingToken,
+            payment: {
+                provider: 'mercado_pago_point',
+                status: pointOrder?.status || 'created',
+                orderId: pointOrder?.id || null,
+                qrData: pointOrder?.point_of_interaction?.transaction_data?.qr_code || '',
+                qrBase64: pointOrder?.point_of_interaction?.transaction_data?.qr_code_base64 || ''
+            }
+        });
+    }
+
+
     if (user && (user.name || user.email)) {
         saleRecord.cashier = {
             name: user.name != null ? String(user.name) : '',
@@ -580,19 +884,9 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         };
     }
 
-    const batch = firestore.batch();
-    const saleRef = firestore.collection(SALES_COLLECTION).doc(saleId);
-    batch.set(saleRef, saleRecord);
-
-    const updatedProducts = [];
-    for (const u of stockUpdates) {
-        const ref = firestore.collection(PRODUCTS_COLLECTION).doc(u.id);
-        batch.update(ref, { qty: u.nextQty });
-        updatedProducts.push(normalizeProduct({ ...u.p, id: u.id, qty: u.nextQty }));
-    }
-
+    let updatedProducts = [];
     try {
-        await batch.commit();
+        updatedProducts = await finalizeSaleInDb({ saleId, saleRecord, stockUpdates });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao registrar venda no banco.' });
@@ -618,8 +912,174 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         total,
         adjustments: saleRecord.adjustments
     };
+    if (saleRecord.cashReceived != null) saleResponse.cashReceived = saleRecord.cashReceived;
+    if (saleRecord.change != null) saleResponse.change = saleRecord.change;
 
+    if (pointPaymentInfo) saleResponse.payment = pointPaymentInfo;
     return res.json({ error: false, sale: saleResponse, products: updatedProducts });
+});
+
+app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
+    const token = String(req.params.token || '').trim();
+    const pending = pendingPointSales.get(token);
+    if (!pending) {
+        return res.status(404).json({ error: true, message: 'Pagamento pendente não encontrado.' });
+    }
+
+    try {
+        if (pending.mode === 'pix_online') {
+            const pix = await getOnlinePixPaymentStatus(pending.pixPaymentId);
+            const pixStatus = String(pix?.status || '');
+            if (PIX_PENDING_STATUSES.has(pixStatus)) {
+                return res.json({
+                    error: false,
+                    pending: true,
+                    payment: {
+                        provider: 'mercado_pago_pix_online',
+                        status: pixStatus,
+                        paymentId: pending.pixPaymentId,
+                        qrData: pix?.point_of_interaction?.transaction_data?.qr_code || '',
+                        qrBase64: pix?.point_of_interaction?.transaction_data?.qr_code_base64 || '',
+                        qrTicketUrl: pix?.point_of_interaction?.transaction_data?.ticket_url || ''
+                    }
+                });
+            }
+            if (pixStatus !== 'approved') {
+                const reason = String(pix?.status_detail || 'Pagamento PIX não aprovado.');
+                pendingPointSales.delete(token);
+                return res.status(400).json({
+                    error: true,
+                    pending: false,
+                    message: `Pagamento não aprovado (${pixStatus || 'sem status'}).`,
+                    payment: {
+                        provider: 'mercado_pago_pix_online',
+                        approved: false,
+                        status: pixStatus,
+                        reason,
+                        paymentId: pending.pixPaymentId
+                    }
+                });
+            }
+        } else {
+            const order = await getPointOrderStatus(pending.pointOrderId);
+            const status = String(order?.status || '');
+            if (!POINT_FINAL_STATUSES.has(status)) {
+                return res.json({
+                    error: false,
+                    pending: true,
+                    payment: {
+                        provider: 'mercado_pago_point',
+                        status,
+                        orderId: pending.pointOrderId,
+                        qrData: order?.point_of_interaction?.transaction_data?.qr_code || '',
+                        qrBase64: order?.point_of_interaction?.transaction_data?.qr_code_base64 || ''
+                    }
+                });
+            }
+
+            if (status !== 'processed') {
+                const reason = extractPointReason(order);
+                pendingPointSales.delete(token);
+                return res.status(400).json({
+                    error: true,
+                    pending: false,
+                    message: `Pagamento não aprovado (${status || 'sem status'}).`,
+                    payment: {
+                        provider: 'mercado_pago_point',
+                        approved: false,
+                        status,
+                        reason,
+                        orderId: pending.pointOrderId
+                    }
+                });
+            }
+        }
+
+        const successPayment = pending.mode === 'pix_online'
+            ? { provider: 'mercado_pago_pix_online', approved: true, status: 'approved', paymentId: pending.pixPaymentId }
+            : { provider: 'mercado_pago_point', approved: true, status: 'processed', orderId: pending.pointOrderId };
+
+        if (pending.mode === 'point') {
+            pending.saleRecord.paymentGateway = {
+                provider: 'mercado_pago_point',
+                status: successPayment.status,
+                orderId: pending.pointOrderId
+            };
+        } else {
+            pending.saleRecord.paymentGateway = {
+                provider: 'mercado_pago_pix_online',
+                status: successPayment.status,
+                paymentId: pending.pixPaymentId
+            };
+        }
+
+        if (pending.saleRecord.cashier == null) {
+            const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
+            if (user && (user.name || user.email)) {
+                pending.saleRecord.cashier = {
+                    name: user.name != null ? String(user.name) : '',
+                    email: user.email != null ? String(user.email) : ''
+                };
+            }
+        }
+
+        const updatedProducts = await finalizeSaleInDb({
+            saleId: pending.saleId,
+            saleRecord: pending.saleRecord,
+            stockUpdates: pending.stockUpdates
+        });
+        pendingPointSales.delete(token);
+
+        const saleResponse = {
+            id: pending.saleId,
+            code: pending.code,
+            date: new Date().toISOString(),
+            client: pending.client,
+            payment: pending.payment,
+            items: pending.resolvedItems.map((i) => ({
+                id: i.id,
+                name: i.name,
+                category: i.category,
+                price: i.price,
+                qty: i.qty
+            })),
+            discount: pending.discountAmount,
+            extra: pending.extraAmount,
+            subtotal: pending.subtotal,
+            total: pending.total,
+            adjustments: pending.saleRecord.adjustments,
+            paymentGateway: pending.saleRecord.paymentGateway
+        };
+        return res.json({
+            error: false,
+            pending: false,
+            sale: saleResponse,
+            products: updatedProducts,
+            payment: successPayment
+        });
+    } catch (e) {
+        console.error('Falha ao verificar pagamento pendente:', e?.response?.data || e);
+        return res.status(502).json({
+            error: true,
+            pending: true,
+            message: 'Erro ao consultar status do pagamento.'
+        });
+    }
+});
+
+app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
+    const token = String(req.params.token || '').trim();
+    const pending = pendingPointSales.get(token);
+    if (!pending) return res.json({ error: false });
+    try {
+        if (pending?.mode === 'point') await cancelPointOrder(pending.pointOrderId);
+    } catch (e) {
+        console.error('Falha ao cancelar pagamento pendente:', e?.response?.data || e);
+    } finally {
+        pendingPointSales.delete(token);
+        if (activePointOrderId === pending.pointOrderId) activePointOrderId = null;
+    }
+    return res.json({ error: false });
 });
 
 app.get('/sells', (req, res) => {

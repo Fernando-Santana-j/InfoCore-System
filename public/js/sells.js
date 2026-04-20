@@ -102,6 +102,20 @@ function openSaleDetail(id) {
     document.getElementById('saleDetailTotal').textContent = formatCurrency(s.total);
     document.getElementById('saleDetailPayment').textContent = payNames[normalizePaymentKey(s.payment)] || s.payment;
 
+    const cashWrap = document.getElementById('saleDetailCashWrap');
+    const isCash = normalizePaymentKey(s.payment) === 'money';
+    const hasCashMeta = isCash && s.cashReceived != null && Number.isFinite(Number(s.cashReceived));
+    if (cashWrap) {
+        if (hasCashMeta) {
+            cashWrap.style.display = 'block';
+            document.getElementById('saleDetailCashReceived').textContent = formatCurrency(Number(s.cashReceived));
+            const ch = s.change != null && Number.isFinite(Number(s.change)) ? Number(s.change) : 0;
+            document.getElementById('saleDetailCashChange').textContent = formatCurrency(ch);
+        } else {
+            cashWrap.style.display = 'none';
+        }
+    }
+
     openModal('saleDetail');
 }
 

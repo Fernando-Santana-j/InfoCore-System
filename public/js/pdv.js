@@ -31,6 +31,34 @@ function normalizePaymentKey(payment) {
     return map[payment] || 'money';
 }
 
+function isCashPaymentSelected() {
+    return normalizePaymentKey(selectedPaymentMethod) === 'money';
+}
+
+function roundMoney2(n) {
+    return Math.round(asNumber(n) * 100) / 100;
+}
+
+function updateCashChangeDisplay() {
+    
+    const section = document.getElementById('pdvCashPaymentSection');
+    const input = document.getElementById('pdvCashReceivedInput');
+    const out = document.getElementById('pdvCashChangeDisplay');
+    if (!section || !input || !out || section.style.display === 'none') return;
+    const totals = getCurrentTotals();
+    const total = totals.total;
+    const raw = String(input.value || '').trim();
+    if (raw === '') {
+        out.textContent = formatCurrency(0);
+        out.classList.remove('pdv-cash-change-negative');
+        return;
+    }
+    const received = asNumber(input.value);
+    const change = roundMoney2(received - total);
+    out.textContent = formatCurrency(Math.max(0, change));
+    out.classList.toggle('pdv-cash-change-negative', received < total - 1e-9);
+}
+
 function getPaymentMethods() {
     return window.appData?.configs?.payment_methods || {};
 }
@@ -47,6 +75,27 @@ function getPaymentLabel(paymentKey) {
 function getPaymentIcon(paymentKey) {
     const method = getPaymentMethods()[paymentKey];
     return method?.icon || '💳';
+}
+
+function showPaymentPopup(title, details) {
+    const modal = document.getElementById('paymentResultModal');
+    const titleEl = document.getElementById('paymentResultTitle');
+    const messageEl = document.getElementById('paymentResultMessage');
+    const listEl = document.getElementById('paymentResultDetails');
+    const lines = Array.isArray(details) ? details.filter(Boolean) : [String(details || '').trim()];
+    const [first, ...rest] = lines;
+    if (titleEl) titleEl.textContent = title || 'Resultado do pagamento';
+    if (messageEl) messageEl.textContent = first || '';
+    if (listEl) {
+        listEl.innerHTML = rest.map((line) => {
+            const idx = line.indexOf(':');
+            if (idx === -1) return `<div class="pdv-result-item"><span>Detalhe</span><strong>${line}</strong></div>`;
+            const label = line.slice(0, idx).trim();
+            const value = line.slice(idx + 1).trim();
+            return `<div class="pdv-result-item"><span>${label}</span><strong>${value}</strong></div>`;
+        }).join('');
+    }
+    if (modal) modal.classList.add('open');
 }
 
 function getAdjustmentValue(target) {
@@ -344,6 +393,8 @@ function openConfirmActionModal(actionType) {
     const itemsEl = document.getElementById('confirmActionItems');
     const modal = document.getElementById('confirmActionModal');
     const payment = normalizePaymentKey(selectedPaymentMethod);
+    const paymentUiKey = selectedPaymentMethod;
+  
     const cart = asArray(window.appData?.cart);
     const totals = getCurrentTotals();
     const totalItems = cart.reduce((sum, item) => sum + asNumber(item.qty), 0);
@@ -353,10 +404,26 @@ function openConfirmActionModal(actionType) {
             <div class="pdv-confirm-row"><span>Subtotal</span><strong>${formatCurrency(totals.subtotal)}</strong></div>
             <div class="pdv-confirm-row"><span>Desconto (${formatAdjustment(getAdjustmentType('discount'), getAdjustmentValue('discount'))})</span><strong>- ${formatCurrency(totals.discount)}</strong></div>
             <div class="pdv-confirm-row"><span>Acréscimo (${formatAdjustment(getAdjustmentType('extra'), getAdjustmentValue('extra'))})</span><strong>+ ${formatCurrency(totals.extra)}</strong></div>
-            <div class="pdv-confirm-row"><span>Pagamento</span><strong><span class="pdv-confirm-payment-icon">${getPaymentIcon(payment)}</span> ${getPaymentLabel(payment)}</strong></div>
+            <div class="pdv-confirm-row"><span>Pagamento</span><strong><span class="pdv-confirm-payment-icon">${getPaymentIcon(paymentUiKey)}</span> ${getPaymentLabel(paymentUiKey)}</strong></div>
             <div class="pdv-confirm-row"><span>Itens</span><strong>${totalItems}</strong></div>
             <div class="pdv-confirm-row total"><span>Total</span><strong>${formatCurrency(totals.total)}</strong></div>
         `;
+    }
+
+    const cashSection = document.getElementById('pdvCashPaymentSection');
+    const cashInput = document.getElementById('pdvCashReceivedInput');
+    if (cashSection && cashInput) {
+        if (actionType === 'finalizar' && paymentUiKey === 'money') {
+            cashSection.style.display = 'flex';
+            cashInput.value = '';
+            requestAnimationFrame(() => {
+                cashInput.focus();
+                cashInput.select();
+            });
+        } else {
+            cashSection.style.display = 'none';
+            cashInput.value = '';
+        }
     }
 
     if (itemsEl) {
@@ -391,7 +458,10 @@ function closeConfirmActionModal() {
 }
 
 async function executeConfirmedAction() {
-    if (confirmActionType === 'finalizar') await finalizeSaleCore();
+    if (confirmActionType === 'finalizar') {
+        const ok = await finalizeSaleCore();
+        if (!ok) return;
+    }
     if (confirmActionType === 'limpar') clearCartCore();
     closeConfirmActionModal();
 }
@@ -470,15 +540,201 @@ function clearCartCore() {
 }
 
 let finalizeSaleInFlight = false;
+let paymentPendingPollTimer = null;
+let currentPendingToken = null;
+
+function getPaymentStatusText(status, paymentKey) {
+    const key = String(status || '').toLowerCase();
+    if (paymentKey === 'pix') {
+        const pixMap = {
+            pending: 'Aguardando pagamento PIX',
+            in_process: 'Pagamento em processamento',
+            approved: 'Pagamento aprovado',
+            rejected: 'Pagamento recusado',
+            cancelled: 'Pagamento cancelado'
+        };
+        return pixMap[key] || 'Aguardando confirmação do PIX';
+    }
+    const map = {
+        created: 'Cobranca criada',
+        at_terminal: 'Pedido enviado para a maquininha',
+        in_process: 'Cliente realizando pagamento',
+        processed: 'Pagamento aprovado',
+        canceled: 'Pagamento cancelado',
+        expired: 'Pagamento expirado',
+        failed: 'Falha no pagamento'
+    };
+    return map[key] || 'Aguardando ação do cliente';
+}
+
+function setPaymentWaitingStatus(statusText) {
+    const chip = document.getElementById('paymentWaitingStatusChip');
+    if (chip) chip.textContent = statusText || 'Aguardando confirmação';
+}
+
+function openPaymentWaitingModal(paymentKey) {
+    const modal = document.getElementById('paymentWaitingModal');
+    const title = document.getElementById('paymentWaitingTitle');
+    const message = document.getElementById('paymentWaitingMessage');
+    const qrWrap = document.getElementById('paymentWaitingQrWrap');
+    const qrTextWrap = document.getElementById('paymentWaitingQrTextWrap');
+    const qrLoader = document.getElementById('paymentWaitingQrLoader');
+    const qrImage = document.getElementById('paymentWaitingQrImage');
+    const hint = document.getElementById('paymentWaitingHint');
+    const isPix = normalizePaymentKey(paymentKey) === 'pix';
+    if (title) title.textContent = 'Aguardando pagamento';
+    if (message) {
+        message.textContent = isPix
+            ? 'Peça para o cliente pagar o PIX na maquininha ou escaneando o QR abaixo.'
+            : 'Peça para o cliente inserir/aproximar o cartão e seguir as instruções na maquininha.';
+    }
+    if (hint) hint.textContent = 'A venda só será concluída após aprovação na maquininha.';
+    setPaymentWaitingStatus('Iniciando cobrança...');
+    if (qrWrap) qrWrap.style.display = isPix ? 'flex' : 'none';
+    if (qrTextWrap) qrTextWrap.style.display = isPix ? 'block' : 'none';
+    if (qrLoader) qrLoader.style.display = isPix ? 'flex' : 'none';
+    if (qrImage) qrImage.style.display = 'none';
+    if (modal) modal.classList.add('open');
+}
+
+function closePaymentWaitingModal() {
+    const modal = document.getElementById('paymentWaitingModal');
+    const qrImage = document.getElementById('paymentWaitingQrImage');
+    const qrText = document.getElementById('paymentWaitingQrText');
+    const qrLoader = document.getElementById('paymentWaitingQrLoader');
+    if (modal) modal.classList.remove('open');
+    if (qrImage) qrImage.removeAttribute('src');
+    if (qrText) qrText.value = '';
+    if (qrLoader) qrLoader.style.display = 'none';
+}
+
+function applyPaymentWaitingData(payment) {
+    const qrImage = document.getElementById('paymentWaitingQrImage');
+    const qrText = document.getElementById('paymentWaitingQrText');
+    const qrLoader = document.getElementById('paymentWaitingQrLoader');
+    const qrWrap = document.getElementById('paymentWaitingQrWrap');
+    const hasQr = Boolean(payment?.qrBase64);
+    if (qrWrap && qrWrap.style.display !== 'none') {
+        if (qrLoader) qrLoader.style.display = hasQr ? 'none' : 'flex';
+    }
+    if (qrImage) {
+        if (hasQr) {
+            qrImage.src = `data:image/png;base64,${payment.qrBase64}`;
+            qrImage.style.display = 'block';
+        } else if (payment?.qrData) {
+            qrImage.removeAttribute('src');
+            qrImage.style.display = 'none';
+        } else {
+            qrImage.removeAttribute('src');
+            qrImage.style.display = 'none';
+        }
+    }
+    if (qrText) qrText.value = payment?.qrData || '';
+    setPaymentWaitingStatus(getPaymentStatusText(payment?.status, normalizePaymentKey(selectedPaymentMethod)));
+}
+
+function stopPendingPoll() {
+    if (paymentPendingPollTimer) {
+        clearTimeout(paymentPendingPollTimer);
+        paymentPendingPollTimer = null;
+    }
+}
+
+function applySuccessfulSale(data, totals, payment) {
+    const sale = data.sale;
+    if (Array.isArray(data.products)) {
+        data.products.forEach((p) => {
+            const idx = window.appData.products.findIndex((x) => String(x.id) === String(p.id));
+            if (idx !== -1) window.appData.products[idx] = p;
+        });
+    }
+
+    window.appData.sales = asArray(window.appData.sales);
+    window.appData.sales.unshift(sale);
+
+    window.appData.cart = [];
+    setAdjustment('discount', 'fixed', 0);
+    setAdjustment('extra', 'fixed', 0);
+    renderCart();
+    renderPDV(currentPDVFilter);
+    focusPDVBarcodeInput();
+
+    const label = sale?.code || sale?.id || 'Venda';
+    const totalVal = sale?.total != null ? asNumber(sale.total) : totals.total;
+    let toastMsg = `${label} finalizada! ${formatCurrency(totalVal)}`;
+    if (payment === 'money' && sale?.change != null && asNumber(sale.change) > 0) {
+        toastMsg += ` · Troco: ${formatCurrency(asNumber(sale.change))}`;
+    }
+    showToast(toastMsg, 'success');
+    if (payment !== 'money') {
+        const paymentInfo = data?.payment || sale?.payment || {};
+        showPaymentPopup('Compra paga com sucesso', [
+            `Meio: ${getPaymentLabel(selectedPaymentMethod)}`,
+            `Status: ${paymentInfo.status || 'processed'}`,
+            `Pedido: ${paymentInfo.orderId || 'não informado'}`
+        ]);
+    }
+}
+
+async function pollPendingSaleStatus(token, totals, payment) {
+    stopPendingPoll();
+    currentPendingToken = token;
+    const check = async () => {
+        try {
+            const res = await fetch(`/api/sales/pending/${encodeURIComponent(token)}`, {
+                method: 'GET',
+                credentials: 'same-origin'
+            });
+            let data = {};
+            try { data = await res.json(); } catch { data = {}; }
+
+            if (!res.ok || data.error) {
+                stopPendingPoll();
+                currentPendingToken = null;
+                closePaymentWaitingModal();
+                const paymentInfo = data?.payment || {};
+                showPaymentPopup('Pagamento não aprovado', [
+                    `Meio: ${getPaymentLabel(selectedPaymentMethod)}`,
+                    `Status: ${paymentInfo.status || 'não informado'}`,
+                    `Motivo: ${paymentInfo.reason || data.message || 'Não informado'}`
+                ]);
+                showToast(data.message || 'Pagamento não aprovado.', 'error');
+                finalizeSaleInFlight = false;
+                return;
+            }
+
+            if (data.pending) {
+                applyPaymentWaitingData(data.payment || {});
+                setPaymentWaitingStatus(getPaymentStatusText(data?.payment?.status, payment));
+                paymentPendingPollTimer = setTimeout(check, 2000);
+                return;
+            }
+
+            stopPendingPoll();
+            currentPendingToken = null;
+            closePaymentWaitingModal();
+            applySuccessfulSale(data, totals, payment);
+            finalizeSaleInFlight = false;
+        } catch (e) {
+            console.error(e);
+            stopPendingPoll();
+            currentPendingToken = null;
+            closePaymentWaitingModal();
+            showToast('Erro ao consultar status do pagamento.', 'error');
+            finalizeSaleInFlight = false;
+        }
+    };
+    await check();
+}
 
 async function finalizeSaleCore() {
     ensureAppDataShape();
     const cart = asArray(window.appData.cart);
     if (cart.length === 0) {
         showToast('Carrinho vazio!', 'error');
-        return;
+        return false;
     }
-    if (finalizeSaleInFlight) return;
+    if (finalizeSaleInFlight) return false;
 
     const totals = getCurrentTotals();
     const payment = normalizePaymentKey(selectedPaymentMethod);
@@ -490,10 +746,38 @@ async function finalizeSaleCore() {
         client: 'Balcão'
     };
 
+    if (payment === 'money') {
+        const cashInput = document.getElementById('pdvCashReceivedInput');
+        const raw = String(cashInput?.value || '').trim();
+        if (raw === '') {
+            payload.cashReceived = roundMoney2(totals.total);
+            payload.change = 0;
+        } else {
+            const received = asNumber(cashInput?.value);
+            if (!Number.isFinite(received) || received <= 0) {
+                showToast('Valor recebido inválido. Deixe em branco se o cliente pagou o valor exato.', 'error');
+                return false;
+            }
+            if (received + 1e-9 < totals.total) {
+                showToast('O valor recebido é menor que o total da venda.', 'error');
+                return false;
+            }
+            payload.cashReceived = roundMoney2(received);
+            payload.change = roundMoney2(received - totals.total);
+        }
+    }
+
+    const isCardOrPix = payment !== 'money';
+    if (isCardOrPix) {
+        closeConfirmActionModal();
+        openPaymentWaitingModal(payment);
+        setPaymentWaitingStatus('Criando cobrança...');
+    }
+
     finalizeSaleInFlight = true;
     const confirmBtn = document.getElementById('confirmActionBtn');
     const prevBtnText = confirmBtn ? confirmBtn.textContent : '';
-    if (confirmBtn) {
+    if (confirmBtn && !isCardOrPix) {
         confirmBtn.disabled = true;
         confirmBtn.textContent = 'Salvando...';
     }
@@ -512,36 +796,35 @@ async function finalizeSaleCore() {
             data = {};
         }
         if (!res.ok || data.error) {
+            if (payment !== 'money') {
+                closePaymentWaitingModal();
+                const paymentInfo = data?.payment || {};
+                showPaymentPopup('Pagamento não aprovado', [
+                    `Meio: ${getPaymentLabel(selectedPaymentMethod)}`,
+                    `Status: ${paymentInfo.status || 'não informado'}`,
+                    `Motivo: ${paymentInfo.reason || data.message || 'Não informado'}`
+                ]);
+            }
             showToast(data.message || 'Não foi possível salvar a venda.', 'error');
-            return;
+            return false;
         }
 
-        const sale = data.sale;
-        if (Array.isArray(data.products)) {
-            data.products.forEach((p) => {
-                const idx = window.appData.products.findIndex((x) => String(x.id) === String(p.id));
-                if (idx !== -1) window.appData.products[idx] = p;
-            });
+        if (payment !== 'money' && data.pending && data.token) {
+            applyPaymentWaitingData(data.payment || {});
+            setPaymentWaitingStatus(getPaymentStatusText(data?.payment?.status, payment));
+            await pollPendingSaleStatus(data.token, totals, payment);
+            return true;
         }
 
-        window.appData.sales = asArray(window.appData.sales);
-        window.appData.sales.unshift(sale);
-
-        window.appData.cart = [];
-        setAdjustment('discount', 'fixed', 0);
-        setAdjustment('extra', 'fixed', 0);
-        renderCart();
-        renderPDV(currentPDVFilter);
-        focusPDVBarcodeInput();
-
-        const label = sale?.code || sale?.id || 'Venda';
-        const totalVal = sale?.total != null ? asNumber(sale.total) : totals.total;
-        showToast(`${label} finalizada! ${formatCurrency(totalVal)}`, 'success');
+        applySuccessfulSale(data, totals, payment);
+        return true;
     } catch (e) {
         console.error(e);
+        if (payment !== 'money') closePaymentWaitingModal();
         showToast('Erro de rede ao finalizar a venda.', 'error');
+        return false;
     } finally {
-        finalizeSaleInFlight = false;
+        if (payment === 'money') finalizeSaleInFlight = false;
         if (confirmBtn) {
             confirmBtn.disabled = false;
             confirmBtn.textContent = prevBtnText || 'Confirmar';
@@ -606,6 +889,65 @@ function bindConfirmModal() {
     if (cancelBtn) cancelBtn.addEventListener('click', closeConfirmActionModal);
     if (confirmBtn) confirmBtn.addEventListener('click', executeConfirmedAction);
     if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeConfirmActionModal(); });
+    
+}
+
+function bindPaymentWaitingModal() {
+    const cancelBtn = document.getElementById('cancelPaymentWaitingBtn');
+    const closeBtn = document.getElementById('closePaymentWaitingModalBtn');
+    const modal = document.getElementById('paymentWaitingModal');
+    const cancelFn = async () => {
+        const token = currentPendingToken;
+        stopPendingPoll();
+        currentPendingToken = null;
+        if (token) {
+            try {
+                await fetch(`/api/sales/pending/${encodeURIComponent(token)}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin'
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        finalizeSaleInFlight = false;
+        closePaymentWaitingModal();
+        showToast('Pagamento pendente cancelado.', 'info');
+    };
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelFn);
+    if (closeBtn) closeBtn.addEventListener('click', cancelFn);
+    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) cancelFn(); });
+
+    const copyBtn = document.getElementById('copyPixCodeBtn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            const qrText = document.getElementById('paymentWaitingQrText');
+            const value = String(qrText?.value || '').trim();
+            if (!value) {
+                showToast('Código PIX ainda não disponível.', 'info');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(value);
+                showToast('Código PIX copiado!', 'success');
+            } catch (e) {
+                console.error(e);
+                showToast('Não foi possível copiar automaticamente.', 'error');
+            }
+        });
+    }
+}
+
+function bindPaymentResultModal() {
+    const modal = document.getElementById('paymentResultModal');
+    const closeBtn = document.getElementById('closePaymentResultModalBtn');
+    const okBtn = document.getElementById('paymentResultOkBtn');
+    const close = () => {
+        if (modal) modal.classList.remove('open');
+    };
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    if (okBtn) okBtn.addEventListener('click', close);
+    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 }
 
 function bindCartAdjustmentModal() {
@@ -633,12 +975,20 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         initPDV();
         bindConfirmModal();
+        bindPaymentWaitingModal();
+        bindPaymentResultModal();
         bindCartAdjustmentModal();
         bindPDVBarcodeCapture();
+        const cashInput = document.getElementById('pdvCashReceivedInput');
+        if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
     });
 } else {
     initPDV();
     bindConfirmModal();
+    bindPaymentWaitingModal();
+    bindPaymentResultModal();
     bindCartAdjustmentModal();
     bindPDVBarcodeCapture();
+    const cashInput = document.getElementById('pdvCashReceivedInput');
+    if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
 }
