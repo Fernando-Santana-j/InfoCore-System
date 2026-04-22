@@ -215,7 +215,7 @@ function renderPDV(filter) {
     const grid = document.getElementById('pdvGrid');
     if (!grid) return;
 
-    let list = products.filter((p) => p.active !== false && asNumber(p.qty) > 0);
+    let list = products.filter((p) => p.active !== false);
     if (search) {
         list = list.filter((p) => String(p.name || '').toLowerCase().includes(search) || String(p.sku || '').toLowerCase().includes(search));
     }
@@ -227,12 +227,17 @@ function renderPDV(filter) {
         const img = p.image
             ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt=""></div>`
             : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || '📦'}</span></div>`;
+        const minStock = asNumber(p.min_stock || 0);
+        const isOutOfStock = asNumber(p.qty) <= 0;
+        const shouldShowOutOfStock = isOutOfStock && minStock > 0;
+        const outOfStockClass = shouldShowOutOfStock ? ' pdv-product-out-of-stock' : '';
+        const stockStatus = shouldShowOutOfStock ? '❌ Sem estoque' : `${asNumber(p.qty)} em estoque`;
         return `
-    <div class="pdv-product-card" onclick='addToCart(${JSON.stringify(p.id)})'>
+    <div class="pdv-product-card${outOfStockClass}" onclick='addToCart(${JSON.stringify(p.id)})'>
       ${img}
       <div class="prod-name">${p.name || 'Produto'}</div>
       <div class="prod-price">${formatCurrency(asNumber(p.price))}</div>
-      <div style="font-size:0.65rem;color:var(--text3);margin-top:2px;">${categories[p.category]?.name || p.category || 'Sem categoria'} • ${asNumber(p.qty)} em estoque</div>
+      <div style="font-size:0.65rem;color:var(--text3);margin-top:2px;">${categories[p.category]?.name || p.category || 'Sem categoria'} • ${stockStatus}</div>
     </div>
   `;
     }).join('') || `<div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum produto</p></div>`;
@@ -340,17 +345,23 @@ function addToCart(id) {
     const products = window.appData.products;
     const cart = window.appData.cart;
     const product = products.find((x) => String(x.id) === String(id));
-    if (!product || asNumber(product.qty) <= 0) {
-        showToast('Produto sem estoque!', 'error');
+    if (!product) {
+        showToast('Produto não encontrado!', 'error');
         return;
+    }
+
+    const productQty = asNumber(product.qty);
+    const minStock = asNumber(product.min_stock || 0);
+    const isOutOfStock = productQty <= 0;
+
+    // Validar permissão de adicionar ao carrinho baseado em min_stock
+    if (isOutOfStock && minStock > 0) {
+        // Produto sem estoque mas com min_stock > 0: mostrar aviso, mas permitir
+        showToast(`⚠️ ${product.name} está sem estoque, mas será adicionado ao carrinho.`, 'warning');
     }
 
     const existing = cart.find((x) => String(x.id) === String(id));
     if (existing) {
-        if (asNumber(existing.qty) >= asNumber(product.qty)) {
-            showToast('Estoque insuficiente!', 'error');
-            return;
-        }
         existing.qty += 1;
     } else {
         cart.push({
@@ -363,7 +374,10 @@ function addToCart(id) {
     }
 
     renderCart();
-    showToast(`${product.name} adicionado ao carrinho`, 'success');
+    // Mostrar mensagem de sucesso apenas se não for uma situação de out-of-stock com min_stock > 0
+    if (!isOutOfStock || (isOutOfStock && minStock === 0)) {
+        showToast(`${product.name} adicionado ao carrinho`, 'success');
+    }
 }
 
 function getCurrentTotals() {
@@ -510,9 +524,24 @@ function changeQty(id, delta) {
     if (!item) return;
 
     const product = products.find((x) => String(x.id) === String(id));
-    const maxQty = asNumber(product?.qty || 0);
+    const productQty = asNumber(product?.qty || 0);
+    const minStock = asNumber(product?.min_stock || 0);
     const next = asNumber(item.qty) + delta;
+    
     if (next <= 0) return removeFromCart(id);
+    
+    // Determinar quantidade máxima permitida no carrinho
+    let maxQty = productQty > 0 ? productQty : 0;
+    
+    // Se produto está sem estoque mas tem min_stock
+    if (productQty <= 0 && minStock > 0) {
+        // Permitir adicionar até 10 unidades quando sem estoque mas com min_stock
+        maxQty = 10;
+    } else if (productQty <= 0 && minStock === 0) {
+        // Se min_stock = 0, permitir quantidade bem alta
+        maxQty = 999;
+    }
+    
     if (next > maxQty) {
         showToast('Estoque insuficiente!', 'error');
         return;

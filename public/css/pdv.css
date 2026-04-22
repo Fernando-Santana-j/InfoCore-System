@@ -49,6 +49,18 @@
     transform: translateX(150%) rotate(20deg);
 }
 
+.pdv-product-out-of-stock {
+    opacity: 0.6;
+    border-color: rgba(255, 68, 68, 0.3);
+    background: linear-gradient(165deg, rgba(255, 68, 68, 0.05), rgba(255, 68, 68, 0.02));
+}
+
+.pdv-product-out-of-stock:hover {
+    border-color: rgba(255, 68, 68, 0.5);
+    background: linear-gradient(165deg, rgba(255, 68, 68, 0.1), rgba(255, 68, 68, 0.05));
+    box-shadow: 0 12px 24px rgba(255, 68, 68, 0.15);
+}
+
 .pdv-product-card .prod-emoji {
     font-size: 2rem;
     margin-bottom: 6px;
