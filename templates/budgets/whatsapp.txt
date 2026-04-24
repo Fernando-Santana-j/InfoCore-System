@@ -1,0 +1,9 @@
+*Orçamento {{code}}* - InfoCore
+Cliente: {{customerName}}
+Validade: {{validUntil}}
+Total: {{total}}
+
+{{itemsRowsText}}
+
+Observações: {{notes}}
+Assinatura: ________________________

@@ -12,10 +12,12 @@ const firestore = require('./firebase/db.js');
 const { randomInt } = require('crypto');
 const axios = require('axios');
 const { randomUUID } = require("crypto");
+const nodemailer = require('nodemailer');
 // const config = require('./config/config.json');
 
 const PRODUCTS_COLLECTION = 'products';
 const SALES_COLLECTION = 'sales';
+const BUDGETS_COLLECTION = 'budgets';
 const { FieldValue } = require('firebase-admin/firestore');
 
 const PAYMENT_KEYS = new Set(['money', 'credit_card', 'debit_card', 'pix']);
@@ -66,6 +68,194 @@ function computeSaleAmounts(subtotal, discountAdj, extraAdj) {
 function saleDisplayCode() {
     const t = Date.now().toString(36).toUpperCase();
     return `VD-${t.slice(-6)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
+}
+
+function budgetDisplayCode() {
+    const t = Date.now().toString(36).toUpperCase();
+    return `ORC-${t.slice(-6)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
+}
+
+function normalizeBudgetRow(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    const subtotal = Number(r.subtotal) || 0;
+    const discount = Number(r.discount) || 0;
+    const extra = Number(r.extra) || 0;
+    const total = Number(r.total) || Math.max(0, subtotal - discount + extra);
+    return {
+        id: r.id != null ? String(r.id) : '',
+        code: r.code != null ? String(r.code) : '',
+        customerName: r.customerName != null ? String(r.customerName) : '',
+        customerPhone: r.customerPhone != null ? String(r.customerPhone) : '',
+        customerEmail: r.customerEmail != null ? String(r.customerEmail) : '',
+        notes: r.notes != null ? String(r.notes) : '',
+        validUntil: r.validUntil != null ? String(r.validUntil) : '',
+        status: String(r.status || 'draft') === 'finalized' ? 'finalized' : 'draft',
+        items: Array.isArray(r.items) ? r.items.map((item) => ({
+            id: item?.id != null ? String(item.id) : '',
+            kind: String(item?.kind || 'custom') === 'product' ? 'product' : 'custom',
+            productId: item?.productId != null ? String(item.productId) : '',
+            sku: item?.sku != null ? String(item.sku) : '',
+            name: item?.name != null ? String(item.name) : '',
+            qty: Number(item?.qty) || 0,
+            unitPrice: Number(item?.unitPrice) || 0,
+            total: Number(item?.total) || 0
+        })) : [],
+        subtotal,
+        discount,
+        extra,
+        total,
+        createdAt: r.createdAt || null,
+        updatedAt: r.updatedAt || null,
+        finalizedAt: r.finalizedAt || null
+    };
+}
+
+function moneyBr(value) {
+    const n = Number(value) || 0;
+    return `R$ ${n.toFixed(2).replace('.', ',')}`;
+}
+
+function safeTemplateValue(value) {
+    return String(value == null ? '' : value);
+}
+
+function renderTemplateString(template, data) {
+    let out = String(template || '');
+    Object.keys(data || {}).forEach((key) => {
+        const token = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
+        out = out.replace(token, safeTemplateValue(data[key]));
+    });
+    return out;
+}
+
+function readBudgetTemplate(filename, fallback = '') {
+    const templatePath = path.join(__dirname, 'templates', 'budgets', filename);
+    try {
+        return fs.readFileSync(templatePath, 'utf8');
+    } catch {
+        return fallback;
+    }
+}
+
+function buildBudgetRowsHtml(budget) {
+    const items = Array.isArray(budget?.items) ? budget.items : [];
+    return items.map((item) => `
+<tr>
+  <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${safeTemplateValue(item.name || '')}</td>
+  <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;">${safeTemplateValue(item.qty || 0)}</td>
+  <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${moneyBr(item.unitPrice || 0)}</td>
+  <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;">${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}</td>
+</tr>`).join('');
+}
+
+function buildBudgetRowsText(budget) {
+    const items = Array.isArray(budget?.items) ? budget.items : [];
+    return items.map((item) => `- ${safeTemplateValue(item.name || 'Item')} (x${Number(item.qty) || 0}) ${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}`).join('\n');
+}
+
+function budgetTemplateData(budget) {
+    const logoUrl = process.env.APP_PUBLIC_BASE_URL
+        ? `${String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '')}/public/img/logo_bg.png`
+        : '/public/img/logo_bg.png';
+    return {
+        code: safeTemplateValue(budget?.code || 'ORC'),
+        customerName: safeTemplateValue(budget?.customerName || 'Não informado'),
+        customerPhone: safeTemplateValue(budget?.customerPhone || '-'),
+        customerEmail: safeTemplateValue(budget?.customerEmail || '-'),
+        validUntil: safeTemplateValue(budget?.validUntil || '-'),
+        notes: safeTemplateValue(budget?.notes || '-'),
+        subtotal: moneyBr(budget?.subtotal || 0),
+        discount: moneyBr(budget?.discount || 0),
+        extra: moneyBr(budget?.extra || 0),
+        total: moneyBr(budget?.total || 0),
+        status: safeTemplateValue(String(budget?.status || 'draft') === 'finalized' ? 'Finalizado' : 'Rascunho'),
+        itemsRowsHtml: buildBudgetRowsHtml(budget),
+        itemsRowsText: buildBudgetRowsText(budget),
+        logoUrl
+    };
+}
+
+function renderBudgetTemplateHtml(kind, budget) {
+    const file = kind === 'image' ? 'image.html' : 'pdf.html';
+    const fallback = `
+<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;">
+  <h2>Orçamento {{code}}</h2>
+  <p>Cliente: {{customerName}}</p>
+  <p>Total: {{total}}</p>
+  <table style="width:100%"><tbody>{{itemsRowsHtml}}</tbody></table>
+  <p>Assinatura do cliente: ____________________________</p>
+</div>`;
+    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget));
+}
+
+function renderBudgetTemplateText(kind, budget) {
+    const file = kind === 'email' ? 'email.html' : 'whatsapp.txt';
+    const fallback = kind === 'email'
+        ? `<h2>Orçamento {{code}}</h2><p>Total: {{total}}</p><pre>{{itemsRowsText}}</pre>`
+        : `*Orçamento {{code}}*\nTotal: {{total}}\n{{itemsRowsText}}`;
+    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget));
+}
+
+function sanitizePhone(raw) {
+    return String(raw || '').replace(/[^\d]/g, '');
+}
+
+function createSmtpTransport() {
+    const host = process.env.SMTP_HOST;
+    const port = Number(process.env.SMTP_PORT || 587);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    if (!host || !user || !pass) return null;
+    return nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass }
+    });
+}
+
+async function sendBudgetEmail(budget) {
+    const to = String(budget?.customerEmail || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Sem email do cliente.' };
+    const transport = createSmtpTransport();
+    if (!transport) return { sent: false, skipped: true, reason: 'SMTP não configurado.' };
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+    const html = renderBudgetTemplateText('email', budget);
+    await transport.sendMail({
+        from,
+        to,
+        subject: `Orçamento ${budget?.code || ''} - InfoCore`,
+        html
+    });
+    return { sent: true };
+}
+
+async function sendBudgetWhatsapp(budget) {
+    const to = sanitizePhone(budget?.customerPhone || '');
+    if (!to) return { sent: false, skipped: true, reason: 'Sem telefone do cliente.' };
+    const apiUrl = String(process.env.WHATSAPP_API_URL || '').trim();
+    if (!apiUrl) return { sent: false, skipped: true, reason: 'WHATSAPP_API_URL não configurada.' };
+    const token = String(process.env.WHATSAPP_API_TOKEN || '').trim();
+    const text = renderBudgetTemplateText('whatsapp', budget);
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    await axios.post(apiUrl, { to, message: text }, { headers, timeout: 12000 });
+    return { sent: true };
+}
+
+async function dispatchBudgetNotifications(budget) {
+    const report = { email: null, whatsapp: null };
+    try {
+        report.email = await sendBudgetEmail(budget);
+    } catch (e) {
+        report.email = { sent: false, error: true, reason: e.message || 'Falha no envio por email.' };
+    }
+    try {
+        report.whatsapp = await sendBudgetWhatsapp(budget);
+    } catch (e) {
+        report.whatsapp = { sent: false, error: true, reason: e.message || 'Falha no envio por WhatsApp.' };
+    }
+    return report;
 }
 
 /** SKU / código de barras: apenas dígitos, 1–8 caracteres, valor 1..99999999; armazenado sempre com 8 dígitos (zeros à esquerda). */
@@ -333,7 +523,17 @@ app.get('/pdv',verifyLogin, async (req, res) => {
     let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     
     const products = await loadProductsFromDb();
-    res.render('layout', { body: 'pdv',appData:{configs:configs, user:req.session.user, products} });
+    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
+    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+    res.render('layout', { body: 'pdv',appData:{configs:configs, user:req.session.user, products, budgets} });
+});
+
+app.get('/budgets', verifyLogin, async (req, res) => {
+    const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const products = await loadProductsFromDb();
+    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
+    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+    res.render('layout', { body: 'budgets', appData: { configs, user: req.session.user, products, budgets } });
 });
 
 app.get('/stock',verifyLogin, async (req, res) => {
@@ -467,6 +667,110 @@ app.delete('/api/products/:id', verifyLogin, async (req, res) => {
     }
 
     return res.json({ error: false });
+});
+
+app.get('/api/budgets', verifyLogin, async (req, res) => {
+    try {
+        const rows = await db.findAll({ colecao: BUDGETS_COLLECTION });
+        const budgets = Array.isArray(rows) ? rows.map(normalizeBudgetRow) : [];
+        budgets.sort((a, b) => {
+            const ad = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+            const bd = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+            return bd - ad;
+        });
+        return res.json({ error: false, budgets });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar orçamentos.' });
+    }
+});
+
+app.post('/api/budgets', verifyLogin, async (req, res) => {
+    const body = req.body || {};
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    if (rawItems.length === 0) {
+        return res.status(400).json({ error: true, message: 'Adicione ao menos 1 item ao orçamento.' });
+    }
+
+    const items = [];
+    let subtotal = 0;
+    for (const row of rawItems) {
+        const kind = String(row?.kind || 'custom') === 'product' ? 'product' : 'custom';
+        const qty = Number(row?.qty);
+        const unitPrice = Number(row?.unitPrice);
+        const name = String(row?.name || '').trim();
+        if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0 || !name) {
+            return res.status(400).json({ error: true, message: 'Item inválido no orçamento.' });
+        }
+        const lineTotal = Math.round(qty * unitPrice * 100) / 100;
+        subtotal += lineTotal;
+        items.push({
+            id: randomUUID(),
+            kind,
+            productId: row?.productId != null ? String(row.productId) : '',
+            sku: row?.sku != null ? String(row.sku) : '',
+            name,
+            qty,
+            unitPrice,
+            total: lineTotal
+        });
+    }
+
+    const discount = Math.max(0, Number(body.discount) || 0);
+    const extra = Math.max(0, Number(body.extra) || 0);
+    const total = Math.max(0, Math.round((subtotal - discount + extra) * 100) / 100);
+    const status = String(body.status || 'draft') === 'finalized' ? 'finalized' : 'draft';
+    const now = FieldValue.serverTimestamp();
+    const id = randomUUID();
+    const code = budgetDisplayCode();
+    const payload = {
+        id,
+        code,
+        customerName: String(body.customerName || '').trim(),
+        customerPhone: String(body.customerPhone || '').trim(),
+        customerEmail: String(body.customerEmail || '').trim(),
+        notes: String(body.notes || '').trim(),
+        validUntil: String(body.validUntil || '').trim(),
+        items,
+        subtotal,
+        discount,
+        extra,
+        total,
+        status,
+        createdAt: now,
+        updatedAt: now
+    };
+    if (status === 'finalized') payload.finalizedAt = now;
+
+    try {
+        await db.create(BUDGETS_COLLECTION, id, payload);
+        const budget = normalizeBudgetRow(payload);
+        let notifications = null;
+        if (status === 'finalized') {
+            notifications = await dispatchBudgetNotifications(budget);
+        }
+        return res.json({ error: false, budget, notifications });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao salvar orçamento.' });
+    }
+});
+
+app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    const patch = { status: 'finalized', updatedAt: FieldValue.serverTimestamp(), finalizedAt: FieldValue.serverTimestamp() };
+    try {
+        await db.update(BUDGETS_COLLECTION, id, patch);
+        const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+        if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+        const budget = normalizeBudgetRow({ id, ...snap.data() });
+        const notifications = await dispatchBudgetNotifications(budget);
+        return res.json({ error: false, budget, notifications });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao finalizar orçamento.' });
+    }
 });
 const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_DEVICE_ID = process.env.MERCADOPAGO_DEVICE_ID || "PAX_Q92__Q92-1733817193";

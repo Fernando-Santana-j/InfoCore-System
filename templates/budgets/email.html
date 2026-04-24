@@ -1,0 +1,26 @@
+<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#111827;">
+  <h2 style="margin-bottom:6px;">Orçamento {{code}} - InfoCore</h2>
+  <p style="margin:4px 0;"><strong>Cliente:</strong> {{customerName}}</p>
+  <p style="margin:4px 0;"><strong>Validade:</strong> {{validUntil}}</p>
+  <p style="margin:4px 0;"><strong>Total:</strong> {{total}}</p>
+  <table style="width:100%;border-collapse:collapse;margin-top:12px;">
+    <thead style="background:#111827;color:#fff;">
+      <tr>
+        <th style="padding:8px;text-align:left;">Item</th>
+        <th style="padding:8px;">Qtd</th>
+        <th style="padding:8px;text-align:right;">Unitário</th>
+        <th style="padding:8px;text-align:right;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{itemsRowsHtml}}
+    </tbody>
+  </table>
+  <div style="margin-top:10px;">
+    <p style="margin:4px 0;">Subtotal: {{subtotal}}</p>
+    <p style="margin:4px 0;">Desconto: - {{discount}}</p>
+    <p style="margin:4px 0;">Acréscimo: + {{extra}}</p>
+    <p style="margin:4px 0;font-size:1.05rem;"><strong>Total: {{total}}</strong></p>
+  </div>
+  <p style="margin-top:16px;">Assinatura do cliente: ________________________________________</p>
+</div>

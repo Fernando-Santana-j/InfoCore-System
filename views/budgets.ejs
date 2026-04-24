@@ -1,0 +1,98 @@
+<div class="page" id="page-budgets">
+  <div class="budget-hero card">
+    <div>
+      <h2 style="margin:0;">Central de Orçamentos</h2>
+      <p class="text-sm text-muted budget-hero-sub">Veja rascunhos e finalizados, e crie novos orçamentos em popup.</p>
+    </div>
+    <div class="budget-hero-actions">
+      <input class="form-input" id="budgetSearchInput" placeholder="Buscar por código ou cliente">
+      <button class="btn btn-primary btn-sm" type="button" id="openCreateBudgetModalBtn">+ Criar orçamento</button>
+    </div>
+  </div>
+
+  <div class="budgets-layout">
+    <section class="card budget-list-card">
+      <div class="budget-list-head">
+        <h3>Orçamentos salvos (rascunho)</h3>
+        <span class="text-xs text-muted">Orçamentos aguardando finalização.</span>
+      </div>
+      <div class="budgets-grid" id="budgetsDraftGrid"></div>
+    </section>
+
+    <section class="card budget-list-card">
+      <div class="budget-list-head">
+        <h3>Orçamentos finalizados</h3>
+        <span class="text-xs text-muted">Prontos para impressão e envio.</span>
+      </div>
+      <div class="budgets-grid" id="budgetsFinalGrid"></div>
+    </section>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="budgetCreateModal">
+  <div class="pdv-modal-card pdv-budget-create-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title">Criar orçamento</div>
+      <button class="pdv-modal-close" id="closeCreateBudgetModalBtn">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <div class="budget-form-grid">
+        <input class="form-input" id="budgetCustomerName" placeholder="Nome do cliente">
+        <input class="form-input" id="budgetCustomerPhone" placeholder="WhatsApp">
+        <input class="form-input" id="budgetCustomerEmail" placeholder="Email">
+        <input class="form-input" id="budgetValidUntil" type="date">
+      </div>
+      <textarea class="form-input" id="budgetNotes" rows="2" placeholder="Observações, prazo, garantia, condições..."></textarea>
+      <div class="budget-add-row">
+        <select class="form-input" id="budgetProductSelect"></select>
+        <button class="btn btn-ghost btn-sm" type="button" id="budgetAddProductBtn">+ Adicionar produto</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="budgetAddCustomBtn">+ Item personalizado</button>
+      </div>
+      <div class="budget-items-table-wrap">
+        <div class="budget-items-table-head">
+          <span>Item</span>
+          <span>Qtd</span>
+          <span>Valor unit.</span>
+          <span>Total</span>
+          <span></span>
+        </div>
+        <div id="budgetItemsList" class="budget-items-table-body"></div>
+      </div>
+      <div class="budget-adjustments-row">
+        <label>Desconto (R$)<input class="form-input" id="budgetDiscountInput" type="number" min="0" step="0.01" value="0"></label>
+        <label>Acréscimo (R$)<input class="form-input" id="budgetExtraInput" type="number" min="0" step="0.01" value="0"></label>
+      </div>
+      <div id="budgetTotalsBox"></div>
+    </div>
+    <div class="pdv-modal-footer">
+      <button class="btn btn-ghost btn-sm" id="cancelCreateBudgetBtn">Cancelar</button>
+      <button class="btn btn-ghost btn-sm" id="budgetPageSaveDraftBtn">Salvar rascunho</button>
+      <button class="btn btn-primary btn-sm" id="budgetPageSaveFinalBtn">Finalizar orçamento</button>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="budgetTemplateModal">
+  <div class="pdv-modal-card pdv-budget-template-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title">Modelo do orçamento</div>
+      <button class="pdv-modal-close" id="closeBudgetTemplateModalBtn">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <div class="pdv-budget-template-actions">
+        <button class="btn btn-ghost btn-sm" type="button" id="budgetCopyWhatsappBtn">Copiar WhatsApp</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="budgetCopyEmailBtn">Copiar Email (HTML)</button>
+        <button class="btn btn-ghost btn-sm" type="button" id="budgetDownloadImageBtn">Baixar imagem</button>
+        <button class="btn btn-primary btn-sm" type="button" id="budgetGeneratePdfBtn">Gerar PDF</button>
+      </div>
+      <div class="pdv-budget-template-preview" id="budgetTemplatePreview"></div>
+      <div class="pdv-budget-signature">
+        <div>Assinatura do cliente: __________________________________________</div>
+        <div>Data: ____ / ____ / ______</div>
+      </div>
+    </div>
+    <div class="pdv-modal-footer">
+      <button class="btn btn-primary btn-sm" id="budgetTemplateDoneBtn">Fechar</button>
+    </div>
+  </div>
+</div>

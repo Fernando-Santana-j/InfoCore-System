@@ -1,0 +1,266 @@
+.budget-hero {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.budget-hero-sub {
+    margin: 6px 0 0;
+}
+
+.budget-hero-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.budget-hero-actions .form-input {
+    min-width: 240px;
+}
+
+.budgets-layout {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.budget-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.budget-add-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 8px;
+}
+
+.budget-items-table-wrap {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.budget-items-table-head,
+.budget-items-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 80px 120px 120px auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+}
+
+.budget-items-table-head {
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--text2);
+    font-weight: 700;
+}
+
+.budget-items-table-body {
+    max-height: 360px;
+    overflow: auto;
+}
+
+.budget-items-row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.budget-items-row:last-child {
+    border-bottom: none;
+}
+
+.budget-items-total {
+    font-family: "Inter", sans-serif;
+    color: var(--gold);
+    text-align: right;
+    font-weight: 700;
+}
+
+.budget-adjustments-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.budget-adjustments-row label {
+    font-size: 0.78rem;
+    color: var(--text2);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.budget-list-card h3 {
+    margin: 0;
+}
+
+.budget-list-head {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#budgetTotalsBox {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.budgets-grid {
+    margin-top: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: calc(100vh - 340px);
+    overflow: auto;
+}
+
+.budget-card-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.budget-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.budget-card-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    font-size: 0.8rem;
+    color: var(--text2);
+}
+
+.budget-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+@media (max-width: 1080px) {
+    .budgets-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 720px) {
+    .budget-form-grid,
+    .budget-add-row,
+    .budget-adjustments-row {
+        grid-template-columns: 1fr;
+    }
+
+    .budget-items-table-head,
+    .budget-items-row {
+        grid-template-columns: 1fr;
+    }
+
+    .budget-items-total {
+        text-align: left;
+    }
+}
+
+.pdv-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 90;
+    padding: 16px;
+}
+
+.pdv-modal-overlay.open {
+    display: flex;
+}
+
+.pdv-modal-card {
+    width: min(900px, 100%);
+    background: linear-gradient(160deg, rgba(22, 22, 28, 0.98), rgba(12, 12, 16, 0.96));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+}
+
+.pdv-budget-create-card {
+    width: min(980px, 100%);
+}
+
+.pdv-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pdv-modal-title {
+    font-size: 1.15rem;
+    font-weight: 800;
+}
+
+.pdv-modal-close {
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 1rem;
+}
+
+.pdv-modal-body {
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.pdv-modal-footer {
+    padding: 16px 22px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.pdv-budget-template-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pdv-budget-template-preview {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    background: #fff;
+    color: #1f2937;
+    min-height: 180px;
+}
+
+.pdv-budget-signature {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.83rem;
+    color: var(--text2);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}

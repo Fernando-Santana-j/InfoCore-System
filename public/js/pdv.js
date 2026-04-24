@@ -6,6 +6,8 @@ let cartAdjustments = {
     extra: { type: 'fixed', value: 0 }
 };
 let currentAdjustmentTarget = 'discount';
+let budgetItemsDraft = [];
+let budgetCurrentRecord = null;
 
 function asArray(value) {
     if (Array.isArray(value)) return value;
@@ -149,6 +151,393 @@ function ensureAppDataShape() {
     window.appData.products = asArray(window.appData.products);
     window.appData.sales = asArray(window.appData.sales);
     window.appData.cart = asArray(window.appData.cart);
+    window.appData.budgets = asArray(window.appData.budgets);
+}
+
+function escapeHtml(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function budgetTotals(items = budgetItemsDraft) {
+    const subtotal = items.reduce((sum, item) => sum + (asNumber(item.qty) * asNumber(item.unitPrice)), 0);
+    const discount = asNumber(document.getElementById('budgetDiscountInput')?.value);
+    const extra = asNumber(document.getElementById('budgetExtraInput')?.value);
+    const total = Math.max(0, subtotal - discount + extra);
+    return { subtotal, discount, extra, total };
+}
+
+function renderBudgetProductsSelect() {
+    const select = document.getElementById('budgetProductSelect');
+    if (!select) return;
+    const products = asArray(window.appData.products).filter((p) => p.active !== false);
+    select.innerHTML = `<option value="">Selecione um produto...</option>${products.map((p) => `<option value="${escapeHtml(String(p.id))}">${escapeHtml(p.name)} - ${formatCurrency(asNumber(p.price))}</option>`).join('')}`;
+}
+
+function renderBudgetDraftItems() {
+    const box = document.getElementById('budgetItemsList');
+    const totalsEl = document.getElementById('budgetTotalsBox');
+    if (!box || !totalsEl) return;
+    if (budgetItemsDraft.length === 0) {
+        box.innerHTML = '<div class="text-xs text-muted">Nenhum item adicionado ao orçamento.</div>';
+    } else {
+        box.innerHTML = budgetItemsDraft.map((item, index) => `
+            <div class="pdv-budget-item-row">
+                <input class="form-input" value="${escapeHtml(item.name)}" onchange="updateBudgetItem(${index}, 'name', this.value)">
+                <input class="form-input" type="number" min="1" step="1" value="${asNumber(item.qty)}" onchange="updateBudgetItem(${index}, 'qty', this.value)">
+                <input class="form-input" type="number" min="0" step="0.01" value="${asNumber(item.unitPrice)}" onchange="updateBudgetItem(${index}, 'unitPrice', this.value)">
+                <button class="btn btn-ghost btn-sm" type="button" onclick="removeBudgetItem(${index})">✕</button>
+            </div>
+        `).join('');
+    }
+    const totals = budgetTotals();
+    totalsEl.innerHTML = `
+        <div class="cart-total-row"><span>Subtotal</span><span class="mono">${formatCurrency(totals.subtotal)}</span></div>
+        <div class="cart-total-row"><span>Desconto</span><span class="mono">- ${formatCurrency(totals.discount)}</span></div>
+        <div class="cart-total-row"><span>Acréscimo</span><span class="mono">+ ${formatCurrency(totals.extra)}</span></div>
+        <div class="divider"></div>
+        <div class="cart-total-row grand"><span>Total</span><span class="val">${formatCurrency(totals.total)}</span></div>
+    `;
+}
+
+function renderSavedBudgets() {
+    const list = document.getElementById('savedBudgetsList');
+    if (!list) return;
+    const budgets = asArray(window.appData.budgets);
+    if (budgets.length === 0) {
+        list.innerHTML = '<div class="text-xs text-muted">Nenhum orçamento salvo.</div>';
+        return;
+    }
+    list.innerHTML = budgets.slice().sort((a, b) => String(b.code || '').localeCompare(String(a.code || ''))).map((budget) => `
+        <div class="pdv-budget-saved-card">
+            <div>
+                <div><strong>${escapeHtml(budget.code || 'Orçamento')}</strong> ${budget.status === 'finalized' ? '✅' : '📝'}</div>
+                <div class="text-xs text-muted">${escapeHtml(budget.customerName || 'Cliente não informado')} · ${formatCurrency(asNumber(budget.total))}</div>
+            </div>
+            <div class="flex gap-8">
+                <button class="btn btn-ghost btn-sm" type="button" onclick="openBudgetTemplateById('${escapeHtml(String(budget.id || ''))}')">Template</button>
+                ${budget.status === 'finalized' ? '' : `<button class="btn btn-primary btn-sm" type="button" onclick="finalizeBudgetById('${escapeHtml(String(budget.id || ''))}')">Finalizar</button>`}
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateBudgetItem(index, key, value) {
+    const item = budgetItemsDraft[index];
+    if (!item) return;
+    if (key === 'qty' || key === 'unitPrice') item[key] = Math.max(0, asNumber(value));
+    else item[key] = String(value || '').trim();
+    renderBudgetDraftItems();
+}
+
+function removeBudgetItem(index) {
+    budgetItemsDraft.splice(index, 1);
+    renderBudgetDraftItems();
+}
+
+function addCustomBudgetItem() {
+    budgetItemsDraft.push({ kind: 'custom', productId: '', sku: '', name: 'Serviço personalizado', qty: 1, unitPrice: 0 });
+    renderBudgetDraftItems();
+}
+
+function addProductBudgetItem() {
+    const select = document.getElementById('budgetProductSelect');
+    const productId = String(select?.value || '').trim();
+    if (!productId) {
+        showToast('Selecione um produto para adicionar.', 'info');
+        return;
+    }
+    const p = asArray(window.appData.products).find((row) => String(row.id) === productId);
+    if (!p) return;
+    budgetItemsDraft.push({ kind: 'product', productId: String(p.id), sku: String(p.sku || ''), name: String(p.name || 'Produto'), qty: 1, unitPrice: asNumber(p.price) });
+    renderBudgetDraftItems();
+}
+
+function buildBudgetPayload(status) {
+    const customerName = String(document.getElementById('budgetCustomerName')?.value || '').trim();
+    const customerPhone = String(document.getElementById('budgetCustomerPhone')?.value || '').trim();
+    const customerEmail = String(document.getElementById('budgetCustomerEmail')?.value || '').trim();
+    const validUntil = String(document.getElementById('budgetValidUntil')?.value || '').trim();
+    const notes = String(document.getElementById('budgetNotes')?.value || '').trim();
+    const totals = budgetTotals();
+    const items = budgetItemsDraft
+        .filter((item) => String(item.name || '').trim() && asNumber(item.qty) > 0)
+        .map((item) => ({
+            kind: item.kind === 'product' ? 'product' : 'custom',
+            productId: String(item.productId || ''),
+            sku: String(item.sku || ''),
+            name: String(item.name || '').trim(),
+            qty: asNumber(item.qty),
+            unitPrice: asNumber(item.unitPrice)
+        }));
+    return {
+        customerName,
+        customerPhone,
+        customerEmail,
+        validUntil,
+        notes,
+        items,
+        discount: totals.discount,
+        extra: totals.extra,
+        status: status === 'finalized' ? 'finalized' : 'draft'
+    };
+}
+
+function getBudgetTemplateHtml(budget) {
+    const items = asArray(budget?.items);
+    const logo = '/public/img/logo_bg.png';
+    const rows = items.map((item) => `
+        <tr>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.name || '')}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;">${asNumber(item.qty)}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${formatCurrency(asNumber(item.unitPrice))}</td>
+            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;">${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}</td>
+        </tr>
+    `).join('');
+    return `
+        <div id="budgetPrintArea" style="font-family:Inter,Arial,sans-serif;max-width:760px;margin:0 auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:2px solid #111827;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <img src="${logo}" alt="Logo" style="width:56px;height:56px;border-radius:8px;object-fit:cover;">
+                    <div>
+                        <div style="font-size:1.2rem;font-weight:800;color:#111827;">InfoCore System</div>
+                        <div style="font-size:.85rem;color:#4b5563;">Orçamento comercial</div>
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-weight:700;color:#111827;">${escapeHtml(budget.code || 'ORC')}</div>
+                    <div style="font-size:.82rem;color:#6b7280;">Status: ${budget.status === 'finalized' ? 'Finalizado' : 'Rascunho'}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+                <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
+                    <div><strong>Cliente:</strong> ${escapeHtml(budget.customerName || '-')}</div>
+                    <div><strong>WhatsApp:</strong> ${escapeHtml(budget.customerPhone || '-')}</div>
+                    <div><strong>Email:</strong> ${escapeHtml(budget.customerEmail || '-')}</div>
+                </div>
+                <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
+                    <div><strong>Validade:</strong> ${escapeHtml(budget.validUntil || '-')}</div>
+                    <div><strong>Observações:</strong> ${escapeHtml(budget.notes || '-')}</div>
+                </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;margin-top:14px;">
+                <thead style="background:#111827;color:#fff;">
+                    <tr><th style="padding:8px;text-align:left;">Item</th><th>Qtd</th><th style="text-align:right;">Unitário</th><th style="text-align:right;">Total</th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+            <div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                <div style="min-width:260px;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
+                    <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><strong>${formatCurrency(asNumber(budget.subtotal))}</strong></div>
+                    <div style="display:flex;justify-content:space-between;"><span>Desconto</span><strong>- ${formatCurrency(asNumber(budget.discount))}</strong></div>
+                    <div style="display:flex;justify-content:space-between;"><span>Acréscimo</span><strong>+ ${formatCurrency(asNumber(budget.extra))}</strong></div>
+                    <div style="display:flex;justify-content:space-between;font-size:1.05rem;margin-top:6px;"><span>Total</span><strong>${formatCurrency(asNumber(budget.total))}</strong></div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function buildWhatsappTemplate(budget) {
+    return [
+        `*Orçamento ${budget.code || ''}* - InfoCore`,
+        `Cliente: ${budget.customerName || 'Não informado'}`,
+        `Total: ${formatCurrency(asNumber(budget.total))}`,
+        '',
+        ...asArray(budget.items).map((item) => `- ${item.name} (x${asNumber(item.qty)}) ${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}`),
+        '',
+        `Validade: ${budget.validUntil || 'Não informada'}`,
+        `Assinatura: ________________________`
+    ].join('\n');
+}
+
+function buildEmailTemplate(budget) {
+    return `
+<h2>Orçamento ${escapeHtml(budget.code || '')} - InfoCore</h2>
+<p>Cliente: <strong>${escapeHtml(budget.customerName || 'Não informado')}</strong></p>
+<p>Total: <strong>${formatCurrency(asNumber(budget.total))}</strong></p>
+<ul>${asArray(budget.items).map((item) => `<li>${escapeHtml(item.name)} - x${asNumber(item.qty)} - ${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}</li>`).join('')}</ul>
+<p>Validade: ${escapeHtml(budget.validUntil || 'Não informada')}</p>
+<p>Assinatura: _______________________________________</p>
+    `.trim();
+}
+
+function openBudgetTemplateModal(budget) {
+    budgetCurrentRecord = budget;
+    const preview = document.getElementById('budgetTemplatePreview');
+    const modal = document.getElementById('budgetTemplateModal');
+    if (preview) preview.innerHTML = getBudgetTemplateHtml(budget);
+    if (modal) modal.classList.add('open');
+}
+
+function closeBudgetTemplateModal() {
+    const modal = document.getElementById('budgetTemplateModal');
+    if (modal) modal.classList.remove('open');
+}
+
+async function saveBudget(status) {
+    const payload = buildBudgetPayload(status);
+    if (payload.items.length === 0) {
+        showToast('Adicione ao menos um item ao orçamento.', 'error');
+        return;
+    }
+    try {
+        const res = await fetch('/api/budgets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            showToast(data.message || 'Não foi possível salvar o orçamento.', 'error');
+            return;
+        }
+        window.appData.budgets = asArray(window.appData.budgets);
+        window.appData.budgets.unshift(data.budget);
+        renderSavedBudgets();
+        showToast(status === 'finalized' ? 'Orçamento finalizado!' : 'Orçamento salvo!', 'success');
+        openBudgetTemplateModal(data.budget);
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao salvar orçamento.', 'error');
+    }
+}
+
+async function finalizeBudgetById(id) {
+    try {
+        const res = await fetch(`/api/budgets/${encodeURIComponent(id)}/finalize`, {
+            method: 'PATCH',
+            credentials: 'same-origin'
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            showToast(data.message || 'Erro ao finalizar orçamento.', 'error');
+            return;
+        }
+        window.appData.budgets = asArray(window.appData.budgets).map((item) => String(item.id) === String(data.budget.id) ? data.budget : item);
+        renderSavedBudgets();
+        showToast('Orçamento finalizado.', 'success');
+        openBudgetTemplateModal(data.budget);
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao finalizar orçamento.', 'error');
+    }
+}
+
+function openBudgetTemplateById(id) {
+    const budget = asArray(window.appData.budgets).find((item) => String(item.id) === String(id));
+    if (!budget) return;
+    openBudgetTemplateModal(budget);
+}
+
+function openBudgetModal() {
+    const modal = document.getElementById('budgetModal');
+    budgetItemsDraft = [];
+    renderBudgetProductsSelect();
+    renderBudgetDraftItems();
+    renderSavedBudgets();
+    if (modal) modal.classList.add('open');
+}
+
+function closeBudgetModal() {
+    const modal = document.getElementById('budgetModal');
+    if (modal) modal.classList.remove('open');
+}
+
+function generateBudgetPdf() {
+    if (!budgetCurrentRecord) return;
+    const html = getBudgetTemplateHtml(budgetCurrentRecord);
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<html><head><title>Orçamento ${escapeHtml(budgetCurrentRecord.code || '')}</title></head><body>${html}</body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+}
+
+function downloadBudgetImage() {
+    if (!budgetCurrentRecord) return;
+    const text = encodeURIComponent(buildWhatsappTemplate(budgetCurrentRecord));
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350"><rect width="100%" height="100%" fill="#0f172a"/><rect x="40" y="40" width="1000" height="1270" rx="26" fill="#ffffff"/><text x="80" y="110" font-size="42" font-family="Arial" font-weight="700" fill="#111827">InfoCore - ${escapeHtml(budgetCurrentRecord.code || 'Orçamento')}</text><foreignObject x="80" y="150" width="920" height="1100"><div xmlns="http://www.w3.org/1999/xhtml" style="font-family:Arial,sans-serif;font-size:26px;line-height:1.45;color:#111827;white-space:pre-wrap;">${decodeURIComponent(text)}</div></foreignObject></svg>`;
+    const img = new Image();
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1080;
+        canvas.height = 1350;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = `${budgetCurrentRecord.code || 'orcamento'}.png`;
+        a.click();
+    };
+    img.src = url;
+}
+
+function bindBudgetModal() {
+    const openBtn = document.getElementById('btnOpenBudgetModal');
+    const closeBtn = document.getElementById('closeBudgetModalBtn');
+    const cancelBtn = document.getElementById('cancelBudgetBtn');
+    const addProductBtn = document.getElementById('budgetAddProductBtn');
+    const addCustomBtn = document.getElementById('budgetAddCustomBtn');
+    const saveBtn = document.getElementById('saveBudgetBtn');
+    const finalizeBtn = document.getElementById('finalizeBudgetBtn');
+    const modal = document.getElementById('budgetModal');
+    const discountInput = document.getElementById('budgetDiscountInput');
+    const extraInput = document.getElementById('budgetExtraInput');
+
+    if (openBtn) openBtn.addEventListener('click', openBudgetModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeBudgetModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeBudgetModal);
+    if (addProductBtn) addProductBtn.addEventListener('click', addProductBudgetItem);
+    if (addCustomBtn) addCustomBtn.addEventListener('click', addCustomBudgetItem);
+    if (saveBtn) saveBtn.addEventListener('click', () => saveBudget('draft'));
+    if (finalizeBtn) finalizeBtn.addEventListener('click', () => saveBudget('finalized'));
+    if (discountInput) discountInput.addEventListener('input', renderBudgetDraftItems);
+    if (extraInput) extraInput.addEventListener('input', renderBudgetDraftItems);
+    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeBudgetModal(); });
+}
+
+async function copyTextToClipboard(value, successMsg) {
+    try {
+        await navigator.clipboard.writeText(value);
+        showToast(successMsg, 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('Não foi possível copiar automaticamente.', 'error');
+    }
+}
+
+function bindBudgetTemplateModal() {
+    const closeBtn = document.getElementById('closeBudgetTemplateModalBtn');
+    const doneBtn = document.getElementById('budgetTemplateDoneBtn');
+    const modal = document.getElementById('budgetTemplateModal');
+    const copyWhatsappBtn = document.getElementById('budgetCopyWhatsappBtn');
+    const copyEmailBtn = document.getElementById('budgetCopyEmailBtn');
+    const downloadImageBtn = document.getElementById('budgetDownloadImageBtn');
+    const generatePdfBtn = document.getElementById('budgetGeneratePdfBtn');
+
+    if (closeBtn) closeBtn.addEventListener('click', closeBudgetTemplateModal);
+    if (doneBtn) doneBtn.addEventListener('click', closeBudgetTemplateModal);
+    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeBudgetTemplateModal(); });
+    if (copyWhatsappBtn) copyWhatsappBtn.addEventListener('click', () => {
+        if (!budgetCurrentRecord) return;
+        copyTextToClipboard(buildWhatsappTemplate(budgetCurrentRecord), 'Template de WhatsApp copiado.');
+    });
+    if (copyEmailBtn) copyEmailBtn.addEventListener('click', () => {
+        if (!budgetCurrentRecord) return;
+        copyTextToClipboard(buildEmailTemplate(budgetCurrentRecord), 'Template HTML de email copiado.');
+    });
+    if (downloadImageBtn) downloadImageBtn.addEventListener('click', downloadBudgetImage);
+    if (generatePdfBtn) generatePdfBtn.addEventListener('click', generateBudgetPdf);
 }
 
 function renderPDVFilters() {
@@ -1007,6 +1396,8 @@ if (document.readyState === 'loading') {
         bindPaymentWaitingModal();
         bindPaymentResultModal();
         bindCartAdjustmentModal();
+        bindBudgetModal();
+        bindBudgetTemplateModal();
         bindPDVBarcodeCapture();
         const cashInput = document.getElementById('pdvCashReceivedInput');
         if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
@@ -1017,6 +1408,8 @@ if (document.readyState === 'loading') {
     bindPaymentWaitingModal();
     bindPaymentResultModal();
     bindCartAdjustmentModal();
+    bindBudgetModal();
+    bindBudgetTemplateModal();
     bindPDVBarcodeCapture();
     const cashInput = document.getElementById('pdvCashReceivedInput');
     if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
