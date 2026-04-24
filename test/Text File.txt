@@ -1,1 +1,5 @@
 https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/point/orders/create-order/post
+
+
+
+@views/pdv.ejs tenho esse codigo e como pode ver ele recebe alguns produtos, quero que voce crie um botao aonde vai abrir um popup de orcamento personalizado, aonde eu vou listar oque sera usado, podendo colocar itens com valores personalizados ou produtos ja cadastrados, alem disso eu posso salvar o orcamento, (se preferir pode criar outra pagina para os orcamentos tanto para o cadastro quanto para a exibicao), e podendo tambem finalizalo, ao finalizar ou salvar eu posso ter a opcao de gerar um pdf ou imagem do orcamento, para ser impresso ou enviar de forma bonita e organizada no whatsapp por exemplo ou por email, para isso quero que voce crie templates para o modelo do pdf, whatsapp, email e imagem, aonde fique bonito com a logo informacoes, campo para assinatura e tudo mais qu for necessario 
