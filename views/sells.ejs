@@ -2,7 +2,7 @@
   <div class="flex flex-wrap gap-12 mb-16">
     <div class="search-bar" style="flex:1;max-width:360px">
       <span>🔍</span>
-      <input type="text" placeholder="Pesquisar venda, cliente..." id="salesSearch" oninput="filterSales(this.value)">
+      <input type="text" placeholder="Pesquisar codigo, venda, cliente..." id="salesSearch" oninput="filterSales(this.value)">
     </div>
     <div class="filter-bar">
       <button class="filter-btn active" onclick="setSalesFilter('todos',this)">Todos</button>
@@ -38,7 +38,7 @@
       <table>
         <thead>
           <tr>
-            <th>#ID</th>
+            <th>Codigo</th>
             <th>Data/Hora</th>
             <th>Cliente</th>
             <th>Itens</th>

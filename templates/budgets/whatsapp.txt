@@ -1,6 +1,6 @@
 *Orçamento {{code}}* - InfoCore
 Cliente: {{customerName}}
-Validade: {{validUntil}}
+Validade: {{date}}
 Total: {{total}}
 
 {{itemsRowsText}}

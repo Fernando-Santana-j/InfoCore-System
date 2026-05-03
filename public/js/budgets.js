@@ -112,7 +112,7 @@ function payloadFromDraft(status) {
         customerName: String(document.getElementById('budgetCustomerName')?.value || '').trim(),
         customerPhone: String(document.getElementById('budgetCustomerPhone')?.value || '').trim(),
         customerEmail: String(document.getElementById('budgetCustomerEmail')?.value || '').trim(),
-        validUntil: String(document.getElementById('budgetValidUntil')?.value || '').trim(),
+        date: String(document.getElementById('budgetdate')?.value || '').trim(),
         notes: String(document.getElementById('budgetNotes')?.value || '').trim(),
         discount: totals.discount,
         extra: totals.extra,
@@ -163,7 +163,7 @@ function getBudgetTemplateHtml(budget) {
                     <div><strong>Email:</strong> ${escapeHtml(budget.customerEmail || '-')}</div>
                 </div>
                 <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
-                    <div><strong>Validade:</strong> ${escapeHtml(budget.validUntil || '-')}</div>
+                    <div><strong>Validade:</strong> ${escapeHtml(budget.date || '-')}</div>
                     <div><strong>Observações:</strong> ${escapeHtml(budget.notes || '-')}</div>
                 </div>
             </div>
@@ -197,7 +197,7 @@ function buildWhatsappTemplate(budget) {
         '',
         ...asArray(budget.items).map((item) => `- ${item.name} (x${asNumber(item.qty)}) ${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}`),
         '',
-        `Validade: ${budget.validUntil || 'Não informada'}`,
+        `Validade: ${budget.date || 'Não informada'}`,
         `Assinatura: ________________________`
     ].join('\n');
 }
@@ -208,7 +208,7 @@ function buildEmailTemplate(budget) {
 <p>Cliente: <strong>${escapeHtml(budget.customerName || 'Não informado')}</strong></p>
 <p>Total: <strong>${formatCurrency(asNumber(budget.total))}</strong></p>
 <ul>${asArray(budget.items).map((item) => `<li>${escapeHtml(item.name)} - x${asNumber(item.qty)} - ${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}</li>`).join('')}</ul>
-<p>Validade: ${escapeHtml(budget.validUntil || 'Não informada')}</p>
+<p>Validade: ${escapeHtml(budget.date || 'Não informada')}</p>
 <p>Assinatura: _______________________________________</p>
     `.trim();
 }
@@ -250,7 +250,7 @@ function renderSavedBudgets() {
                 <div class="budget-card-meta">
                     <div>Cliente: ${escapeHtml(budget.customerName || 'Não informado')}</div>
                     <div>Itens: ${asArray(budget.items).length}</div>
-                    <div>Validade: ${escapeHtml(budget.validUntil || 'N/I')}</div>
+                    <div>Validade: ${escapeHtml(budget.date || 'N/I')}</div>
                     <div>Total: ${formatCurrency(asNumber(budget.total))}</div>
                 </div>
                 <div class="budget-card-actions">
@@ -409,14 +409,14 @@ function bindEvents() {
         const customerName = document.getElementById('budgetCustomerName');
         const customerPhone = document.getElementById('budgetCustomerPhone');
         const customerEmail = document.getElementById('budgetCustomerEmail');
-        const validUntil = document.getElementById('budgetValidUntil');
+        const date = document.getElementById('budgetdate');
         const notes = document.getElementById('budgetNotes');
         const discountInputReset = document.getElementById('budgetDiscountInput');
         const extraInputReset = document.getElementById('budgetExtraInput');
         if (customerName) customerName.value = '';
         if (customerPhone) customerPhone.value = '';
         if (customerEmail) customerEmail.value = '';
-        if (validUntil) validUntil.value = new Date().toISOString().slice(0, 10);
+        if (date) date.value = new Date().toISOString().slice(0, 10);
         if (notes) notes.value = '';
         if (discountInputReset) discountInputReset.value = '0';
         if (extraInputReset) extraInputReset.value = '0';

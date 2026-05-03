@@ -110,6 +110,61 @@ function normalizeBudgetRow(row) {
     };
 }
 
+function toDateSafe(value) {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    if (typeof value === 'string' || typeof value === 'number') {
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    if (typeof value.toDate === 'function') {
+        const d = value.toDate();
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+    }
+    if (typeof value._seconds === 'number') {
+        const d = new Date(value._seconds * 1000);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+}
+
+function normalizeSaleRow(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    const createdAtDate = toDateSafe(r.createdAt);
+    const paymentGateway = r.paymentGateway && typeof r.paymentGateway === 'object' ? r.paymentGateway : null;
+    const payment = paymentGateway?.provider ? String(paymentGateway.provider) : normalizePaymentKey(r.payment);
+
+    return {
+        id: r.id != null ? String(r.id) : '',
+        code: r.code != null ? String(r.code) : '',
+        date: createdAtDate ? createdAtDate.toISOString() : '',
+        createdAt: createdAtDate ? createdAtDate.toISOString() : null,
+        client: r.client != null ? String(r.client) : 'Balcao',
+        payment,
+        paymentGateway,
+        cashier: r.cashier && typeof r.cashier === 'object' ? {
+            name: r.cashier.name != null ? String(r.cashier.name) : '',
+            email: r.cashier.email != null ? String(r.cashier.email) : ''
+        } : null,
+        items: Array.isArray(r.items) ? r.items.map((item) => ({
+            id: item?.id != null ? String(item.id) : '',
+            sku: item?.sku != null ? String(item.sku) : '',
+            name: item?.name != null ? String(item.name) : '',
+            category: item?.category != null ? String(item.category) : '',
+            price: Number(item?.price) || 0,
+            qty: Number(item?.qty) || 0,
+            lineTotal: Number(item?.lineTotal) || ((Number(item?.price) || 0) * (Number(item?.qty) || 0))
+        })) : [],
+        subtotal: Number(r.subtotal) || 0,
+        discount: Number(r.discount) || 0,
+        extra: Number(r.extra) || 0,
+        total: Number(r.total) || 0,
+        adjustments: r.adjustments && typeof r.adjustments === 'object' ? r.adjustments : null,
+        cashReceived: Number.isFinite(Number(r.cashReceived)) ? Number(r.cashReceived) : null,
+        change: Number.isFinite(Number(r.change)) ? Number(r.change) : null
+    };
+}
+
 function moneyBr(value) {
     const n = Number(value) || 0;
     return `R$ ${n.toFixed(2).replace('.', ',')}`;
@@ -1386,8 +1441,12 @@ app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
     return res.json({ error: false });
 });
 
-app.get('/sells', (req, res) => {
-    res.render('layout', { body: 'sells' });
+app.get('/sells', verifyLogin, async (req, res) => {
+    const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const products = await loadProductsFromDb();
+    const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
+    const sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+    res.render('layout', { body: 'sells', appData: { configs, user: req.session.user, products, sales } });
 });
 
 app.get('/products', (req, res) => {
