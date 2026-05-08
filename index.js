@@ -1,3 +1,4 @@
+
 //TODO-------------importes------------
 const express = require('express')
 const fs = require('fs');
@@ -50,18 +51,29 @@ function parseAdjustment(body, key) {
     return { type, value };
 }
 
+function toCents(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * 100);
+}
+
+function fromCents(cents) {
+    return (Number(cents) || 0) / 100;
+}
+
 function computeSaleAmounts(subtotal, discountAdj, extraAdj) {
-    const discount = discountAdj.type === 'percent'
-        ? (subtotal * discountAdj.value) / 100
-        : discountAdj.value;
-    const extra = extraAdj.type === 'percent'
-        ? (subtotal * extraAdj.value) / 100
-        : extraAdj.value;
-    const total = Math.max(0, subtotal - discount + extra);
+    const subtotalCents = toCents(subtotal);
+    const discountCents = discountAdj.type === 'percent'
+        ? Math.round((subtotalCents * discountAdj.value) / 100)
+        : toCents(discountAdj.value);
+    const extraCents = extraAdj.type === 'percent'
+        ? Math.round((subtotalCents * extraAdj.value) / 100)
+        : toCents(extraAdj.value);
+    const totalCents = Math.max(0, subtotalCents - discountCents + extraCents);
     return {
-        discountAmount: discount,
-        extraAmount: extra,
-        total
+        discountAmount: fromCents(discountCents),
+        extraAmount: fromCents(extraCents),
+        total: fromCents(totalCents)
     };
 }
 
@@ -452,12 +464,73 @@ async function loadProductsFromDb() {
 
 const app = express();
 
+class FirestoreSessionStore extends session.Store {
+    constructor() {
+        super();
+        this.collection = firestore.collection('sessions');
+    }
+
+    get(sid, callback) {
+        this.collection.doc(String(sid)).get()
+            .then((doc) => {
+                if (!doc.exists) return callback(null, null);
+                const data = doc.data() || {};
+                const expiresAt = toDateSafe(data.expiresAt);
+                if (expiresAt && expiresAt.getTime() <= Date.now()) {
+                    return this.destroy(sid, () => callback(null, null));
+                }
+                const sessionData = data.session && typeof data.session === 'object' ? data.session : null;
+                return callback(null, sessionData);
+            })
+            .catch((err) => callback(err));
+    }
+
+    set(sid, sess, callback) {
+        const maxAge = Number(sess?.cookie?.maxAge) || 0;
+        const expiresAt = new Date(Date.now() + (maxAge > 0 ? maxAge : 3600000));
+        let sessionData;
+        try {
+            sessionData = JSON.parse(JSON.stringify(sess || {}));
+        } catch (e) {
+            return callback && callback(e);
+        }
+        this.collection.doc(String(sid)).set({
+            session: sessionData,
+            updatedAt: FieldValue.serverTimestamp(),
+            expiresAt
+        })
+            .then(() => callback && callback(null))
+            .catch((err) => callback && callback(err));
+    }
+
+    destroy(sid, callback) {
+        this.collection.doc(String(sid)).delete()
+            .then(() => callback && callback(null))
+            .catch((err) => callback && callback(err));
+    }
+
+    touch(sid, sess, callback) {
+        const maxAge = Number(sess?.cookie?.maxAge) || 0;
+        const expiresAt = new Date(Date.now() + (maxAge > 0 ? maxAge : 3600000));
+        this.collection.doc(String(sid)).set({
+            updatedAt: FieldValue.serverTimestamp(),
+            expiresAt
+        }, { merge: true })
+            .then(() => callback && callback(null))
+            .catch((err) => callback && callback(err));
+    }
+}
+
 app.use(session({
     secret: process.env.SECRET || 'infocore-fajg3bi2bt3fi3nt2fajbf2',
+    store: new FirestoreSessionStore(),
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    rolling: true,
     cookie: {
-        maxAge: 3600000
+        maxAge: 8 * 60 * 60 * 1000,
+        httpOnly: true,
+        sameSite: 'lax'
     }
 }));
 app.use(cookieParser());
@@ -858,7 +931,7 @@ function sleep(ms) {
 }
 
 function toMoneyAmount(value) {
-    return (Math.round((Number(value) || 0) * 100) / 100).toFixed(2);
+    return fromCents(toCents(value)).toFixed(2);
 }
 
 async function resolvePointTerminalId() {
@@ -999,14 +1072,13 @@ async function createOnlinePixPayment({ amount, saleCode }) {
     await cancelAllKnownPendingSales();
     const payerEmail = process.env.MERCADOPAGO_PIX_PAYER_EMAIL || 'fernandoj132sj@gmail.com';
     const payload = {
-        transaction_amount: Math.round((Number(amount) || 0) * 100) / 100,
+        transaction_amount: fromCents(toCents(amount)),
         description: `Venda ${saleCode}`,
         payment_method_id: 'pix',
         external_reference: saleCode,
         payer: { email: payerEmail }
     };
     const { data } = await api.post('/v1/payments', payload, { headers: { "X-Idempotency-Key": randomUUID() } });
-    console.log(data);
     return data;
 }
 
@@ -1059,7 +1131,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
 
     const resolvedItems = [];
     const stockUpdates = [];
-    let subtotal = 0;
+    let subtotalCents = 0;
 
     for (const line of lines) {
         const snap = await firestore.collection(PRODUCTS_COLLECTION).doc(line.id).get();
@@ -1078,8 +1150,8 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
             });
         }
         const price = Number(p.price) || 0;
-        const lineTotal = price * line.qty;
-        subtotal += lineTotal;
+        const lineTotal = fromCents(toCents(price * line.qty));
+        subtotalCents += toCents(lineTotal);
         const nextQty = Math.max(0, stock - line.qty);
         resolvedItems.push({
             id: line.id,
@@ -1093,6 +1165,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         stockUpdates.push({ id: line.id, nextQty, p });
     }
 
+    const subtotal = fromCents(subtotalCents);
     const { discountAmount, extraAmount, total } = computeSaleAmounts(subtotal, discountAdj, extraAdj);
 
     const saleId = randomUUID();
