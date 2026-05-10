@@ -30,7 +30,6 @@ const REQUEST_LABELS = {
 };
 
 let selectedId = null;
-let pendingRequestCustomerId = null;
 
 function customerListSorted() {
     const { customers } = window.appData || {};
@@ -51,9 +50,8 @@ function getFilteredClients(q) {
 }
 
 function badgeClass(st) {
-    const map = { open: 'open', in_progress: 'progress', done: 'done', cancelled: 'cancelled' };
-    const slug = map[String(st || 'open')] || 'open';
-    return `req-badge bs-${slug}`;
+    const s = String(st || 'open');
+    return `req-badge bs-${escapeHtml(s).replace(/\W/g, '_')}`;
 }
 
 function formatShortDate(ds) {
@@ -82,13 +80,13 @@ function renderClientList(filterValue) {
     }
 
     mount.innerHTML = list.map((c) => {
-        const letter = escapeHtml(String(c.name || '?').trim().slice(0, 1).toUpperCase());
+        const initials = escapeHtml(String(c.name || '?').slice(0, 2).toUpperCase());
         const openReq = (Array.isArray(c.requests) ? c.requests : []).filter((r) => r.status !== 'done' && r.status !== 'cancelled').length;
         const subtitle = `${c.phone ? escapeHtml(c.phone) + ' · ' : ''}${openReq ? openReq + ' requi. em aberto' : 'histórico de requisições'}`;
         const active = c.id === selectedId ? 'is-active' : '';
         return `
       <article class="crm-chip ${active}" data-client-id="${escapeHtml(c.id)}" tabindex="0" role="button">
-        <div class="crm-chip-avatar">${letter}</div>
+        <div class="crm-chip-avatar">${initials.slice(0, 1)}</div>
         <div class="crm-chip-body">
           <div class="crm-chip-name">${escapeHtml(c.name)}</div>
           <div class="crm-chip-meta">${subtitle}</div>
@@ -161,7 +159,7 @@ function buildDetailMarkup(c) {
     const pur = typeof c.purchases === 'number' ? c.purchases : Number(c.purchases) || 0;
 
     return `
-    <div class="card crm-detail-hero">
+    <div class="card crm-detail-hero card--elevated">
       <div class="crm-detail-toolbar">
         <div>
           <p class="crm-kicker">Ficha cadastral</p>
@@ -211,13 +209,13 @@ function bindDetailActions(clientId) {
     if (!wrap) return;
 
     wrap.querySelectorAll('[data-action="edit"]').forEach((btn) =>
-        btn.addEventListener('click', () => openEditCustomer(clientId)));
+        btn.addEventListener('click', () => openEditCustomer(customerId)));
 
     wrap.querySelectorAll('[data-action="request"]').forEach((btn) =>
         btn.addEventListener('click', () => openRequestModal(clientId)));
 
     wrap.querySelectorAll('[data-action="delete-customer"]').forEach((btn) =>
-        btn.addEventListener('click', () => removeCustomer(clientId)));
+        btn.addEventListener('click', () => removeCustomer(customerId)));
 
     wrap.querySelectorAll('[data-action="del-req"]').forEach((btn) =>
         btn.addEventListener('click', async () => {
@@ -376,7 +374,7 @@ function openRequestModal(forClientId = null) {
         showToast('Selecione um cliente primeiro.', 'error');
         return;
     }
-    pendingRequestCustomerId = cid;
+    document.getElementById('reqCustomerIdBridge').dataset.clientId = cid;
     document.getElementById('reqTitle').value = '';
     document.getElementById('reqDescription').value = '';
     document.getElementById('reqStatus').value = 'open';
@@ -385,7 +383,7 @@ function openRequestModal(forClientId = null) {
 }
 
 async function submitNewRequest() {
-    const cid = pendingRequestCustomerId;
+    const cid = document.getElementById('reqCustomerIdBridge').dataset.clientId;
     const title = document.getElementById('reqTitle').value.trim();
 
     if (!cid) return;
@@ -426,7 +424,15 @@ function initCustomersPage() {
     markNavActive('/clients');
 
     const sr = document.getElementById('clientSearch');
-    if (sr) sr.addEventListener('input', () => renderClientList(sr.value));
+    if (sr) {
+        sr.addEventListener('input', () => renderClientList(sr.value));
+        sr.removeAttribute('oninput');
+    }
+
+    const bridge = document.createElement('span');
+    bridge.hidden = true;
+    bridge.id = 'reqCustomerIdBridge';
+    document.body.appendChild(bridge);
 
     renderClientList('');
 

@@ -1,0 +1,111 @@
+<div class="page cashflow-page" id="page-cashflow">
+  <div class="cf-hero card">
+    <div class="cf-hero-row">
+      <div>
+        <p class="cf-copy-kicker">Financeiro · Resumo rápido</p>
+        <h2 class="cf-copy-title">Fluxo de caixa</h2>
+        <p class="cf-copy-sub">Cadastre entradas e saídas manuais; o saldo respeita o intervalo informado nos filtros.</p>
+      </div>
+      <div class="cf-hero-metrics">
+        <div class="cf-metric cf-metric--in">
+          <span class="cf-metric-label">Entradas</span>
+          <strong class="cf-metric-val" id="cfTotalIncome">R$ 0,00</strong>
+        </div>
+        <div class="cf-metric cf-metric--out">
+          <span class="cf-metric-label">Saídas</span>
+          <strong class="cf-metric-val" id="cfTotalExpense">R$ 0,00</strong>
+        </div>
+        <div class="cf-metric cf-metric--balance">
+          <span class="cf-metric-label">Saldo</span>
+          <strong class="cf-metric-val" id="cfBalance">R$ 0,00</strong>
+        </div>
+      </div>
+    </div>
+    <div class="cf-filter-bar card card--embedded">
+      <div class="cf-filters-grid">
+        <label class="form-group-inline">
+          <span class="form-label-inline">Tipo</span>
+          <select class="form-input" id="cfFilterType">
+            <option value="">Todos os lançamentos</option>
+            <option value="income">Apenas entradas</option>
+            <option value="expense">Apenas saídas</option>
+          </select>
+        </label>
+        <label class="form-group-inline">
+          <span class="form-label-inline">De</span>
+          <input class="form-input mono" id="cfDateFrom" type="date">
+        </label>
+        <label class="form-group-inline">
+          <span class="form-label-inline">Até</span>
+          <input class="form-input mono" id="cfDateTo" type="date">
+        </label>
+      </div>
+      <button class="btn btn-primary btn-sm" type="button" onclick="openCashEntryModal(null)"><span aria-hidden="true">＋</span> Novo lançamento</button>
+    </div>
+  </div>
+
+  <div class="card cf-table-card">
+    <div class="card-header cf-card-head">
+      <div class="card-title">Extrato recente</div>
+      <span class="cf-card-hint" id="cfEntryCount">0 lançamentos</span>
+    </div>
+    <div class="table-wrap">
+      <table class="cf-table">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Tipo</th>
+            <th>Categoria</th>
+            <th>Descrição</th>
+            <th class="ta-right">Valor</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="cashFlowBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state cf-empty" id="cfEmpty">
+      <div class="empty-icon">📊</div>
+      <p>Sem dados no período. Registre a primeira entrada ou saída.</p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-cfEntry">
+  <div class="modal modal--compact">
+    <div class="modal-header">
+      <div class="modal-title" id="cfEntryModalTitle">Novo lançamento</div>
+      <button class="modal-close" type="button" onclick="closeModal('cfEntry')">✕</button>
+    </div>
+    <input type="hidden" id="cfEditId" value="">
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="cfType">Natureza</label>
+        <select class="form-input" id="cfType">
+          <option value="income">Entrada</option>
+          <option value="expense">Saída</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="cfAmount">Valor (R$)</label>
+        <input class="form-input mono" id="cfAmount" inputmode="decimal" placeholder="0,00">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="cfCfDate">Data</label>
+        <input class="form-input mono" id="cfCfDate" type="date">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="cfCategory">Categoria</label>
+        <input class="form-input" id="cfCategory" placeholder="Marketing, combustível…">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label" for="cfDescription">Descrição</label>
+        <textarea class="form-input textarea" id="cfDescription" rows="2" placeholder="Detalhes do lançamento (opcional)"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer modal-footer--split">
+      <button class="btn btn-ghost" type="button" onclick="closeModal('cfEntry')">Cancelar</button>
+      <button class="btn btn-primary" type="button" onclick="submitCashFlowForm()">Salvar</button>
+    </div>
+  </div>
+</div>

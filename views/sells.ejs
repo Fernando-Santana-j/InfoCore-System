@@ -1,109 +1,147 @@
-<div class="page" id="page-vendas">
-  <div class="flex flex-wrap gap-12 mb-16">
-    <div class="search-bar" style="flex:1;max-width:360px">
-      <span>🔍</span>
-      <input type="text" placeholder="Pesquisar codigo, venda, cliente..." id="salesSearch" oninput="filterSales(this.value)">
+<div class="page sells-page" id="page-vendas">
+  <div class="sells-hero card">
+    <div class="sells-hero-copy">
+      <p class="sells-kicker">Operação · Histórico</p>
+      <h2 class="sells-title">Vendas</h2>
+      <p class="sells-subtitle">Consulte períodos, método de pagamento e busque por código ou cliente.</p>
     </div>
-    <div class="filter-bar">
-      <button class="filter-btn active" onclick="setSalesFilter('todos',this)">Todos</button>
-      <button class="filter-btn" onclick="setSalesFilter('hoje',this)">Hoje</button>
-      <button class="filter-btn" onclick="setSalesFilter('semana',this)">Esta semana</button>
+    <div class="sells-toolbar">
+      <div class="search-bar sells-search">
+        <span class="sells-search-ico" aria-hidden="true">🔍</span>
+        <input type="search" id="salesSearch" placeholder="Código da venda, cliente, pagamento..." autocomplete="off">
+      </div>
+      <div class="sells-chip-row sells-period-row" role="tablist" aria-label="Filtrar por período">
+        <button type="button" class="filter-btn active" data-sales-period="todos">Todos</button>
+        <button type="button" class="filter-btn" data-sales-period="hoje">Hoje</button>
+        <button type="button" class="filter-btn" data-sales-period="semana">Esta semana</button>
+        <button type="button" class="filter-btn" data-sales-period="mes">Este mês</button>
+      </div>
+      <div class="sells-pay-filter">
+        <label class="visually-hidden" for="salesPayFilter">Forma de pagamento</label>
+        <select class="form-input sells-pay-select" id="salesPayFilter">
+          <option value="">Todos os pagamentos</option>
+          <option value="money">Dinheiro</option>
+          <option value="pix">Pix</option>
+          <option value="credit_card">Crédito</option>
+          <option value="debit_card">Débito</option>
+          <option value="mercado_pago_pix_online">Pix MP (online)</option>
+          <option value="mercado_pago_qr_instore">Pix QR loja</option>
+          <option value="mercado_pago_point">Maquininha MP</option>
+        </select>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm sells-export" onclick="exportData('vendas')">📥 Exportar</button>
     </div>
-    <button class="btn btn-ghost btn-sm" onclick="exportData('vendas')">📥 Exportar</button>
   </div>
 
-  <div class="grid-3 gap-14 mb-16">
-    <div class="card">
-      <div class="stat-icon" style="background:rgba(240,192,64,0.15);color:var(--gold);margin-bottom:8px;">💰</div>
-      <div class="mono font-extrabold" style="font-size:1.4rem;" id="saleTotal">R$ 0,00</div>
-      <div class="text-xs text-muted mt-4">Total do período</div>
+  <div class="sells-stats">
+    <div class="card sells-stat-card sells-stat-total">
+      <div class="sells-stat-icon">💰</div>
+      <div class="sells-stat-value mono" id="saleTotal">R$ 0,00</div>
+      <div class="sells-stat-label">Total no filtro</div>
     </div>
-    <div class="card">
-      <div class="stat-icon" style="background:rgba(61,220,132,0.15);color:var(--green);margin-bottom:8px;">🧾</div>
-      <div class="font-extrabold" style="font-size:1.4rem;" id="saleCount">0</div>
-      <div class="text-xs text-muted mt-4">Vendas realizadas</div>
+    <div class="card sells-stat-card sells-stat-count">
+      <div class="sells-stat-icon">🧾</div>
+      <div class="sells-stat-value" id="saleCount">0</div>
+      <div class="sells-stat-label">Vendas contadas</div>
     </div>
-    <div class="card">
-      <div class="stat-icon" style="background:rgba(74,158,255,0.15);color:var(--blue);margin-bottom:8px;">📊</div>
-      <div class="mono font-extrabold" style="font-size:1.4rem;" id="saleAvg">R$ 0,00</div>
-      <div class="text-xs text-muted mt-4">Ticket médio</div>
+    <div class="card sells-stat-card sells-stat-ticket">
+      <div class="sells-stat-icon">📊</div>
+      <div class="sells-stat-value mono" id="saleAvg">R$ 0,00</div>
+      <div class="sells-stat-label">Ticket médio</div>
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">Histórico de Vendas</div>
+  <div class="card sells-table-card">
+    <div class="card-header sells-table-head">
+      <div class="card-title">Histórico</div>
+      <span class="sells-live-hint" id="saleFilterHint">Mais recentes primeiro</span>
     </div>
-    <div class="table-wrap">
-      <table>
+    <div class="table-wrap sells-table-wrap">
+      <table class="sells-table">
         <thead>
           <tr>
-            <th>Codigo</th>
+            <th>Código</th>
             <th>Data/Hora</th>
             <th>Cliente</th>
             <th>Itens</th>
             <th>Desconto</th>
-            <th>Total</th>
+            <th class="ta-r">Total</th>
             <th>Pagamento</th>
-            <th>Ações</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="salesTable"></tbody>
       </table>
     </div>
+    <div class="empty-state sells-empty-state" id="salesEmpty" style="display:none">
+      <div class="empty-icon">🧾</div>
+      <p id="salesEmptyMsg">Nenhuma venda no filtro atual.</p>
+    </div>
   </div>
+</div>
 
-  <div class="modal-overlay" id="modal-saleDetail">
-    <div class="modal">
-      <div class="modal-header">
-        <div class="modal-title">Detalhes da Venda #<span id="saleDetailId">0</span></div>
-        <button class="modal-close" onclick="closeModal('saleDetail')">✕</button>
-      </div>
-      <div style="padding:0 20px;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
-          <div>
-            <div style="font-size:0.75rem;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Cliente</div>
-            <div id="saleDetailClient" style="font-weight:600;color:var(--text);">-</div>
-          </div>
-          <div>
-            <div style="font-size:0.75rem;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Data/Hora</div>
-            <div id="saleDetailDate" class="mono" style="color:var(--text);">-</div>
-          </div>
+<div class="modal-overlay" id="modal-saleDetail">
+  <div class="modal modal-sale-detail">
+    <div class="modal-header">
+      <div class="modal-title">Detalhes — <span class="mono" id="saleDetailId">—</span></div>
+      <button type="button" class="modal-close" onclick="closeModal('saleDetail')">✕</button>
+    </div>
+    <div class="sale-detail-body">
+      <div class="sale-detail-grid">
+        <div class="sale-detail-field">
+          <div class="sale-detail-label">Cliente</div>
+          <div id="saleDetailClient" class="sale-detail-value">—</div>
         </div>
-        <div style="background:var(--bg2);border-radius:8px;padding:12px;margin-bottom:16px;">
-          <table style="width:100%;font-size:0.9rem;">
-            <thead style="background:var(--bg3);border-radius:4px;overflow:hidden;">
-              <tr>
-                <th style="text-align:left;padding:8px;font-size:0.75rem;color:var(--text2);text-transform:uppercase;">Produto</th>
-                <th style="text-align:right;padding:8px;font-size:0.75rem;color:var(--text2);text-transform:uppercase;">Qtd</th>
-                <th style="text-align:right;padding:8px;font-size:0.75rem;color:var(--text2);text-transform:uppercase;">Preço</th>
-                <th style="text-align:right;padding:8px;font-size:0.75rem;color:var(--text2);text-transform:uppercase;">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody id="saleDetailItems"></tbody>
-          </table>
-        </div>
-        <div style="display:grid;grid-template-columns:auto 1fr;gap:12px;row-gap:8px;text-align:right;">
-          <div style="text-align:right;color:var(--text2);">Subtotal:</div>
-          <div class="mono" id="saleDetailSubtotal">R$ 0,00</div>
-          <div style="text-align:right;color:var(--text2);">Desconto:</div>
-          <div class="mono" id="saleDetailDiscount">R$ 0,00</div>
-          <div style="text-align:right;font-weight:600;border-top:1px solid var(--bg2);padding-top:8px;">Total:</div>
-          <div class="mono" style="font-weight:600;font-size:1.1rem;border-top:1px solid var(--bg2);padding-top:8px;" id="saleDetailTotal">R$ 0,00</div>
-        </div>
-        <div style="margin-top:16px;padding:16px;background:var(--bg2);border-radius:8px;">
-          <div style="font-size:0.75rem;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Método de Pagamento</div>
-          <div id="saleDetailPayment" style="font-weight:600;">-</div>
-          <div id="saleDetailCashWrap" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:0.9rem;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;"><span style="color:var(--text2);">Valor recebido</span><span class="mono" id="saleDetailCashReceived">—</span></div>
-            <div style="display:flex;justify-content:space-between;"><span style="color:var(--text2);">Troco</span><span class="mono" style="font-weight:700;color:var(--gold);" id="saleDetailCashChange">—</span></div>
-          </div>
+        <div class="sale-detail-field">
+          <div class="sale-detail-label">Data/Hora</div>
+          <div id="saleDetailDate" class="sale-detail-value mono">—</div>
         </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick="closeModal('saleDetail')">Fechar</button>
-        <button class="btn btn-ghost btn-sm" onclick="printSale(document.getElementById('saleDetailId').textContent)">🖨️ Imprimir</button>
+      <div class="sale-detail-table-wrap">
+        <table class="sale-detail-items">
+          <thead>
+            <tr>
+              <th>Produto</th>
+              <th class="ta-r">Qtd</th>
+              <th class="ta-r">Preço</th>
+              <th class="ta-r">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody id="saleDetailItems"></tbody>
+        </table>
       </div>
+      <div class="sale-detail-summary">
+        <div class="sale-detail-row muted">
+          <span>Subtotal</span>
+          <span class="mono" id="saleDetailSubtotal">R$ 0,00</span>
+        </div>
+        <div class="sale-detail-row muted">
+          <span>Desconto</span>
+          <span class="mono" id="saleDetailDiscount">R$ 0,00</span>
+        </div>
+        <div class="sale-detail-row sale-detail-total">
+          <span>Total</span>
+          <span class="mono" id="saleDetailTotal">R$ 0,00</span>
+        </div>
+      </div>
+      <div class="sale-detail-pay">
+        <div class="sale-detail-label">Pagamento</div>
+        <div id="saleDetailPayment" class="sale-detail-pay-value">—</div>
+        <div id="saleDetailCashWrap" class="sale-detail-cash" style="display:none">
+          <div class="sale-detail-row muted">
+            <span>Valor recebido</span>
+            <span class="mono" id="saleDetailCashReceived">—</span>
+          </div>
+          <div class="sale-detail-row">
+            <span>Troco</span>
+            <span class="mono sale-change" id="saleDetailCashChange">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer modal-footer--split">
+      <button type="button" class="btn btn-ghost" onclick="closeModal('saleDetail')">Fechar</button>
+      <button type="button" class="btn btn-primary btn-sm" onclick="printSale(document.getElementById('saleDetailId').textContent)">🖨️ Imprimir</button>
     </div>
   </div>
 </div>

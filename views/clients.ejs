@@ -1,66 +1,111 @@
-<div class="page" id="page-clientes">
-  <div class="flex flex-wrap gap-12 mb-16">
-    <div class="search-bar" style="flex:1;max-width:360px">
-      <span>🔍</span>
-      <input type="text" placeholder="Pesquisar cliente..." id="clientSearch" oninput="filterClients(this.value)">
+<div class="page clients-page" id="page-clientes">
+  <div class="crm-hero card">
+    <div class="crm-hero-copy">
+      <p class="crm-kicker">Relacionamento · Atendimento</p>
+      <h2 class="crm-title">Clientes CRM</h2>
+      <p class="crm-subtitle">Cadastre dados, observações internas e acompanhe requisitos que cada cliente solicitou.</p>
     </div>
-    <button class="btn btn-primary" onclick="openModal('addClient')">✨ Novo Cliente</button>
+    <div class="crm-hero-actions">
+      <div class="search-bar search-bar--stretch">
+        <span class="crm-search-icon" aria-hidden="true">🔍</span>
+        <input type="search" placeholder="Nome, telefone, email ou documento..." id="clientSearch" autocomplete="off">
+      </div>
+      <button class="btn btn-primary" type="button" onclick="openNewCustomerForm()"><span aria-hidden="true">✨</span> Novo cliente</button>
+    </div>
   </div>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">Base de Clientes</div>
+
+  <div class="crm-shell">
+    <aside class="card crm-list-card">
+      <div class="crm-list-head">
+        <span class="crm-count" id="clientListCount">0 clientes</span>
+      </div>
+      <div class="crm-scroll" id="clientListMount"></div>
+    </aside>
+
+    <section class="crm-detail" id="clientDetailMount">
+      <div class="card crm-empty card--muted">
+        <div class="crm-empty-inner">
+          <div class="crm-empty-icon">👋</div>
+          <p class="crm-empty-title">Selecione um cliente</p>
+          <p class="crm-empty-text">Ou cadastre um novo para iniciar o histórico de requisições e observações.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-customerForm">
+  <div class="modal modal--wide">
+    <div class="modal-header">
+      <div class="modal-title" id="customerModalTitle">Novo cliente</div>
+      <button class="modal-close" type="button" onclick="closeModal('customerForm')">✕</button>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Nome</th>
-            <th>CPF/CNPJ</th>
-            <th>Telefone</th>
-            <th>Email</th>
-            <th>Compras</th>
-            <th>Total Gasto</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody id="clientsTable"></tbody>
-      </table>
+    <input type="hidden" id="editCustomerId" value="">
+    <div class="form-grid client-form-grid">
+      <div class="form-group">
+        <label class="form-label" for="custName">Nome completo</label>
+        <input class="form-input" id="custName" placeholder="Maria Souza Silva" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="custDoc">CPF / CNPJ</label>
+        <input class="form-input mono" id="custDoc" placeholder="000.000.000-00">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="custPhone">Telefone / WhatsApp</label>
+        <input class="form-input" id="custPhone" placeholder="(11) 99999-9999">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="custEmail">Email</label>
+        <input class="form-input" id="custEmail" type="email" placeholder="contato@exemplo.com">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label" for="custAddress">Endereço</label>
+        <input class="form-input" id="custAddress" placeholder="Rua, número, bairro, cidade">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label" for="custNotes">Descrição · observações internas</label>
+        <textarea class="form-input textarea" id="custNotes" rows="3" placeholder="Preferências, combinados, garantias, notas rápidas..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer modal-footer--split">
+      <button class="btn btn-ghost" type="button" onclick="closeModal('customerForm')">Cancelar</button>
+      <button class="btn btn-primary" type="button" onclick="submitCustomerForm()">Salvar cadastro</button>
     </div>
   </div>
 </div>
 
-<div class="modal-overlay" id="modal-addClient">
+<div class="modal-overlay" id="modal-requestForm">
   <div class="modal">
     <div class="modal-header">
-      <div class="modal-title">+ Adicionar Cliente</div>
-      <button class="modal-close" onclick="closeModal('addClient')">✕</button>
+      <div class="modal-title">Nova requisição</div>
+      <button class="modal-close" type="button" onclick="closeModal('requestForm')">✕</button>
     </div>
     <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label">Nome Completo</label>
-        <input class="form-input" id="newClientName" placeholder="João da Silva">
+      <div class="form-group form-full">
+        <label class="form-label" for="reqTitle">Título ou resumo</label>
+        <input class="form-input" id="reqTitle" placeholder="Instalação, orçamento, suporte técnico...">
       </div>
       <div class="form-group">
-        <label class="form-label">CPF / CNPJ</label>
-        <input class="form-input mono" id="newClientDoc" placeholder="000.000.000-00">
+        <label class="form-label" for="reqDate">Quando solicitou</label>
+        <input class="form-input" id="reqDate" type="date">
       </div>
       <div class="form-group">
-        <label class="form-label">Telefone</label>
-        <input class="form-input" id="newClientPhone" placeholder="(11) 99999-9999">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Email</label>
-        <input class="form-input" id="newClientEmail" placeholder="email@exemplo.com">
+        <label class="form-label" for="reqStatus">Status</label>
+        <select class="form-input" id="reqStatus">
+          <option value="open">Aberta</option>
+          <option value="in_progress">Em andamento</option>
+          <option value="done">Concluída</option>
+          <option value="cancelled">Cancelada</option>
+        </select>
       </div>
       <div class="form-group form-full">
-        <label class="form-label">Endereço</label>
-        <input class="form-input" id="newClientAddr" placeholder="Rua, número, cidade...">
+        <label class="form-label" for="reqDescription">Descrição detalhada</label>
+        <textarea class="form-input textarea" id="reqDescription" rows="4" placeholder="O que foi pedido, prazos combinados, peças, valores citados…"></textarea>
       </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('addClient')">Cancelar</button>
-      <button class="btn btn-primary" onclick="addClient()">✅ Cadastrar Cliente</button>
+    <div class="modal-footer modal-footer--split">
+      <button class="btn btn-ghost" type="button" onclick="closeModal('requestForm')">Cancelar</button>
+      <button class="btn btn-primary" type="button" onclick="submitNewRequest()">Registrar requisição</button>
     </div>
   </div>
 </div>

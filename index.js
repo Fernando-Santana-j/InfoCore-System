@@ -12,6 +12,7 @@ const db = require('./firebase/models.js');
 const firestore = require('./firebase/db.js');
 const { randomInt } = require('crypto');
 const axios = require('axios');
+const QRCode = require('qrcode');
 const { randomUUID } = require("crypto");
 const nodemailer = require('nodemailer');
 // const config = require('./config/config.json');
@@ -19,6 +20,8 @@ const nodemailer = require('nodemailer');
 const PRODUCTS_COLLECTION = 'products';
 const SALES_COLLECTION = 'sales';
 const BUDGETS_COLLECTION = 'budgets';
+const CUSTOMERS_COLLECTION = 'customers';
+const CASH_FLOW_COLLECTION = 'cash_flow';
 const { FieldValue } = require('firebase-admin/firestore');
 
 const PAYMENT_KEYS = new Set(['money', 'credit_card', 'debit_card', 'pix']);
@@ -180,6 +183,114 @@ function normalizeSaleRow(row) {
 function moneyBr(value) {
     const n = Number(value) || 0;
     return `R$ ${n.toFixed(2).replace('.', ',')}`;
+}
+
+const REQUEST_STATUSES = new Set(['open', 'in_progress', 'done', 'cancelled']);
+
+function normalizeCustomerRequest(reqRow) {
+    const r = reqRow && typeof reqRow === 'object' ? reqRow : {};
+    const st = String(r.status || 'open').toLowerCase();
+    return {
+        id: r.id != null ? String(r.id) : randomUUID(),
+        title: r.title != null ? String(r.title).trim() : '',
+        description: r.description != null ? String(r.description).trim() : '',
+        date: r.date != null ? String(r.date).trim().slice(0, 16) : '',
+        status: REQUEST_STATUSES.has(st) ? st : 'open'
+    };
+}
+
+function normalizeCustomerRow(row, aggregatedStats) {
+    const r = row && typeof row === 'object' ? row : {};
+    const requests = Array.isArray(r.requests)
+        ? r.requests.map(normalizeCustomerRequest)
+        : [];
+    const createdAt = toDateSafe(r.createdAt);
+    const updatedAt = toDateSafe(r.updatedAt);
+    const purchases = aggregatedStats != null && typeof aggregatedStats === 'object'
+        ? (Number(aggregatedStats.purchases) || 0)
+        : (Number(r.purchases) || 0);
+    const spent = aggregatedStats != null && typeof aggregatedStats === 'object'
+        ? (Number(aggregatedStats.spent) || 0)
+        : (Number(r.spent) || 0);
+    return {
+        id: r.id != null ? String(r.id) : '',
+        name: String(r.name || '').trim(),
+        doc: r.doc != null ? String(r.doc).trim() : '',
+        phone: r.phone != null ? String(r.phone).trim() : '',
+        email: r.email != null ? String(r.email).trim() : '',
+        address: r.address != null ? String(r.address).trim() : '',
+        notes: r.notes != null ? String(r.notes).trim() : '',
+        requests,
+        purchases,
+        spent,
+        createdAt: createdAt ? createdAt.toISOString() : null,
+        updatedAt: updatedAt ? updatedAt.toISOString() : null
+    };
+}
+
+function salesTotalsByClientKey(sales) {
+    const m = new Map();
+    for (const s of sales) {
+        const k = String(s.client || '').trim().toLowerCase();
+        if (!k) continue;
+        const prev = m.get(k) || { purchases: 0, spent: 0 };
+        prev.purchases += 1;
+        prev.spent += Number(s.total) || 0;
+        m.set(k, prev);
+    }
+    return m;
+}
+
+function normalizeCashFlowRow(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    const dt = r.date != null ? String(r.date).trim().slice(0, 10) : '';
+    const createdAt = toDateSafe(r.createdAt);
+    const rawType = String(r.type || '').toLowerCase();
+    const type = rawType === 'expense' ? 'expense' : 'income';
+    return {
+        id: r.id != null ? String(r.id) : '',
+        type,
+        amount: Math.max(0, Number(r.amount) || 0),
+        category: r.category != null ? String(r.category).trim() : '',
+        description: r.description != null ? String(r.description).trim() : '',
+        date: dt,
+        createdAt: createdAt ? createdAt.toISOString() : null
+    };
+}
+
+async function loadCustomersNormalized() {
+    const rows = await db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []);
+    let sales = [];
+    try {
+        sales = await db.findAll({ colecao: SALES_COLLECTION });
+    } catch {
+        sales = [];
+    }
+    const saleMap = salesTotalsByClientKey(Array.isArray(sales) ? sales : []);
+    const list = Array.isArray(rows) ? rows : [];
+    return list.map((row) => {
+        const id = row.id != null ? String(row.id) : '';
+        const nmKey = String(row.name || '').trim().toLowerCase();
+        const stats = nmKey ? saleMap.get(nmKey) || { purchases: 0, spent: 0 } : { purchases: 0, spent: 0 };
+        return normalizeCustomerRow({ ...row, id }, stats);
+    }).sort((a, b) => {
+        const ad = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const bd = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return bd - ad;
+    });
+}
+
+async function loadCashFlowNormalized() {
+    const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const list = Array.isArray(rows) ? rows.map((r) => normalizeCashFlowRow(r)) : [];
+    list.sort((a, b) => {
+        const dCmp = String(b.date || '').localeCompare(String(a.date || ''));
+        if (dCmp !== 0) return dCmp;
+        const ac = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bc = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bc - ac;
+    });
+    return list;
 }
 
 function safeTemplateValue(value) {
@@ -903,6 +1014,11 @@ app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
 const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_DEVICE_ID = process.env.MERCADOPAGO_DEVICE_ID || "PAX_Q92__Q92-1733817193";
 const MP_ENABLED = Boolean(MP_TOKEN && MP_DEVICE_ID);
+const MP_QR_EXTERNAL_POS_ID = process.env.MERCADOPAGO_QR_EXTERNAL_POS_ID
+    ? String(process.env.MERCADOPAGO_QR_EXTERNAL_POS_ID).trim()
+    : '';
+const MP_QR_MODE_RAW = (process.env.MERCADOPAGO_QR_MODE || 'dynamic').toLowerCase();
+const MP_QR_MODE = ['static', 'dynamic', 'hybrid'].includes(MP_QR_MODE_RAW) ? MP_QR_MODE_RAW : 'dynamic';
 
 const api = axios.create({
     baseURL: "https://api.mercadopago.com",
@@ -960,6 +1076,21 @@ async function cancelPointOrder(orderId) {
     }
 }
 
+async function cancelQrStoreOrder(orderId) {
+    if (!orderId) return;
+    try {
+        await api.put(
+            `/v1/orders/${orderId}`,
+            { status: 'canceled' },
+            { headers: { "X-Idempotency-Key": randomUUID() } }
+        );
+    } catch (err) {
+        const status = err?.response?.status;
+        if (status && [400, 404, 409].includes(status)) return;
+        throw err;
+    }
+}
+
 async function cancelAnyPendingPointOrder() {
     if (!activePointOrderId) return;
     await cancelPointOrder(activePointOrderId);
@@ -967,18 +1098,29 @@ async function cancelAnyPendingPointOrder() {
 }
 
 async function cancelAllKnownPendingSales() {
-    const orderIds = new Set();
-    if (activePointOrderId) orderIds.add(activePointOrderId);
+    const pointOrderIds = new Set();
+    const qrOrderIds = new Set();
+    if (activePointOrderId) pointOrderIds.add(activePointOrderId);
     for (const pending of pendingPointSales.values()) {
         if (pending?.mode === 'point' && pending?.pointOrderId) {
-            orderIds.add(pending.pointOrderId);
+            pointOrderIds.add(pending.pointOrderId);
+        }
+        if (pending?.mode === 'mp_qr_instore' && pending?.qrOrderId) {
+            qrOrderIds.add(pending.qrOrderId);
         }
     }
-    for (const orderId of orderIds) {
+    for (const orderId of pointOrderIds) {
         try {
             await cancelPointOrder(orderId);
         } catch (e) {
             console.error('Falha ao cancelar order pendente:', e?.response?.data || e);
+        }
+    }
+    for (const orderId of qrOrderIds) {
+        try {
+            await cancelQrStoreOrder(orderId);
+        } catch (e) {
+            console.error('Falha ao cancelar order QR loja:', e?.response?.data || e);
         }
     }
     activePointOrderId = null;
@@ -1066,6 +1208,54 @@ async function processPointPayment({ amount, payment, saleCode }) {
     const finalOrder = await waitPointOrderFinal(createdOrder.id);
     activePointOrderId = null;
     return finalOrder;
+}
+
+async function qrEmvToPngBase64(emv) {
+    if (!emv) return '';
+    const buf = await QRCode.toBuffer(String(emv), {
+        type: 'png',
+        margin: 2,
+        width: 320,
+        errorCorrectionLevel: 'M'
+    });
+    return buf.toString('base64');
+}
+
+async function createInstoreQrOrder({ amount, saleCode, saleId }) {
+    if (!MP_TOKEN) {
+        throw new Error('Mercado Pago não configurado. Defina MERCADOPAGO_ACCESS_TOKEN.');
+    }
+    if (!MP_QR_EXTERNAL_POS_ID) {
+        throw new Error('QR de loja/caixa não configurado. Defina MERCADOPAGO_QR_EXTERNAL_POS_ID (external_id do caixa).');
+    }
+    await cancelAllKnownPendingSales();
+    const amtStr = toMoneyAmount(amount);
+    const externalReference = String(saleId || saleCode || randomUUID()).slice(0, 64);
+    const payload = {
+        type: 'qr',
+        total_amount: amtStr,
+        description: `Venda ${saleCode}`.slice(0, 150),
+        external_reference: externalReference,
+        expiration_time: 'PT15M',
+        config: {
+            qr: {
+                external_pos_id: MP_QR_EXTERNAL_POS_ID,
+                mode: MP_QR_MODE
+            }
+        },
+        transactions: {
+            payments: [{ amount: amtStr }]
+        }
+    };
+    const { data: createdOrder } = await api.post('/v1/orders', payload, {
+        headers: { "X-Idempotency-Key": randomUUID() }
+    });
+    const qrData = createdOrder?.type_response?.qr_data ? String(createdOrder.type_response.qr_data) : '';
+    let qrBase64 = '';
+    if (qrData) {
+        qrBase64 = await qrEmvToPngBase64(qrData);
+    }
+    return { order: createdOrder, qrData, qrBase64 };
 }
 
 async function createOnlinePixPayment({ amount, saleCode }) {
@@ -1212,6 +1402,58 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         saleRecord.cashReceived = receivedRounded;
         saleRecord.change = changeRounded;
     } else if (payment === 'pix') {
+        const pendingToken = randomUUID();
+        if (MP_QR_EXTERNAL_POS_ID) {
+            let qrResult;
+            try {
+                qrResult = await createInstoreQrOrder({ amount: total, saleCode: code, saleId });
+            } catch (e) {
+                const details = e?.response?.data?.errors?.[0]?.details;
+                console.error('Falha Mercado Pago QR loja:', e?.response?.data || e);
+                return res.status(502).json({
+                    error: true,
+                    message: e.message || 'Falha ao gerar cobrança PIX (QR loja).',
+                    payment: {
+                        provider: 'mercado_pago_qr_instore',
+                        approved: false,
+                        reason: 'Erro ao criar pedido QR da loja.',
+                        details: Array.isArray(details) ? details.join(' | ') : undefined
+                    }
+                });
+            }
+            const qrOrder = qrResult.order;
+            pendingPointSales.set(pendingToken, {
+                mode: 'mp_qr_instore',
+                saleId,
+                saleRecord,
+                stockUpdates,
+                resolvedItems,
+                discountAmount,
+                extraAmount,
+                subtotal,
+                total,
+                client,
+                payment,
+                code,
+                qrOrderId: qrOrder?.id || null,
+                qrData: qrResult.qrData || '',
+                qrBase64: qrResult.qrBase64 || '',
+                createdAtMs: Date.now()
+            });
+            return res.json({
+                error: false,
+                pending: true,
+                token: pendingToken,
+                payment: {
+                    provider: 'mercado_pago_qr_instore',
+                    status: qrOrder?.status || 'created',
+                    orderId: qrOrder?.id || null,
+                    qrData: qrResult.qrData || '',
+                    qrBase64: qrResult.qrBase64 || '',
+                    qrTicketUrl: ''
+                }
+            });
+        }
         let pixPayment;
         try {
             pixPayment = await createOnlinePixPayment({ amount: total, saleCode: code });
@@ -1229,7 +1471,6 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 }
             });
         }
-        const pendingToken = randomUUID();
         pendingPointSales.set(pendingToken, {
             mode: 'pix_online',
             saleId,
@@ -1392,6 +1633,38 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
                     }
                 });
             }
+        } else if (pending.mode === 'mp_qr_instore') {
+            const order = await getPointOrderStatus(pending.qrOrderId);
+            const status = String(order?.status || '');
+            if (!POINT_FINAL_STATUSES.has(status)) {
+                return res.json({
+                    error: false,
+                    pending: true,
+                    payment: {
+                        provider: 'mercado_pago_qr_instore',
+                        status,
+                        orderId: pending.qrOrderId,
+                        qrData: pending.qrData || '',
+                        qrBase64: pending.qrBase64 || ''
+                    }
+                });
+            }
+            if (status !== 'processed') {
+                const reason = extractPointReason(order);
+                pendingPointSales.delete(token);
+                return res.status(400).json({
+                    error: true,
+                    pending: false,
+                    message: `Pagamento não aprovado (${status || 'sem status'}).`,
+                    payment: {
+                        provider: 'mercado_pago_qr_instore',
+                        approved: false,
+                        status,
+                        reason,
+                        orderId: pending.qrOrderId
+                    }
+                });
+            }
         } else {
             const order = await getPointOrderStatus(pending.pointOrderId);
             const status = String(order?.status || '');
@@ -1429,13 +1702,21 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
 
         const successPayment = pending.mode === 'pix_online'
             ? { provider: 'mercado_pago_pix_online', approved: true, status: 'approved', paymentId: pending.pixPaymentId }
-            : { provider: 'mercado_pago_point', approved: true, status: 'processed', orderId: pending.pointOrderId };
+            : pending.mode === 'mp_qr_instore'
+                ? { provider: 'mercado_pago_qr_instore', approved: true, status: 'processed', orderId: pending.qrOrderId }
+                : { provider: 'mercado_pago_point', approved: true, status: 'processed', orderId: pending.pointOrderId };
 
         if (pending.mode === 'point') {
             pending.saleRecord.paymentGateway = {
                 provider: 'mercado_pago_point',
                 status: successPayment.status,
                 orderId: pending.pointOrderId
+            };
+        } else if (pending.mode === 'mp_qr_instore') {
+            pending.saleRecord.paymentGateway = {
+                provider: 'mercado_pago_qr_instore',
+                status: successPayment.status,
+                orderId: pending.qrOrderId
             };
         } else {
             pending.saleRecord.paymentGateway = {
@@ -1499,12 +1780,315 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
     }
 });
 
+app.get('/api/customers', verifyLogin, async (req, res) => {
+    try {
+        const customers = await loadCustomersNormalized();
+        return res.json({ error: false, customers });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar clientes.' });
+    }
+});
+
+app.post('/api/customers', verifyLogin, async (req, res) => {
+    const body = req.body || {};
+    const name = String(body.name || '').trim();
+    if (!name) {
+        return res.status(400).json({ error: true, message: 'Nome do cliente é obrigatório.' });
+    }
+
+    const id = randomUUID();
+    const requests = Array.isArray(body.requests) ? body.requests.map(normalizeCustomerRequest) : [];
+
+    const payload = {
+        id,
+        name,
+        doc: String(body.doc || '').trim(),
+        phone: String(body.phone || '').trim(),
+        email: String(body.email || '').trim(),
+        address: String(body.address || '').trim(),
+        notes: String(body.notes || '').trim(),
+        requests,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+    };
+
+    try {
+        await db.create(CUSTOMERS_COLLECTION, id, payload);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao criar cliente.' });
+    }
+
+    let sales = [];
+    try {
+        sales = await db.findAll({ colecao: SALES_COLLECTION });
+    } catch {
+        sales = [];
+    }
+    const saleMap = salesTotalsByClientKey(Array.isArray(sales) ? sales : []);
+    const nameKey = name.toLowerCase();
+    const stats = saleMap.get(nameKey) || { purchases: 0, spent: 0 };
+
+    const createdSnap = await firestore.collection(CUSTOMERS_COLLECTION).doc(id).get();
+    const data = createdSnap.data() || {};
+
+    return res.json({ error: false, customer: normalizeCustomerRow({ ...data, id }, stats) });
+});
+
+app.patch('/api/customers/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+
+    const snap = await firestore.collection(CUSTOMERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Cliente não encontrado.' });
+    }
+
+    const prev = snap.data() || {};
+    const body = req.body || {};
+    const patch = { updatedAt: FieldValue.serverTimestamp() };
+
+    if (body.name !== undefined) {
+        const nm = String(body.name).trim();
+        if (!nm) {
+            return res.status(400).json({ error: true, message: 'Nome inválido.' });
+        }
+        patch.name = nm;
+    }
+    if (body.doc !== undefined) patch.doc = String(body.doc || '').trim();
+    if (body.phone !== undefined) patch.phone = String(body.phone || '').trim();
+    if (body.email !== undefined) patch.email = String(body.email || '').trim();
+    if (body.address !== undefined) patch.address = String(body.address || '').trim();
+    if (body.notes !== undefined) patch.notes = String(body.notes || '').trim();
+
+    if (body.requests !== undefined) {
+        if (!Array.isArray(body.requests)) {
+            return res.status(400).json({ error: true, message: 'Lista de requisições inválida.' });
+        }
+        patch.requests = body.requests.map(normalizeCustomerRequest);
+    }
+
+    try {
+        await db.update(CUSTOMERS_COLLECTION, id, patch);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar cliente.' });
+    }
+
+    let sales = [];
+    try {
+        sales = await db.findAll({ colecao: SALES_COLLECTION });
+    } catch {
+        sales = [];
+    }
+    const saleMap = salesTotalsByClientKey(Array.isArray(sales) ? sales : []);
+    const merged = { id, ...prev, ...patch };
+    delete merged.updatedAt;
+
+    const finalName = String(merged.name !== undefined ? merged.name : prev.name || '').trim().toLowerCase();
+    const stats = finalName ? saleMap.get(finalName) || { purchases: 0, spent: 0 } : { purchases: 0, spent: 0 };
+
+    const freshSnap = await firestore.collection(CUSTOMERS_COLLECTION).doc(id).get();
+    const data = freshSnap.data() || {};
+    return res.json({ error: false, customer: normalizeCustomerRow({ ...data, id }, stats) });
+});
+
+app.delete('/api/customers/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+
+    const snap = await firestore.collection(CUSTOMERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Cliente não encontrado.' });
+    }
+
+    try {
+        await db.delete(CUSTOMERS_COLLECTION, id);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao remover cliente.' });
+    }
+
+    return res.json({ error: false });
+});
+
+app.post('/api/customers/:id/requests', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+
+    const snap = await firestore.collection(CUSTOMERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Cliente não encontrado.' });
+    }
+
+    const prev = snap.data() || {};
+    const prevReq = Array.isArray(prev.requests) ? prev.requests.map(normalizeCustomerRequest) : [];
+    const incoming = normalizeCustomerRequest(req.body || {});
+    if (!incoming.title) {
+        return res.status(400).json({ error: true, message: 'Título da requisição é obrigatório.' });
+    }
+
+    const nextRequests = [...prevReq, incoming];
+    try {
+        await db.update(CUSTOMERS_COLLECTION, id, {
+            requests: nextRequests,
+            updatedAt: FieldValue.serverTimestamp()
+        });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao registrar requisição.' });
+    }
+
+    let sales = [];
+    try {
+        sales = await db.findAll({ colecao: SALES_COLLECTION });
+    } catch {
+        sales = [];
+    }
+    const saleMap = salesTotalsByClientKey(Array.isArray(sales) ? sales : []);
+    const finalName = String(prev.name || '').trim().toLowerCase();
+    const stats = finalName ? saleMap.get(finalName) || { purchases: 0, spent: 0 } : { purchases: 0, spent: 0 };
+
+    const freshSnap = await firestore.collection(CUSTOMERS_COLLECTION).doc(id).get();
+    const data = freshSnap.data() || {};
+    return res.json({ error: false, customer: normalizeCustomerRow({ ...data, id }, stats) });
+});
+
+app.get('/api/cash-flow', verifyLogin, async (req, res) => {
+    try {
+        const entries = await loadCashFlowNormalized();
+        let filtered = entries;
+        const qType = String(req.query.type || '').toLowerCase();
+        if (qType === 'income' || qType === 'expense') {
+            filtered = entries.filter((e) => e.type === qType);
+        }
+        const from = String(req.query.from || '').trim();
+        const to = String(req.query.to || '').trim();
+        if (from) filtered = filtered.filter((e) => !e.date || e.date >= from);
+        if (to) filtered = filtered.filter((e) => !e.date || e.date <= to);
+        return res.json({ error: false, entries: filtered });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar fluxo de caixa.' });
+    }
+});
+
+app.post('/api/cash-flow', verifyLogin, async (req, res) => {
+    const body = req.body || {};
+    const amount = parseMoneyField(body.amount);
+    if (amount <= 0) {
+        return res.status(400).json({ error: true, message: 'Informe um valor maior que zero.' });
+    }
+
+    const type = String(body.type || 'income').toLowerCase() === 'expense' ? 'expense' : 'income';
+    const dateRaw = body.date != null ? String(body.date).trim().slice(0, 10) : '';
+    const date = dateRaw || new Date().toISOString().slice(0, 10);
+    const id = randomUUID();
+
+    const payload = {
+        id,
+        type,
+        amount,
+        category: String(body.category || '').trim(),
+        description: String(body.description || '').trim(),
+        date,
+        createdAt: FieldValue.serverTimestamp()
+    };
+
+    try {
+        await db.create(CASH_FLOW_COLLECTION, id, payload);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao registrar lançamento.' });
+    }
+
+    const freshSnap = await firestore.collection(CASH_FLOW_COLLECTION).doc(id).get();
+    const data = freshSnap.data() || {};
+    return res.json({ error: false, entry: normalizeCashFlowRow({ ...data, id }) });
+});
+
+app.patch('/api/cash-flow/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+
+    const snap = await firestore.collection(CASH_FLOW_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Lançamento não encontrado.' });
+    }
+
+    const prev = snap.data() || {};
+    const body = req.body || {};
+    const patch = {};
+
+    if (body.type !== undefined) {
+        patch.type = String(body.type).toLowerCase() === 'expense' ? 'expense' : 'income';
+    }
+    if (body.amount !== undefined) {
+        const amt = parseMoneyField(body.amount);
+        if (amt <= 0) {
+            return res.status(400).json({ error: true, message: 'Valor inválido.' });
+        }
+        patch.amount = amt;
+    }
+    if (body.category !== undefined) patch.category = String(body.category || '').trim();
+    if (body.description !== undefined) patch.description = String(body.description || '').trim();
+    if (body.date !== undefined) {
+        const d = String(body.date || '').trim().slice(0, 10);
+        patch.date = d;
+    }
+
+    if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: true, message: 'Nada para atualizar.' });
+    }
+
+    try {
+        await db.update(CASH_FLOW_COLLECTION, id, patch);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar lançamento.' });
+    }
+
+    const merged = { id, ...prev, ...patch };
+    return res.json({ error: false, entry: normalizeCashFlowRow(merged) });
+});
+
+app.delete('/api/cash-flow/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+
+    const snap = await firestore.collection(CASH_FLOW_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Lançamento não encontrado.' });
+    }
+
+    try {
+        await db.delete(CASH_FLOW_COLLECTION, id);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao excluir lançamento.' });
+    }
+
+    return res.json({ error: false });
+});
+
 app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
     const token = String(req.params.token || '').trim();
     const pending = pendingPointSales.get(token);
     if (!pending) return res.json({ error: false });
     try {
         if (pending?.mode === 'point') await cancelPointOrder(pending.pointOrderId);
+        if (pending?.mode === 'mp_qr_instore') await cancelQrStoreOrder(pending.qrOrderId);
     } catch (e) {
         console.error('Falha ao cancelar pagamento pendente:', e?.response?.data || e);
     } finally {
@@ -1515,10 +2099,16 @@ app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
 });
 
 app.get('/sells', verifyLogin, async (req, res) => {
-    const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
     const products = await loadProductsFromDb();
     const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
-    const sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+    let sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+    sales.sort((a, b) => {
+        const ta = new Date(a.createdAt || a.date || 0).getTime();
+        const tb = new Date(b.createdAt || b.date || 0).getTime();
+        return tb - ta;
+    });
     res.render('layout', { body: 'sells', appData: { configs, user: req.session.user, products, sales } });
 });
 
@@ -1526,8 +2116,24 @@ app.get('/products', (req, res) => {
     res.render('layout', { body: 'products' });
 });
 
-app.get('/clients', (req, res) => {
-    res.render('layout', { body: 'clients' });
+app.get('/clients', verifyLogin, async (req, res) => {
+    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
+    const customers = await loadCustomersNormalized();
+    res.render('layout', {
+        body: 'clients',
+        appData: { configs, user: req.session.user, customers }
+    });
+});
+
+app.get('/cash-flow', verifyLogin, async (req, res) => {
+    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
+    const cashFlowEntries = await loadCashFlowNormalized();
+    res.render('layout', {
+        body: 'cashflow',
+        appData: { configs, user: req.session.user, cashFlowEntries }
+    });
 });
 
 app.get('/analytics', (req, res) => {

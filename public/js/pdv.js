@@ -967,6 +967,7 @@ function getPaymentStatusText(status, paymentKey) {
         const pixMap = {
             pending: 'Aguardando pagamento PIX',
             in_process: 'Pagamento em processamento',
+            created: 'Aguardando pagamento PIX',
             approved: 'Pagamento aprovado',
             rejected: 'Pagamento recusado',
             cancelled: 'Pagamento cancelado'
