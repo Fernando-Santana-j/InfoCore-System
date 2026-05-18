@@ -1,44 +1,85 @@
-<div id="budgetPrintArea" style="font-family:Inter,Arial,sans-serif;max-width:760px;margin:0 auto;color:#111827;">
-  <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:2px solid #111827;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <img src="{{logoUrl}}" alt="Logo" style="width:56px;height:56px;border-radius:8px;object-fit:cover;">
-      <div>
-        <div style="font-size:1.2rem;font-weight:800;color:#111827;">InfoCore System</div>
-        <div style="font-size:.85rem;color:#4b5563;">Orçamento comercial</div>
-      </div>
+<style>
+  @media print {
+    @page { size: A4 portrait; margin: 4mm; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+    }
+    #budgetPrintArea {
+      max-width: none !important;
+      width: 100% !important;
+      height: 289mm;
+      max-height: 289mm;
+      padding: 0 !important;
+      overflow: hidden;
+      page-break-after: avoid;
+      page-break-inside: avoid;
+    }
+    .budget-sheet-duo {
+      display: flex;
+      flex-direction: column;
+      height: 289mm;
+      max-height: 289mm;
+      overflow: hidden;
+      page-break-inside: avoid;
+    }
+    .budget-sheet-via {
+      flex: 1 1 0;
+      min-height: 0;
+      max-height: calc(50% - 4mm);
+      overflow: hidden;
+      page-break-inside: auto;
+      page-break-after: auto;
+    }
+    .budget-sheet-cut {
+      flex: 0 0 5mm;
+      margin: 0;
+      padding: 0;
+      page-break-inside: avoid;
+    }
+  }
+  .budget-sheet-duo {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .budget-sheet-via {
+    padding: 0;
+  }
+  .budget-sheet-cut {
+    border-top: 2px dashed #94a3b8;
+    margin: 8px 0;
+    padding-top: 0;
+    position: relative;
+    text-align: center;
+    height: 5mm;
+    flex-shrink: 0;
+  }
+  .budget-sheet-cut-label {
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #fff;
+    padding: 0 12px;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
+    font-family: Inter, Arial, sans-serif;
+    font-weight: 700;
+  }
+</style>
+<div id="budgetPrintArea" style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:780px;margin:0 auto;color:#0f172a;background:#fff;padding:6px 8px;box-sizing:border-box;">
+  <div class="budget-sheet-duo">
+    <div class="budget-sheet-via">{{voucherHtml}}</div>
+    <div class="budget-sheet-cut" aria-hidden="true">
+      <span class="budget-sheet-cut-label">&#9986; recortar aqui</span>
     </div>
-    <div style="text-align:right;">
-      <div style="font-weight:700;color:#111827;">{{code}}</div>
-      <div style="font-size:.82rem;color:#6b7280;">Status: {{status}}</div>
-    </div>
-  </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
-    <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
-      <div><strong>Cliente:</strong> {{customerName}}</div>
-      <div><strong>WhatsApp:</strong> {{customerPhone}}</div>
-      <div><strong>Email:</strong> {{customerEmail}}</div>
-    </div>
-    <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
-      <div><strong>Validade:</strong> {{date}}</div>
-      <div><strong>Observações:</strong> {{notes}}</div>
-    </div>
-  </div>
-  <table style="width:100%;border-collapse:collapse;margin-top:14px;">
-    <thead style="background:#111827;color:#fff;">
-      <tr><th style="padding:8px;text-align:left;">Item</th><th style="padding:8px;text-align:center;">Qtd</th><th style="padding:8px;text-align:right;">Unitário</th><th style="padding:8px;text-align:right;">Total</th></tr>
-    </thead>
-    <tbody>{{itemsRowsHtml}}</tbody>
-  </table>
-  <div style="margin-top:12px;display:flex;justify-content:flex-end;">
-    <div style="min-width:260px;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
-      <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Desconto</span><strong>- {{discount}}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Acréscimo</span><strong>+ {{extra}}</strong></div>
-      <div style="display:flex;justify-content:space-between;font-size:1.05rem;margin-top:6px;"><span>Total</span><strong>{{total}}</strong></div>
-    </div>
-  </div>
-  <div style="margin-top:28px;display:flex;justify-content:space-between;gap:18px;">
-    <div style="flex:1;border-top:1px solid #111827;padding-top:6px;font-size:.85rem;">Assinatura do cliente</div>
-    <div style="flex:1;border-top:1px solid #111827;padding-top:6px;font-size:.85rem;">Assinatura do responsável</div>
+    <div class="budget-sheet-via">{{voucherHtml}}</div>
   </div>
 </div>

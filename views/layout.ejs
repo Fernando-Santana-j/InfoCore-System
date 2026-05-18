@@ -51,6 +51,10 @@
   <% if (body === 'stock') { %>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <% } %>
+  <% if (body === 'budgets' || body === 'pdv') { %>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="/js/budget-templates.js"></script>
+  <% } %>
     <main class="main">
       <%- include('reusable/topbar') %>
 

@@ -112,7 +112,7 @@ function payloadFromDraft(status) {
         customerName: String(document.getElementById('budgetCustomerName')?.value || '').trim(),
         customerPhone: String(document.getElementById('budgetCustomerPhone')?.value || '').trim(),
         customerEmail: String(document.getElementById('budgetCustomerEmail')?.value || '').trim(),
-        date: String(document.getElementById('budgetdate')?.value || '').trim(),
+        validUntil: String(document.getElementById('budgetdate')?.value || '').trim(),
         notes: String(document.getElementById('budgetNotes')?.value || '').trim(),
         discount: totals.discount,
         extra: totals.extra,
@@ -130,95 +130,12 @@ function payloadFromDraft(status) {
     };
 }
 
-function getBudgetTemplateHtml(budget) {
-    const items = asArray(budget?.items);
-    const logo = `${window.location.origin}/public/img/logo_bg.png`;
-    const rows = items.map((item) => `
-        <tr>
-            <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.name || '')}</td>
-            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;">${asNumber(item.qty)}</td>
-            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${formatCurrency(asNumber(item.unitPrice))}</td>
-            <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;">${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}</td>
-        </tr>
-    `).join('');
-    return `
-        <div id="budgetPrintArea" style="font-family:Inter,Arial,sans-serif;max-width:760px;margin:0 auto;">
-            <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:2px solid #111827;">
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <img src="${logo}" alt="Logo" style="width:56px;height:56px;border-radius:8px;object-fit:cover;">
-                    <div>
-                        <div style="font-size:1.2rem;font-weight:800;color:#111827;">InfoCore System</div>
-                        <div style="font-size:.85rem;color:#4b5563;">Orçamento comercial</div>
-                    </div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-weight:700;color:#111827;">${escapeHtml(budget.code || 'ORC')}</div>
-                    <div style="font-size:.82rem;color:#6b7280;">Status: ${budget.status === 'finalized' ? 'Finalizado' : 'Rascunho'}</div>
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
-                <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
-                    <div><strong>Cliente:</strong> ${escapeHtml(budget.customerName || '-')}</div>
-                    <div><strong>WhatsApp:</strong> ${escapeHtml(budget.customerPhone || '-')}</div>
-                    <div><strong>Email:</strong> ${escapeHtml(budget.customerEmail || '-')}</div>
-                </div>
-                <div style="background:#f8fafc;border:1px solid #e5e7eb;padding:10px;border-radius:10px;">
-                    <div><strong>Validade:</strong> ${escapeHtml(budget.date || '-')}</div>
-                    <div><strong>Observações:</strong> ${escapeHtml(budget.notes || '-')}</div>
-                </div>
-            </div>
-            <table style="width:100%;border-collapse:collapse;margin-top:14px;">
-                <thead style="background:#111827;color:#fff;">
-                    <tr><th style="padding:8px;text-align:left;">Item</th><th>Qtd</th><th style="text-align:right;">Unitário</th><th style="text-align:right;">Total</th></tr>
-                </thead>
-                <tbody>${rows}</tbody>
-            </table>
-            <div style="margin-top:12px;display:flex;justify-content:flex-end;">
-                <div style="min-width:260px;border:1px solid #e5e7eb;border-radius:8px;padding:10px;">
-                    <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><strong>${formatCurrency(asNumber(budget.subtotal))}</strong></div>
-                    <div style="display:flex;justify-content:space-between;"><span>Desconto</span><strong>- ${formatCurrency(asNumber(budget.discount))}</strong></div>
-                    <div style="display:flex;justify-content:space-between;"><span>Acréscimo</span><strong>+ ${formatCurrency(asNumber(budget.extra))}</strong></div>
-                    <div style="display:flex;justify-content:space-between;font-size:1.05rem;margin-top:6px;"><span>Total</span><strong>${formatCurrency(asNumber(budget.total))}</strong></div>
-                </div>
-            </div>
-            <div style="margin-top:28px;display:flex;justify-content:space-between;gap:18px;">
-                <div style="flex:1;border-top:1px solid #111827;padding-top:6px;font-size:.85rem;">Assinatura do cliente</div>
-                <div style="flex:1;border-top:1px solid #111827;padding-top:6px;font-size:.85rem;">Assinatura do responsável</div>
-            </div>
-        </div>
-    `;
-}
-
-function buildWhatsappTemplate(budget) {
-    return [
-        `*Orçamento ${budget.code || ''}* - InfoCore`,
-        `Cliente: ${budget.customerName || 'Não informado'}`,
-        `Total: ${formatCurrency(asNumber(budget.total))}`,
-        '',
-        ...asArray(budget.items).map((item) => `- ${item.name} (x${asNumber(item.qty)}) ${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}`),
-        '',
-        `Validade: ${budget.date || 'Não informada'}`,
-        `Assinatura: ________________________`
-    ].join('\n');
-}
-
-function buildEmailTemplate(budget) {
-    return `
-<h2>Orçamento ${escapeHtml(budget.code || '')} - InfoCore</h2>
-<p>Cliente: <strong>${escapeHtml(budget.customerName || 'Não informado')}</strong></p>
-<p>Total: <strong>${formatCurrency(asNumber(budget.total))}</strong></p>
-<ul>${asArray(budget.items).map((item) => `<li>${escapeHtml(item.name)} - x${asNumber(item.qty)} - ${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}</li>`).join('')}</ul>
-<p>Validade: ${escapeHtml(budget.date || 'Não informada')}</p>
-<p>Assinatura: _______________________________________</p>
-    `.trim();
-}
-
 function openTemplateModal(budget) {
     budgetCurrentRecord = budget;
     const preview = document.getElementById('budgetTemplatePreview');
     const modal = document.getElementById('budgetTemplateModal');
-    if (preview) preview.innerHTML = getBudgetTemplateHtml(budget);
     if (modal) modal.classList.add('open');
+    loadBudgetTemplatePreview(budget, preview);
 }
 
 function closeTemplateModal() {
@@ -250,7 +167,7 @@ function renderSavedBudgets() {
                 <div class="budget-card-meta">
                     <div>Cliente: ${escapeHtml(budget.customerName || 'Não informado')}</div>
                     <div>Itens: ${asArray(budget.items).length}</div>
-                    <div>Validade: ${escapeHtml(budget.date || 'N/I')}</div>
+                    <div>Validade: ${escapeHtml(budget.validUntil || budget.date || 'N/I')}</div>
                     <div>Total: ${formatCurrency(asNumber(budget.total))}</div>
                 </div>
                 <div class="budget-card-actions">
@@ -330,35 +247,12 @@ function openTemplateById(id) {
 
 function generatePdf() {
     if (!budgetCurrentRecord) return;
-    const html = getBudgetTemplateHtml(budgetCurrentRecord);
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.write(`<html><head><title>Orçamento ${escapeHtml(budgetCurrentRecord.code || '')}</title><meta charset="utf-8"></head><body style="margin:24px;background:#fff;">${html}</body></html>`);
-    w.document.close();
-    w.focus();
-    w.print();
+    printBudgetTemplatePdf(budgetCurrentRecord);
 }
 
 function downloadImage() {
     if (!budgetCurrentRecord) return;
-    const html = getBudgetTemplateHtml(budgetCurrentRecord);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1480"><foreignObject x="0" y="0" width="1080" height="1480"><div xmlns="http://www.w3.org/1999/xhtml" style="background:#ffffff;padding:36px;box-sizing:border-box;width:1080px;height:1480px;">${html}</div></foreignObject></svg>`;
-    const img = new Image();
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
-    img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 1080;
-        canvas.height = 1480;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
-        const a = document.createElement('a');
-        a.href = canvas.toDataURL('image/png');
-        a.download = `${budgetCurrentRecord.code || 'orcamento'}.png`;
-        a.click();
-    };
-    img.src = url;
+    downloadBudgetTemplateImage(budgetCurrentRecord);
 }
 
 async function copyText(value, okMessage) {
@@ -444,13 +338,25 @@ function bindEvents() {
     if (closeBtn) closeBtn.addEventListener('click', closeTemplateModal);
     if (doneBtn) doneBtn.addEventListener('click', closeTemplateModal);
     if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeTemplateModal(); });
-    if (copyWhatsappBtn) copyWhatsappBtn.addEventListener('click', () => {
+    if (copyWhatsappBtn) copyWhatsappBtn.addEventListener('click', async () => {
         if (!budgetCurrentRecord) return;
-        copyText(buildWhatsappTemplate(budgetCurrentRecord), 'Template WhatsApp copiado.');
+        try {
+            await copyBudgetTemplateText('whatsapp', budgetCurrentRecord);
+            showToast('Template WhatsApp copiado.', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('Não foi possível copiar o template.', 'error');
+        }
     });
-    if (copyEmailBtn) copyEmailBtn.addEventListener('click', () => {
+    if (copyEmailBtn) copyEmailBtn.addEventListener('click', async () => {
         if (!budgetCurrentRecord) return;
-        copyText(buildEmailTemplate(budgetCurrentRecord), 'Template de email copiado.');
+        try {
+            await copyBudgetTemplateText('email', budgetCurrentRecord);
+            showToast('Template de email copiado.', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('Não foi possível copiar o template.', 'error');
+        }
     });
     if (downloadImageBtn) downloadImageBtn.addEventListener('click', downloadImage);
     if (generatePdfBtn) generatePdfBtn.addEventListener('click', generatePdf);

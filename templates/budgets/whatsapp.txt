@@ -6,4 +6,5 @@ Total: {{total}}
 {{itemsRowsText}}
 
 Observações: {{notes}}
+Ao assinar, declaro que o problema foi resolvido e que o aparelho foi devolvido.
 Assinatura: ________________________

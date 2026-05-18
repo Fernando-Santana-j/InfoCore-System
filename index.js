@@ -297,6 +297,14 @@ function safeTemplateValue(value) {
     return String(value == null ? '' : value);
 }
 
+function formatDateBr(value) {
+    const s = String(value || '').trim();
+    if (!s) return '-';
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+    return s;
+}
+
 function renderTemplateString(template, data) {
     let out = String(template || '');
     Object.keys(data || {}).forEach((key) => {
@@ -315,14 +323,16 @@ function readBudgetTemplate(filename, fallback = '') {
     }
 }
 
-function buildBudgetRowsHtml(budget) {
+function buildBudgetRowsHtml(budget, compact = false) {
     const items = Array.isArray(budget?.items) ? budget.items : [];
+    const pad = compact ? '4px 6px' : '8px';
+    const fs = compact ? 'font-size:.7rem;' : '';
     return items.map((item) => `
 <tr>
-  <td style="padding:8px;border-bottom:1px solid #e5e7eb;">${safeTemplateValue(item.name || '')}</td>
-  <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;">${safeTemplateValue(item.qty || 0)}</td>
-  <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;">${moneyBr(item.unitPrice || 0)}</td>
-  <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;">${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;${fs}">${safeTemplateValue(item.name || '')}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:center;${fs}">${safeTemplateValue(item.qty || 0)}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;${fs}">${moneyBr(item.unitPrice || 0)}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;${fs}">${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}</td>
 </tr>`).join('');
 }
 
@@ -331,47 +341,73 @@ function buildBudgetRowsText(budget) {
     return items.map((item) => `- ${safeTemplateValue(item.name || 'Item')} (x${Number(item.qty) || 0}) ${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}`).join('\n');
 }
 
-function budgetTemplateData(budget) {
-    const logoUrl = process.env.APP_PUBLIC_BASE_URL
-        ? `${String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '')}/public/img/logo_bg.png`
-        : '/public/img/logo_bg.png';
+function budgetTemplateData(budget, req, options = {}) {
+    const compact = options?.compact === true;
+    const reqBase = req ? `${req.protocol}://${req.get('host')}` : '';
+    const envBase = process.env.APP_PUBLIC_BASE_URL
+        ? String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '')
+        : '';
+    const base = reqBase || envBase;
+    const logoUrl = base ? `${base}/public/img/logo_bg.png` : '/public/img/logo_bg.png';
+    const isFinalized = String(budget?.status || 'draft') === 'finalized';
+    const validUntilRaw = budget?.validUntil || budget?.date || '';
+    const statusBadgeHtml = isFinalized
+        ? '<span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;background:#dcfce7;color:#166534;">Finalizado</span>'
+        : '';
+    const signatureTerms = 'Ao assinar, declaro que o problema foi resolvido e que o aparelho foi devolvido.';
     return {
         code: safeTemplateValue(budget?.code || 'ORC'),
         customerName: safeTemplateValue(budget?.customerName || 'Não informado'),
         customerPhone: safeTemplateValue(budget?.customerPhone || '-'),
         customerEmail: safeTemplateValue(budget?.customerEmail || '-'),
-        validUntil: safeTemplateValue(budget?.validUntil || '-'),
+        validUntil: formatDateBr(validUntilRaw),
+        date: formatDateBr(validUntilRaw),
         notes: safeTemplateValue(budget?.notes || '-'),
         subtotal: moneyBr(budget?.subtotal || 0),
         discount: moneyBr(budget?.discount || 0),
         extra: moneyBr(budget?.extra || 0),
         total: moneyBr(budget?.total || 0),
-        status: safeTemplateValue(String(budget?.status || 'draft') === 'finalized' ? 'Finalizado' : 'Rascunho'),
-        itemsRowsHtml: buildBudgetRowsHtml(budget),
+        status: safeTemplateValue(isFinalized ? 'Finalizado' : ''),
+        statusBg: isFinalized ? '#dcfce7' : 'transparent',
+        statusColor: isFinalized ? '#166534' : 'transparent',
+        statusBadgeHtml,
+        signatureTerms: safeTemplateValue(signatureTerms),
+        issuedAt: formatDateBr(new Date().toISOString().slice(0, 10)),
+        itemsRowsHtml: buildBudgetRowsHtml(budget, compact),
         itemsRowsText: buildBudgetRowsText(budget),
         logoUrl
     };
 }
 
-function renderBudgetTemplateHtml(kind, budget) {
-    const file = kind === 'image' ? 'image.html' : 'pdf.html';
-    const fallback = `
-<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;">
-  <h2>Orçamento {{code}}</h2>
-  <p>Cliente: {{customerName}}</p>
-  <p>Total: {{total}}</p>
-  <table style="width:100%"><tbody>{{itemsRowsHtml}}</tbody></table>
-  <p>Assinatura do cliente: ____________________________</p>
-</div>`;
-    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget));
+function renderBudgetVoucherHtml(budget, req, options = {}) {
+    const compact = options?.compact === true;
+    const file = compact ? 'voucher-print.html' : 'voucher.html';
+    const fallback = '<div><h2>{{code}}</h2><p>{{customerName}}</p><p>{{total}}</p></div>';
+    return renderTemplateString(
+        readBudgetTemplate(file, fallback),
+        budgetTemplateData(budget, req, { compact })
+    );
 }
 
-function renderBudgetTemplateText(kind, budget) {
+function renderBudgetTemplateHtml(kind, budget, req) {
+    const compact = kind === 'pdf';
+    const data = {
+        ...budgetTemplateData(budget, req, { compact }),
+        voucherHtml: renderBudgetVoucherHtml(budget, req, { compact })
+    };
+    const file = kind === 'image' ? 'image.html' : 'pdf.html';
+    const fallback = kind === 'image'
+        ? '<div id="budgetImageArea">{{voucherHtml}}</div>'
+        : '<div id="budgetPrintArea">{{voucherHtml}}<hr style="border-top:2px dashed #94a3b8">{{voucherHtml}}</div>';
+    return renderTemplateString(readBudgetTemplate(file, fallback), data);
+}
+
+function renderBudgetTemplateText(kind, budget, req) {
     const file = kind === 'email' ? 'email.html' : 'whatsapp.txt';
     const fallback = kind === 'email'
         ? `<h2>Orçamento {{code}}</h2><p>Total: {{total}}</p><pre>{{itemsRowsText}}</pre>`
         : `*Orçamento {{code}}*\nTotal: {{total}}\n{{itemsRowsText}}`;
-    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget));
+    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget, req));
 }
 
 function sanitizePhone(raw) {
@@ -969,7 +1005,7 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
         customerPhone: String(body.customerPhone || '').trim(),
         customerEmail: String(body.customerEmail || '').trim(),
         notes: String(body.notes || '').trim(),
-        validUntil: String(body.validUntil || '').trim(),
+        validUntil: String(body.validUntil || body.date || '').trim(),
         items,
         subtotal,
         discount,
@@ -992,6 +1028,28 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao salvar orçamento.' });
+    }
+});
+
+app.post('/api/budgets/template', verifyLogin, (req, res) => {
+    const kind = String(req.body?.kind || 'image').trim().toLowerCase();
+    const budget = req.body?.budget;
+    if (!budget || typeof budget !== 'object') {
+        return res.status(400).json({ error: true, message: 'Orçamento inválido para template.' });
+    }
+    try {
+        if (kind === 'whatsapp' || kind === 'email') {
+            const html = renderBudgetTemplateText(kind, budget, req);
+            return res.json({ error: false, html });
+        }
+        if (kind !== 'image' && kind !== 'pdf') {
+            return res.status(400).json({ error: true, message: 'Tipo de template inválido.' });
+        }
+        const html = renderBudgetTemplateHtml(kind, budget, req);
+        return res.json({ error: false, html });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao gerar template.' });
     }
 });
 
