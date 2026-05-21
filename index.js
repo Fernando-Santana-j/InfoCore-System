@@ -99,6 +99,7 @@ function normalizeBudgetRow(row) {
     return {
         id: r.id != null ? String(r.id) : '',
         code: r.code != null ? String(r.code) : '',
+        customerId: r.customerId != null ? String(r.customerId) : '',
         customerName: r.customerName != null ? String(r.customerName) : '',
         customerPhone: r.customerPhone != null ? String(r.customerPhone) : '',
         customerEmail: r.customerEmail != null ? String(r.customerEmail) : '',
@@ -113,12 +114,16 @@ function normalizeBudgetRow(row) {
             name: item?.name != null ? String(item.name) : '',
             qty: Number(item?.qty) || 0,
             unitPrice: Number(item?.unitPrice) || 0,
+            unitCost: Number(item?.unitCost) || 0,
+            lineCost: Number(item?.lineCost) || 0,
             total: Number(item?.total) || 0
         })) : [],
         subtotal,
         discount,
         extra,
         total,
+        costTotal: Number(r.costTotal) || 0,
+        profit: Number.isFinite(Number(r.profit)) ? Number(r.profit) : null,
         createdAt: r.createdAt || null,
         updatedAt: r.updatedAt || null,
         finalizedAt: r.finalizedAt || null
@@ -161,15 +166,19 @@ function normalizeSaleRow(row) {
             name: r.cashier.name != null ? String(r.cashier.name) : '',
             email: r.cashier.email != null ? String(r.cashier.email) : ''
         } : null,
-        items: Array.isArray(r.items) ? r.items.map((item) => ({
+        items: asItemsArray(r.items).map((item) => ({
             id: item?.id != null ? String(item.id) : '',
             sku: item?.sku != null ? String(item.sku) : '',
             name: item?.name != null ? String(item.name) : '',
             category: item?.category != null ? String(item.category) : '',
             price: Number(item?.price) || 0,
+            cost: Number(item?.cost) || 0,
             qty: Number(item?.qty) || 0,
-            lineTotal: Number(item?.lineTotal) || ((Number(item?.price) || 0) * (Number(item?.qty) || 0))
-        })) : [],
+            lineTotal: Number(item?.lineTotal) || ((Number(item?.price) || 0) * (Number(item?.qty) || 0)),
+            lineCost: Number(item?.lineCost) || ((Number(item?.cost) || 0) * (Number(item?.qty) || 0))
+        })),
+        costTotal: Number(r.costTotal) || 0,
+        profit: Number.isFinite(Number(r.profit)) ? Number(r.profit) : null,
         subtotal: Number(r.subtotal) || 0,
         discount: Number(r.discount) || 0,
         extra: Number(r.extra) || 0,
@@ -247,15 +256,47 @@ function normalizeCashFlowRow(row) {
     const createdAt = toDateSafe(r.createdAt);
     const rawType = String(r.type || '').toLowerCase();
     const type = rawType === 'expense' ? 'expense' : 'income';
+    const amount = Math.max(0, Number(r.amount) || 0);
+    const cost = Math.max(0, Number(r.cost) || 0);
+    let profit = Number(r.profit);
+    if (!Number.isFinite(profit)) profit = type === 'income' ? amount - cost : 0;
     return {
         id: r.id != null ? String(r.id) : '',
         type,
-        amount: Math.max(0, Number(r.amount) || 0),
+        amount,
+        cost,
+        profit,
         category: r.category != null ? String(r.category).trim() : '',
         description: r.description != null ? String(r.description).trim() : '',
         date: dt,
+        saleId: r.saleId != null ? String(r.saleId) : '',
+        budgetId: r.budgetId != null ? String(r.budgetId) : '',
+        source: r.source != null ? String(r.source).trim() : '',
         createdAt: createdAt ? createdAt.toISOString() : null
     };
+}
+
+function currentMonthKey() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
+}
+
+function entryInMonth(entry, monthKey) {
+    const dt = String(entry?.date || '').slice(0, 7);
+    return dt === monthKey;
+}
+
+function paymentLabelForCashFlow(payment) {
+    const key = normalizePaymentKey(payment);
+    const labels = {
+        money: 'Dinheiro',
+        pix: 'PIX',
+        credit_card: 'Cartão de crédito',
+        debit_card: 'Cartão de débito'
+    };
+    return labels[key] || key;
 }
 
 async function loadCustomersNormalized() {
@@ -280,9 +321,326 @@ async function loadCustomersNormalized() {
     });
 }
 
+function cashFlowDescriptionForSale(saleRecord, saleId) {
+    const code = saleRecord?.code || saleId || '';
+    const client = saleRecord?.client != null ? String(saleRecord.client).trim() : 'Balcão';
+    const pay = paymentLabelForCashFlow(saleRecord?.payment);
+    return `${code} · ${client || 'Balcão'} · ${pay}`;
+}
+
+function buildCashFlowPayloadFromSale(saleId, saleRecord) {
+    const total = Number(saleRecord?.total) || 0;
+    const costTotal = Number(saleRecord?.costTotal) || 0;
+    const profit = Number.isFinite(Number(saleRecord?.profit))
+        ? Number(saleRecord.profit)
+        : Math.round((total - costTotal) * 100) / 100;
+    const createdAtDate = toDateSafe(saleRecord?.createdAt);
+    const date = createdAtDate
+        ? createdAtDate.toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+    const cfId = randomUUID();
+    return {
+        id: cfId,
+        type: 'income',
+        amount: total,
+        cost: costTotal,
+        profit,
+        category: 'Vendas PDV',
+        description: cashFlowDescriptionForSale(saleRecord, saleId),
+        date,
+        saleId: String(saleId),
+        source: 'pdv',
+        createdAt: FieldValue.serverTimestamp()
+    };
+}
+
+function cashFlowDescriptionForBudget(budgetRecord, budgetId) {
+    const code = budgetRecord?.code || budgetId || '';
+    const client = budgetRecord?.customerName != null ? String(budgetRecord.customerName).trim() : 'Cliente';
+    return `${code} · ${client || 'Cliente'} · Orçamento`;
+}
+
+function buildCashFlowPayloadFromBudget(budgetId, budgetRecord) {
+    const total = Number(budgetRecord?.total) || 0;
+    const { costTotal, profit } = computeBudgetFinancials(budgetRecord);
+    const finalizedAtDate = toDateSafe(budgetRecord?.finalizedAt) || toDateSafe(budgetRecord?.updatedAt);
+    const date = finalizedAtDate
+        ? finalizedAtDate.toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+    const cfId = randomUUID();
+    return {
+        id: cfId,
+        type: 'income',
+        amount: total,
+        cost: costTotal,
+        profit,
+        category: 'Orçamentos',
+        description: cashFlowDescriptionForBudget(budgetRecord, budgetId),
+        date,
+        budgetId: String(budgetId),
+        source: 'budget',
+        createdAt: FieldValue.serverTimestamp()
+    };
+}
+
+function isPdvCashFlowEntry(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    const source = String(r.source || '').trim();
+    return source === 'pdv' || source === 'budget' || Boolean(String(r.saleId || '').trim()) || Boolean(String(r.budgetId || '').trim());
+}
+
+async function enrichBudgetItemsWithCost(rawItems, maps) {
+    const costMaps = maps?.byId ? maps : await loadProductCostMaps();
+    const items = [];
+    let costCents = 0;
+    for (const row of asItemsArray(rawItems)) {
+        const kind = String(row?.kind || 'custom') === 'product' ? 'product' : 'custom';
+        const qty = Number(row?.qty);
+        const unitPrice = Number(row?.unitPrice);
+        const name = String(row?.name || '').trim();
+        const unitCost = await resolveItemUnitCost({
+            id: row?.productId || row?.id,
+            productId: row?.productId,
+            sku: row?.sku,
+            unitCost: row?.unitCost,
+            cost: row?.cost
+        }, costMaps);
+        const lineTotal = Math.round(qty * unitPrice * 100) / 100;
+        const lineCost = lineCostFromUnit(unitCost, qty);
+        costCents += toCents(lineCost);
+        items.push({
+            id: row?.id != null ? String(row.id) : randomUUID(),
+            kind,
+            productId: row?.productId != null ? String(row.productId) : '',
+            sku: row?.sku != null ? String(row.sku) : '',
+            name,
+            qty,
+            unitPrice,
+            unitCost,
+            lineCost,
+            total: lineTotal
+        });
+    }
+    return { items, costTotal: fromCents(costCents) };
+}
+
+async function createCashFlowFromBudget(budget) {
+    const budgetId = budget?.id != null ? String(budget.id).trim() : '';
+    if (!budgetId) return null;
+    const cfRows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const exists = (Array.isArray(cfRows) ? cfRows : []).some(
+        (e) => String(e.budgetId || '').trim() === budgetId
+    );
+    if (exists) return null;
+
+    const fin = await enrichBudgetItemsWithCost(budget.items);
+    const total = Number(budget.total) || 0;
+    const enriched = {
+        ...budget,
+        items: fin.items,
+        costTotal: fin.costTotal,
+        profit: Math.round((total - fin.costTotal) * 100) / 100
+    };
+    const payload = buildCashFlowPayloadFromBudget(budgetId, enriched);
+    await db.create(CASH_FLOW_COLLECTION, payload.id, payload);
+    return normalizeCashFlowRow({ ...payload, createdAt: new Date().toISOString() });
+}
+
+async function resolveBudgetCostFromProducts(budgetRecord, maps) {
+    const items = asItemsArray(budgetRecord?.items);
+    const enriched = await enrichBudgetItemsWithCost(items);
+    const total = Number(budgetRecord?.total) || 0;
+    const profit = Math.round((total - enriched.costTotal) * 100) / 100;
+    return { items: enriched.items, costTotal: enriched.costTotal, profit };
+}
+
+/** Rebuild único: vendas, orçamentos finalizados e fluxo de caixa com custo do produto. */
+async function rebuildAllFinancialData() {
+    const maps = await loadProductCostMaps();
+    let batch = firestore.batch();
+    let ops = 0;
+
+    const commitIfNeeded = async (force = false) => {
+        if (force || ops >= 350) {
+            if (ops > 0) await batch.commit();
+            batch = firestore.batch();
+            ops = 0;
+        }
+    };
+
+    const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
+    const salesMap = new Map();
+    for (const sale of Array.isArray(salesRows) ? salesRows : []) {
+        const id = sale?.id != null ? String(sale.id).trim() : '';
+        if (!id) continue;
+        const fin = await enrichSaleItemsWithProductCosts(sale.items, maps);
+        const total = Number(sale.total) || 0;
+        const profit = Math.round((total - fin.costTotal) * 100) / 100;
+        const enriched = { ...sale, items: fin.items, costTotal: fin.costTotal, profit };
+        salesMap.set(id, enriched);
+        batch.set(firestore.collection(SALES_COLLECTION).doc(id), enriched);
+        ops++;
+        await commitIfNeeded();
+    }
+
+    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
+    const budgetMap = new Map();
+    for (const budget of Array.isArray(budgetRows) ? budgetRows : []) {
+        const id = budget?.id != null ? String(budget.id).trim() : '';
+        if (!id) continue;
+        const fin = await resolveBudgetCostFromProducts(budget, maps);
+        const enriched = { ...budget, items: fin.items, costTotal: fin.costTotal, profit: fin.profit };
+        budgetMap.set(id, enriched);
+        if (String(budget.status || '') === 'finalized') {
+            batch.set(firestore.collection(BUDGETS_COLLECTION).doc(id), enriched);
+            ops++;
+            await commitIfNeeded();
+        }
+    }
+
+    const cfRows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const linkedSales = new Set();
+    const linkedBudgets = new Set();
+
+    for (const entry of Array.isArray(cfRows) ? cfRows : []) {
+        const cfId = String(entry.id || '').trim();
+        if (!cfId) continue;
+
+        const saleId = String(entry.saleId || '').trim();
+        const budgetId = String(entry.budgetId || '').trim();
+        let patch = null;
+
+        if (saleId && salesMap.has(saleId)) {
+            const sale = salesMap.get(saleId);
+            linkedSales.add(saleId);
+            const amount = Number(sale.total) || Number(entry.amount) || 0;
+            patch = {
+                amount,
+                cost: sale.costTotal,
+                profit: sale.profit
+            };
+        } else if (budgetId && budgetMap.has(budgetId)) {
+            const budget = budgetMap.get(budgetId);
+            linkedBudgets.add(budgetId);
+            const amount = Number(budget.total) || Number(entry.amount) || 0;
+            patch = {
+                amount,
+                cost: budget.costTotal,
+                profit: budget.profit
+            };
+        }
+
+        if (patch) {
+            batch.update(firestore.collection(CASH_FLOW_COLLECTION).doc(cfId), patch);
+            ops++;
+            await commitIfNeeded();
+        }
+    }
+
+    for (const [saleId, sale] of salesMap) {
+        if (linkedSales.has(saleId)) continue;
+        const payload = buildCashFlowPayloadFromSale(saleId, sale);
+        batch.set(firestore.collection(CASH_FLOW_COLLECTION).doc(payload.id), payload);
+        ops++;
+        await commitIfNeeded();
+    }
+
+    for (const [budgetId, budget] of budgetMap) {
+        if (String(budget.status || '') !== 'finalized' || linkedBudgets.has(budgetId)) continue;
+        const payload = buildCashFlowPayloadFromBudget(budgetId, budget);
+        batch.set(firestore.collection(CASH_FLOW_COLLECTION).doc(payload.id), payload);
+        ops++;
+        await commitIfNeeded();
+    }
+
+    await commitIfNeeded(true);
+    return { sales: salesMap.size, budgets: budgetMap.size, cashFlow: (cfRows || []).length };
+}
+
+async function hydrateCashFlowEntriesFromProducts(entries) {
+    const maps = await loadProductCostMaps();
+    const [salesRows, budgetRows] = await Promise.all([
+        db.findAll({ colecao: SALES_COLLECTION }).catch(() => []),
+        db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
+    ]);
+    const salesMap = new Map(
+        (Array.isArray(salesRows) ? salesRows : []).map((s) => [String(s.id || '').trim(), s])
+    );
+    const budgetMap = new Map(
+        (Array.isArray(budgetRows) ? budgetRows : []).map((b) => [String(b.id || '').trim(), b])
+    );
+
+    const out = [];
+    for (const entry of entries) {
+        const base = normalizeCashFlowRow(entry);
+        const saleId = String(entry.saleId || '').trim();
+        const budgetId = String(entry.budgetId || '').trim();
+
+        if (saleId && salesMap.has(saleId)) {
+            const fin = await enrichSaleItemsWithProductCosts(salesMap.get(saleId).items, maps);
+            const amount = Number(salesMap.get(saleId).total) || base.amount;
+            base.amount = amount;
+            base.cost = fin.costTotal;
+            base.profit = Math.round((amount - fin.costTotal) * 100) / 100;
+        } else if (budgetId && budgetMap.has(budgetId)) {
+            const fin = await resolveBudgetCostFromProducts(budgetMap.get(budgetId), maps);
+            const amount = Number(budgetMap.get(budgetId).total) || base.amount;
+            base.amount = amount;
+            base.cost = fin.costTotal;
+            base.profit = Math.round((amount - fin.costTotal) * 100) / 100;
+        }
+        out.push(base);
+    }
+    return out;
+}
+
+async function syncMissingBudgetsToCashFlow() {
+    const [budgetRows, cfRows] = await Promise.all([
+        db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+        db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => [])
+    ]);
+    const linked = new Set(
+        (Array.isArray(cfRows) ? cfRows : [])
+            .map((e) => String(e.budgetId || '').trim())
+            .filter(Boolean)
+    );
+    const budgets = (Array.isArray(budgetRows) ? budgetRows : []).filter(
+        (b) => String(b.status || '') === 'finalized'
+    );
+    for (const budget of budgets) {
+        const id = budget?.id != null ? String(budget.id).trim() : '';
+        if (!id || linked.has(id)) continue;
+        await createCashFlowFromBudget(budget).catch((e) => console.error('sync orçamento→fluxo:', e));
+        linked.add(id);
+    }
+}
+
+const FINANCIAL_REBUILD_FLAG = 'financial_rebuild_v3';
+
+async function ensureFinancialRebuildOnce() {
+    try {
+        const metaRef = firestore.collection('infocore').doc('meta');
+        const snap = await metaRef.get();
+        if (snap.exists && snap.data()?.[FINANCIAL_REBUILD_FLAG] === true) return false;
+        await rebuildAllFinancialData();
+        await metaRef.set(
+            { [FINANCIAL_REBUILD_FLAG]: true, rebuiltAt: FieldValue.serverTimestamp() },
+            { merge: true }
+        );
+        return true;
+    } catch (e) {
+        console.error('ensureFinancialRebuildOnce:', e);
+        await rebuildAllFinancialData().catch((err) => console.error('rebuild financeiro:', err));
+        return true;
+    }
+}
+
 async function loadCashFlowNormalized() {
+    await ensureFinancialRebuildOnce().catch((e) => console.error('rebuild financeiro:', e));
+    await syncMissingBudgetsToCashFlow().catch((e) => console.error('sync orçamentos→fluxo:', e));
     const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
-    const list = Array.isArray(rows) ? rows.map((r) => normalizeCashFlowRow(r)) : [];
+    const raw = Array.isArray(rows) ? rows : [];
+    const list = await hydrateCashFlowEntriesFromProducts(raw);
     list.sort((a, b) => {
         const dCmp = String(b.date || '').localeCompare(String(a.date || ''));
         if (dCmp !== 0) return dCmp;
@@ -577,7 +935,7 @@ function normalizeProduct(row) {
         category: String(d.category || '').trim() || 'others',
         emoji: String(d.emoji || '📦'),
         image,
-        cost: Number(d.cost) || 0,
+        cost: productUnitCost(d),
         price: Number(d.price) || 0,
         qty: Number.parseInt(String(d.qty), 10) || 0,
         min: Number.parseInt(String(d.min), 10) || 0,
@@ -594,6 +952,126 @@ function parseMoneyField(v) {
     }
     const n = Number(s);
     return Number.isFinite(n) ? n : 0;
+}
+
+function asItemsArray(items) {
+    if (Array.isArray(items)) return items;
+    if (items && typeof items === 'object') return Object.values(items);
+    return [];
+}
+
+function productUnitCost(product) {
+    const p = product && typeof product === 'object' ? product : {};
+    const candidates = [p.cost, p.custo, p.precoCusto, p.preco_custo, p.costPrice];
+    for (const raw of candidates) {
+        const parsed = parseMoneyField(raw);
+        if (parsed > 0) return parsed;
+        const n = Number(raw);
+        if (Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+}
+
+function lineCostFromUnit(unitCost, qty) {
+    const q = Number(qty) || 0;
+    if (q <= 0) return 0;
+    return fromCents(toCents((Number(unitCost) || 0) * q));
+}
+
+async function loadProductCostMaps() {
+    const rows = await fetchProductRows();
+    const byId = new Map();
+    const bySku = new Map();
+    for (const row of rows) {
+        const id = row?.id != null ? String(row.id).trim() : '';
+        const sku = row?.sku != null ? String(row.sku).trim().toLowerCase() : '';
+        const unit = productUnitCost(row);
+        if (id) byId.set(id, unit);
+        if (sku) bySku.set(sku, unit);
+    }
+    return { byId, bySku };
+}
+
+async function fetchProductUnitCostDirect(productId) {
+    const id = String(productId || '').trim();
+    if (!id) return 0;
+    try {
+        const snap = await firestore.collection(PRODUCTS_COLLECTION).doc(id).get();
+        if (!snap.exists) return 0;
+        return productUnitCost(snap.data());
+    } catch {
+        return 0;
+    }
+}
+
+async function resolveItemUnitCost(item, maps) {
+    const productId = String(item?.id || item?.productId || '').trim();
+    const sku = String(item?.sku || '').trim().toLowerCase();
+    if (productId && maps?.byId?.has(productId)) return maps.byId.get(productId);
+    if (sku && maps?.bySku?.has(sku)) return maps.bySku.get(sku);
+    if (productId) {
+        const live = await fetchProductUnitCostDirect(productId);
+        if (live > 0) {
+            maps.byId.set(productId, live);
+            return live;
+        }
+    }
+    return productUnitCost({ cost: item?.unitCost ?? item?.cost });
+}
+
+/** Custo sempre do produto (id → SKU → busca Firestore). */
+async function enrichSaleItemsWithProductCosts(items, maps) {
+    const costMaps = maps?.byId ? maps : await loadProductCostMaps();
+    const list = asItemsArray(items).map((item) => ({ ...item }));
+    let costCents = 0;
+    for (const item of list) {
+        const qty = parsePositiveInt(item.qty) || Number(item.qty) || 0;
+        const unitCost = await resolveItemUnitCost(item, costMaps);
+        const lineCost = lineCostFromUnit(unitCost, qty);
+        item.cost = unitCost;
+        item.lineCost = lineCost;
+        if (qty > 0) costCents += toCents(lineCost);
+    }
+    return { items: list, costTotal: fromCents(costCents) };
+}
+
+async function enrichSaleRecordFinancials(saleRecord, maps) {
+    const costMaps = maps?.byId ? maps : await loadProductCostMaps();
+    const { items, costTotal } = await enrichSaleItemsWithProductCosts(saleRecord?.items, costMaps);
+    const total = Number(saleRecord?.total) || 0;
+    const profit = Math.round((total - costTotal) * 100) / 100;
+    return { items, costTotal, profit };
+}
+
+function computeSaleFinancials(saleRecord) {
+    const costTotal = Number(saleRecord?.costTotal) || 0;
+    const total = Number(saleRecord?.total) || 0;
+    const profit = Number.isFinite(Number(saleRecord?.profit))
+        ? Number(saleRecord.profit)
+        : Math.round((total - costTotal) * 100) / 100;
+    return { costTotal, profit };
+}
+
+function computeBudgetFinancials(budgetRecord) {
+    const items = asItemsArray(budgetRecord?.items);
+    let costCents = 0;
+    for (const item of items) {
+        const unitCost = productUnitCost({ cost: item?.unitCost ?? item?.cost });
+        const qty = Number(item?.qty) || 0;
+        if (qty > 0) {
+            const line = Number(item?.lineCost) > 0
+                ? Number(item.lineCost)
+                : lineCostFromUnit(unitCost, qty);
+            costCents += toCents(line);
+        }
+    }
+    let costTotal = fromCents(costCents);
+    if (costTotal <= 0 && Number(budgetRecord?.costTotal) > 0) {
+        costTotal = Number(budgetRecord.costTotal);
+    }
+    const total = Number(budgetRecord?.total) || 0;
+    const profit = Math.round((total - costTotal) * 100) / 100;
+    return { costTotal, profit };
 }
 
 async function loadProductsFromDb() {
@@ -751,9 +1229,63 @@ function uploadProductImageIfMultipart(req, res, next) {
 //TODO------------WEB PAGE--------------
 function verifyLogin(req, res, next) {
     if (!req.session.user) {
+        const isApi = String(req.path || '').startsWith('/api/');
+        if (isApi) {
+            return res.status(401).json({ error: true, message: 'Sessão expirada. Faça login novamente.' });
+        }
         return res.redirect('/login');
     }
     next();
+}
+
+function isBudgetFinalized(row) {
+    return String(row?.status || 'draft').toLowerCase() === 'finalized';
+}
+
+async function deleteCashFlowEntriesForBudget(budgetId) {
+    const bid = String(budgetId || '').trim();
+    if (!bid) return;
+    const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const batch = firestore.batch();
+    let ops = 0;
+    for (const row of Array.isArray(rows) ? rows : []) {
+        const cfId = row?.id != null ? String(row.id).trim() : '';
+        if (!cfId || String(row.budgetId || '').trim() !== bid) continue;
+        batch.delete(firestore.collection(CASH_FLOW_COLLECTION).doc(cfId));
+        ops++;
+    }
+    if (ops > 0) await batch.commit();
+}
+
+function budgetFirestorePatchFromBuilt(built) {
+    const p = built.payload;
+    const patch = {
+        customerId: String(p.customerId || ''),
+        customerName: String(p.customerName || ''),
+        customerPhone: String(p.customerPhone || ''),
+        customerEmail: String(p.customerEmail || ''),
+        notes: String(p.notes || ''),
+        validUntil: String(p.validUntil || ''),
+        items: p.items,
+        subtotal: Number(p.subtotal) || 0,
+        discount: Number(p.discount) || 0,
+        extra: Number(p.extra) || 0,
+        total: Number(p.total) || 0,
+        costTotal: Number(p.costTotal) || 0,
+        profit: Number.isFinite(Number(p.profit)) ? Number(p.profit) : 0,
+        status: p.status === 'finalized' ? 'finalized' : 'draft',
+        updatedAt: FieldValue.serverTimestamp()
+    };
+    if (patch.status === 'finalized') {
+        patch.finalizedAt = FieldValue.serverTimestamp();
+    }
+    return patch;
+}
+
+async function fetchBudgetNormalized(id) {
+    const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+    if (!snap.exists) return null;
+    return normalizeBudgetRow({ id, ...snap.data() });
 }
 
 app.post('/login', async (req, res) => {
@@ -789,8 +1321,15 @@ app.get('/login', (req, res) => {
 app.get('/dashboard',verifyLogin, async (req, res) => {
     let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     const products = await loadProductsFromDb();
+    const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
+    let sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+    sales.sort((a, b) => {
+        const ta = new Date(a.createdAt || a.date || 0).getTime();
+        const tb = new Date(b.createdAt || b.date || 0).getTime();
+        return tb - ta;
+    });
 
-    res.render('layout', { body: 'dashboard',appData:{configs:configs, user:req.session.user, products} });
+    res.render('layout', { body: 'dashboard', appData: { configs, user: req.session.user, products, sales } });
 });
 
 app.get('/pdv',verifyLogin, async (req, res) => {
@@ -808,7 +1347,11 @@ app.get('/budgets', verifyLogin, async (req, res) => {
     const products = await loadProductsFromDb();
     const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
     const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-    res.render('layout', { body: 'budgets', appData: { configs, user: req.session.user, products, budgets } });
+    const customers = await loadCustomersNormalized();
+    res.render('layout', {
+        body: 'budgets',
+        appData: { configs, user: req.session.user, products, budgets, customers }
+    });
 });
 
 app.get('/stock',verifyLogin, async (req, res) => {
@@ -960,74 +1503,269 @@ app.get('/api/budgets', verifyLogin, async (req, res) => {
     }
 });
 
-app.post('/api/budgets', verifyLogin, async (req, res) => {
-    const body = req.body || {};
-    const rawItems = Array.isArray(body.items) ? body.items : [];
-    if (rawItems.length === 0) {
-        return res.status(400).json({ error: true, message: 'Adicione ao menos 1 item ao orçamento.' });
+function autoCustomerNotesFromBudget({ code, status, validUntil, total, budgetNotes }) {
+    const stLabel = status === 'finalized' ? 'finalizado' : 'rascunho';
+    const lines = [
+        `Cadastro automático via orçamento ${code || '—'} (${stLabel}).`,
+        `Data do registro: ${new Date().toLocaleString('pt-BR')}.`
+    ];
+    if (validUntil) lines.push(`Validade do orçamento: ${formatDateBr(validUntil)}.`);
+    if (Number(total) > 0) lines.push(`Valor do orçamento: ${moneyBr(total)}.`);
+    const extra = String(budgetNotes || '').trim();
+    if (extra) {
+        lines.push('', 'Observações do orçamento:', extra);
+    }
+    return lines.join('\n');
+}
+
+async function findCustomerByContact({ name, phone, email }) {
+    const rows = await db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []);
+    const list = Array.isArray(rows) ? rows : [];
+    const phoneNorm = sanitizePhone(phone);
+    const emailNorm = String(email || '').trim().toLowerCase();
+    const nameNorm = String(name || '').trim().toLowerCase();
+
+    if (phoneNorm) {
+        const byPhone = list.find((c) => sanitizePhone(c.phone) === phoneNorm);
+        if (byPhone) return byPhone;
+    }
+    if (emailNorm) {
+        const byEmail = list.find((c) => String(c.email || '').trim().toLowerCase() === emailNorm);
+        if (byEmail) return byEmail;
+    }
+    if (nameNorm) {
+        const byName = list.find((c) => String(c.name || '').trim().toLowerCase() === nameNorm);
+        if (byName) return byName;
+    }
+    return null;
+}
+
+async function resolveBudgetCustomerLink({ customerId, customerName, customerPhone, customerEmail, budgetMeta }) {
+    let cid = String(customerId || '').trim();
+    let name = String(customerName || '').trim();
+    let phone = String(customerPhone || '').trim();
+    let email = String(customerEmail || '').trim();
+    let customerCreated = false;
+    let customer = null;
+
+    if (cid) {
+        const snap = await firestore.collection(CUSTOMERS_COLLECTION).doc(cid).get();
+        if (snap.exists) {
+            const c = snap.data() || {};
+            name = name || String(c.name || '').trim();
+            phone = phone || String(c.phone || '').trim();
+            email = email || String(c.email || '').trim();
+            return { customerId: cid, customerName: name, customerPhone: phone, customerEmail: email, customerCreated, customer };
+        }
+        cid = '';
     }
 
-    const items = [];
-    let subtotal = 0;
-    for (const row of rawItems) {
-        const kind = String(row?.kind || 'custom') === 'product' ? 'product' : 'custom';
-        const qty = Number(row?.qty);
-        const unitPrice = Number(row?.unitPrice);
-        const name = String(row?.name || '').trim();
-        if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0 || !name) {
-            return res.status(400).json({ error: true, message: 'Item inválido no orçamento.' });
-        }
-        const lineTotal = Math.round(qty * unitPrice * 100) / 100;
-        subtotal += lineTotal;
-        items.push({
-            id: randomUUID(),
-            kind,
-            productId: row?.productId != null ? String(row.productId) : '',
-            sku: row?.sku != null ? String(row.sku) : '',
-            name,
-            qty,
-            unitPrice,
-            total: lineTotal
-        });
+    if (!name) {
+        return { customerId: '', customerName: '', customerPhone: phone, customerEmail: email, customerCreated, customer };
     }
+
+    const existing = await findCustomerByContact({ name, phone, email });
+    if (existing) {
+        const eid = existing.id != null ? String(existing.id) : '';
+        return {
+            customerId: eid,
+            customerName: name,
+            customerPhone: phone || String(existing.phone || '').trim(),
+            customerEmail: email || String(existing.email || '').trim(),
+            customerCreated: false,
+            customer: null
+        };
+    }
+
+    const newId = randomUUID();
+    const autoNotes = autoCustomerNotesFromBudget(budgetMeta);
+    const custPayload = {
+        id: newId,
+        name,
+        doc: '',
+        phone,
+        email,
+        address: '',
+        notes: autoNotes,
+        requests: [],
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+    };
+    await db.create(CUSTOMERS_COLLECTION, newId, custPayload);
+    customerCreated = true;
+    customer = normalizeCustomerRow(custPayload, { purchases: 0, spent: 0 });
+    return {
+        customerId: newId,
+        customerName: name,
+        customerPhone: phone,
+        customerEmail: email,
+        customerCreated,
+        customer
+    };
+}
+
+async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus }) {
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    if (rawItems.length === 0) {
+        return { error: true, message: 'Adicione ao menos 1 item ao orçamento.' };
+    }
+
+    let enriched;
+    try {
+        enriched = await enrichBudgetItemsWithCost(rawItems);
+    } catch (e) {
+        console.error(e);
+        return { error: true, message: 'Erro ao calcular custos do orçamento.' };
+    }
+    const items = enriched.items;
+    const subtotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+    const costTotal = enriched.costTotal;
 
     const discount = Math.max(0, Number(body.discount) || 0);
     const extra = Math.max(0, Number(body.extra) || 0);
     const total = Math.max(0, Math.round((subtotal - discount + extra) * 100) / 100);
-    const status = String(body.status || 'draft') === 'finalized' ? 'finalized' : 'draft';
+    let profit = Math.round((total - costTotal) * 100) / 100;
+    if (!Number.isFinite(profit)) profit = 0;
+    const requestedStatus = String(body.status || 'draft') === 'finalized' ? 'finalized' : 'draft';
+    const status = prevStatus === 'finalized' ? 'finalized' : requestedStatus;
+    const budgetCode = code || budgetDisplayCode();
+    const validUntil = String(body.validUntil || body.date || '').trim();
+    const notes = String(body.notes || '').trim();
+
+    const customerLink = await resolveBudgetCustomerLink({
+        customerId: body.customerId,
+        customerName: body.customerName,
+        customerPhone: body.customerPhone,
+        customerEmail: body.customerEmail,
+        budgetMeta: { code: budgetCode, status, validUntil, total, budgetNotes: notes }
+    });
+
     const now = FieldValue.serverTimestamp();
-    const id = randomUUID();
-    const code = budgetDisplayCode();
     const payload = {
         id,
-        code,
-        customerName: String(body.customerName || '').trim(),
-        customerPhone: String(body.customerPhone || '').trim(),
-        customerEmail: String(body.customerEmail || '').trim(),
-        notes: String(body.notes || '').trim(),
-        validUntil: String(body.validUntil || body.date || '').trim(),
+        code: budgetCode,
+        customerId: customerLink.customerId,
+        customerName: customerLink.customerName,
+        customerPhone: customerLink.customerPhone,
+        customerEmail: customerLink.customerEmail,
+        notes,
+        validUntil,
         items,
         subtotal,
         discount,
         extra,
         total,
+        costTotal,
+        profit,
         status,
-        createdAt: now,
         updatedAt: now
     };
+    if (createdAt != null) payload.createdAt = createdAt;
+    else payload.createdAt = now;
     if (status === 'finalized') payload.finalizedAt = now;
 
+    return {
+        error: false,
+        payload,
+        budget: normalizeBudgetRow(payload),
+        customerCreated: customerLink.customerCreated,
+        customer: customerLink.customer,
+        status
+    };
+}
+
+app.post('/api/budgets', verifyLogin, async (req, res) => {
+    const built = await buildBudgetRecordFromBody(req.body || {}, {
+        id: randomUUID(),
+        code: null,
+        createdAt: null,
+        prevStatus: null
+    });
+    if (built.error) {
+        return res.status(400).json({ error: true, message: built.message });
+    }
+
     try {
-        await db.create(BUDGETS_COLLECTION, id, payload);
-        const budget = normalizeBudgetRow(payload);
+        await db.create(BUDGETS_COLLECTION, built.payload.id, built.payload);
+        const budget = await fetchBudgetNormalized(built.payload.id);
         let notifications = null;
-        if (status === 'finalized') {
+        let cashFlowEntry = null;
+        if (built.status === 'finalized' && budget) {
             notifications = await dispatchBudgetNotifications(budget);
+            cashFlowEntry = await createCashFlowFromBudget(budget);
         }
-        return res.json({ error: false, budget, notifications });
+        return res.json({
+            error: false,
+            budget: budget || built.budget,
+            notifications,
+            cashFlowEntry,
+            customerCreated: built.customerCreated,
+            customer: built.customer
+        });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao salvar orçamento.' });
+    }
+});
+
+app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+
+    const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    }
+    const prev = snap.data() || {};
+    if (isBudgetFinalized(prev)) {
+        return res.status(400).json({ error: true, message: 'Orçamentos finalizados não podem ser editados.' });
+    }
+
+    const built = await buildBudgetRecordFromBody(req.body || {}, {
+        id,
+        code: prev.code,
+        createdAt: prev.createdAt,
+        prevStatus: 'draft'
+    });
+    if (built.error) {
+        return res.status(400).json({ error: true, message: built.message });
+    }
+
+    try {
+        await db.update(BUDGETS_COLLECTION, id, budgetFirestorePatchFromBuilt(built));
+        const budget = await fetchBudgetNormalized(id);
+        return res.json({
+            error: false,
+            budget: budget || built.budget,
+            customerCreated: built.customerCreated,
+            customer: built.customer
+        });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar orçamento.' });
+    }
+});
+
+app.delete('/api/budgets/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+
+    const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    }
+    const prev = snap.data() || {};
+    if (isBudgetFinalized(prev)) {
+        return res.status(400).json({ error: true, message: 'Orçamentos finalizados não podem ser excluídos.' });
+    }
+
+    try {
+        await firestore.collection(BUDGETS_COLLECTION).doc(id).delete();
+        await deleteCashFlowEntriesForBudget(id);
+        return res.json({ error: false, message: 'Orçamento excluído.' });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao excluir orçamento.' });
     }
 });
 
@@ -1056,14 +1794,31 @@ app.post('/api/budgets/template', verifyLogin, (req, res) => {
 app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
-    const patch = { status: 'finalized', updatedAt: FieldValue.serverTimestamp(), finalizedAt: FieldValue.serverTimestamp() };
     try {
-        await db.update(BUDGETS_COLLECTION, id, patch);
         const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
         if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
-        const budget = normalizeBudgetRow({ id, ...snap.data() });
+        const prev = snap.data() || {};
+        const enriched = await enrichBudgetItemsWithCost(Array.isArray(prev.items) ? prev.items : []);
+        const total = Number(prev.total) || 0;
+        const costTotal = enriched.costTotal;
+        let profit = Math.round((total - costTotal) * 100) / 100;
+        if (!Number.isFinite(profit)) profit = 0;
+        const patch = {
+            status: 'finalized',
+            items: enriched.items,
+            costTotal,
+            profit,
+            updatedAt: FieldValue.serverTimestamp(),
+            finalizedAt: FieldValue.serverTimestamp()
+        };
+        await db.update(BUDGETS_COLLECTION, id, patch);
+        const budget = await fetchBudgetNormalized(id);
+        if (!budget) {
+            return res.status(500).json({ error: true, message: 'Erro ao carregar orçamento finalizado.' });
+        }
         const notifications = await dispatchBudgetNotifications(budget);
-        return res.json({ error: false, budget, notifications });
+        const cashFlowEntry = await createCashFlowFromBudget(budget);
+        return res.json({ error: false, budget, notifications, cashFlowEntry });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao finalizar orçamento.' });
@@ -1336,9 +2091,17 @@ async function getOnlinePixPaymentStatus(paymentId) {
 }
 
 async function finalizeSaleInDb({ saleId, saleRecord, stockUpdates }) {
+    const financials = await enrichSaleRecordFinancials(saleRecord);
+    const enrichedRecord = {
+        ...saleRecord,
+        items: financials.items,
+        costTotal: financials.costTotal,
+        profit: financials.profit
+    };
+
     const batch = firestore.batch();
     const saleRef = firestore.collection(SALES_COLLECTION).doc(saleId);
-    batch.set(saleRef, saleRecord);
+    batch.set(saleRef, enrichedRecord);
 
     const updatedProducts = [];
     for (const u of stockUpdates) {
@@ -1346,8 +2109,17 @@ async function finalizeSaleInDb({ saleId, saleRecord, stockUpdates }) {
         batch.update(ref, { qty: u.nextQty });
         updatedProducts.push(normalizeProduct({ ...u.p, id: u.id, qty: u.nextQty }));
     }
+
+    const cfPayload = buildCashFlowPayloadFromSale(saleId, enrichedRecord);
+    const cfRef = firestore.collection(CASH_FLOW_COLLECTION).doc(cfPayload.id);
+    batch.set(cfRef, cfPayload);
+
     await batch.commit();
-    return updatedProducts;
+    const cashFlowEntry = normalizeCashFlowRow({
+        ...cfPayload,
+        createdAt: new Date().toISOString()
+    });
+    return { updatedProducts, cashFlowEntry };
 }
 
 app.post('/api/sales', verifyLogin, async (req, res) => {
@@ -1377,9 +2149,11 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         lines.push({ id, qty });
     }
 
+    const allowInsufficientStock = body.allowInsufficientStock === true;
     const resolvedItems = [];
     const stockUpdates = [];
     let subtotalCents = 0;
+    let costTotalCents = 0;
 
     for (const line of lines) {
         const snap = await firestore.collection(PRODUCTS_COLLECTION).doc(line.id).get();
@@ -1391,30 +2165,38 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
             return res.status(400).json({ error: true, message: `Produto inativo: ${p.name || line.id}.` });
         }
         const stock = Number.parseInt(String(p.qty), 10) || 0;
-        if (stock < line.qty) {
+        if (stock < line.qty && !allowInsufficientStock) {
             return res.status(400).json({
                 error: true,
+                stockInsufficient: true,
                 message: `Estoque insuficiente para "${p.name || 'produto'}". Disponível: ${stock}.`
             });
         }
-        const price = Number(p.price) || 0;
-        const lineTotal = fromCents(toCents(price * line.qty));
+        const price = parseMoneyField(p.price) || Number(p.price) || 0;
+        const cost = productUnitCost(p);
+        const lineTotal = lineCostFromUnit(price, line.qty);
+        const lineCost = lineCostFromUnit(cost, line.qty);
         subtotalCents += toCents(lineTotal);
-        const nextQty = Math.max(0, stock - line.qty);
+        costTotalCents += toCents(lineCost);
+        const nextQty = stock - line.qty;
         resolvedItems.push({
             id: line.id,
             sku: p.sku != null ? String(p.sku) : '',
             name: p.name != null ? String(p.name) : '',
             category: p.category != null ? String(p.category) : '',
             price,
+            cost,
             qty: line.qty,
-            lineTotal
+            lineTotal,
+            lineCost
         });
         stockUpdates.push({ id: line.id, nextQty, p });
     }
 
     const subtotal = fromCents(subtotalCents);
+    const costTotal = fromCents(costTotalCents);
     const { discountAmount, extraAmount, total } = computeSaleAmounts(subtotal, discountAdj, extraAdj);
+    const profit = Math.round((total - costTotal) * 100) / 100;
 
     const saleId = randomUUID();
     const code = saleDisplayCode();
@@ -1434,6 +2216,8 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         discount: discountAmount,
         extra: extraAmount,
         total,
+        costTotal,
+        profit,
         createdAt: FieldValue.serverTimestamp()
     };
 
@@ -1616,8 +2400,11 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     }
 
     let updatedProducts = [];
+    let cashFlowEntry = null;
     try {
-        updatedProducts = await finalizeSaleInDb({ saleId, saleRecord, stockUpdates });
+        const finalized = await finalizeSaleInDb({ saleId, saleRecord, stockUpdates });
+        updatedProducts = finalized.updatedProducts;
+        cashFlowEntry = finalized.cashFlowEntry;
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao registrar venda no banco.' });
@@ -1647,7 +2434,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     if (saleRecord.change != null) saleResponse.change = saleRecord.change;
 
     if (pointPaymentInfo) saleResponse.payment = pointPaymentInfo;
-    return res.json({ error: false, sale: saleResponse, products: updatedProducts });
+    return res.json({ error: false, sale: saleResponse, products: updatedProducts, cashFlowEntry });
 });
 
 app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
@@ -1794,7 +2581,7 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
             }
         }
 
-        const updatedProducts = await finalizeSaleInDb({
+        const { updatedProducts, cashFlowEntry } = await finalizeSaleInDb({
             saleId: pending.saleId,
             saleRecord: pending.saleRecord,
             stockUpdates: pending.stockUpdates
@@ -1826,7 +2613,8 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
             pending: false,
             sale: saleResponse,
             products: updatedProducts,
-            payment: successPayment
+            payment: successPayment,
+            cashFlowEntry
         });
     } catch (e) {
         console.error('Falha ao verificar pagamento pendente:', e?.response?.data || e);
@@ -2019,6 +2807,20 @@ app.post('/api/customers/:id/requests', verifyLogin, async (req, res) => {
     return res.json({ error: false, customer: normalizeCustomerRow({ ...data, id }, stats) });
 });
 
+app.post('/api/cash-flow/rebuild', verifyLogin, async (req, res) => {
+    try {
+        const stats = await rebuildAllFinancialData();
+        await firestore.collection('infocore').doc('meta').set(
+            { [FINANCIAL_REBUILD_FLAG]: true, rebuiltAt: FieldValue.serverTimestamp() },
+            { merge: true }
+        );
+        return res.json({ error: false, message: 'Dados financeiros recalculados.', stats });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao recalcular fluxo de caixa.' });
+    }
+});
+
 app.get('/api/cash-flow', verifyLogin, async (req, res) => {
     try {
         const entries = await loadCashFlowNormalized();
@@ -2084,6 +2886,12 @@ app.patch('/api/cash-flow/:id', verifyLogin, async (req, res) => {
     }
 
     const prev = snap.data() || {};
+    if (isPdvCashFlowEntry(prev)) {
+        return res.status(403).json({
+            error: true,
+            message: 'Lançamentos de venda do PDV não podem ser editados. Altere na venda ou exclua a venda no sistema.'
+        });
+    }
     const body = req.body || {};
     const patch = {};
 
@@ -2130,6 +2938,14 @@ app.delete('/api/cash-flow/:id', verifyLogin, async (req, res) => {
         return res.status(404).json({ error: true, message: 'Lançamento não encontrado.' });
     }
 
+    const prev = snap.data() || {};
+    if (isPdvCashFlowEntry(prev)) {
+        return res.status(403).json({
+            error: true,
+            message: 'Lançamentos gerados por vendas do PDV não podem ser excluídos aqui.'
+        });
+    }
+
     try {
         await db.delete(CASH_FLOW_COLLECTION, id);
     } catch (e) {
@@ -2138,6 +2954,24 @@ app.delete('/api/cash-flow/:id', verifyLogin, async (req, res) => {
     }
 
     return res.json({ error: false });
+});
+
+app.get('/api/sales/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+    try {
+        const snap = await firestore.collection(SALES_COLLECTION).doc(id).get();
+        if (!snap.exists) {
+            return res.status(404).json({ error: true, message: 'Venda não encontrada.' });
+        }
+        const data = snap.data() || {};
+        return res.json({ error: false, sale: normalizeSaleRow({ ...data, id }) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar venda.' });
+    }
 });
 
 app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
@@ -2156,19 +2990,7 @@ app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
     return res.json({ error: false });
 });
 
-app.get('/sells', verifyLogin, async (req, res) => {
-    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
-    const products = await loadProductsFromDb();
-    const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
-    let sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
-    sales.sort((a, b) => {
-        const ta = new Date(a.createdAt || a.date || 0).getTime();
-        const tb = new Date(b.createdAt || b.date || 0).getTime();
-        return tb - ta;
-    });
-    res.render('layout', { body: 'sells', appData: { configs, user: req.session.user, products, sales } });
-});
+app.get('/sells', verifyLogin, (req, res) => res.redirect('/cash-flow'));
 
 app.get('/products', (req, res) => {
     res.render('layout', { body: 'products' });
@@ -2178,9 +3000,11 @@ app.get('/clients', verifyLogin, async (req, res) => {
     const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
     const customers = await loadCustomersNormalized();
+    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
+    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
     res.render('layout', {
         body: 'clients',
-        appData: { configs, user: req.session.user, customers }
+        appData: { configs, user: req.session.user, customers, budgets }
     });
 });
 

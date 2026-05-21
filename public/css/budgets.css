@@ -34,6 +34,119 @@
     gap: 8px;
 }
 
+.budget-customer-section,
+.budget-product-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.budget-form-grid--contact {
+    margin-top: 4px;
+}
+
+.budget-ac-wrap {
+    position: relative;
+}
+
+.budget-ac-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.9rem;
+    opacity: 0.65;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.budget-ac-input {
+    width: 100%;
+    padding-left: 36px !important;
+}
+
+.budget-ac-list {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    z-index: 120;
+}
+
+.budget-ac-list:not([hidden]) {
+    display: block;
+}
+
+.budget-ac-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+}
+
+.budget-ac-item:last-child {
+    border-bottom: none;
+}
+
+.budget-ac-item:hover,
+.budget-ac-item.is-active {
+    background: rgba(212, 168, 83, 0.12);
+}
+
+.budget-ac-item-title {
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+
+.budget-ac-item-meta {
+    font-size: 0.75rem;
+    color: var(--text2);
+}
+
+.budget-ac-empty {
+    padding: 12px;
+    font-size: 0.82rem;
+    color: var(--text3);
+    text-align: center;
+}
+
+.budget-customer-chip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid rgba(61, 220, 132, 0.35);
+    border-radius: 10px;
+    background: rgba(61, 220, 132, 0.08);
+}
+
+.budget-customer-chip-name {
+    font-weight: 700;
+    flex: 1;
+    min-width: 120px;
+}
+
+.budget-add-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .budget-add-row {
     display: grid;
     grid-template-columns: 1fr auto auto;

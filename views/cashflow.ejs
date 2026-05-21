@@ -4,7 +4,8 @@
       <div>
         <p class="cf-copy-kicker">Financeiro · Resumo rápido</p>
         <h2 class="cf-copy-title">Fluxo de caixa</h2>
-        <p class="cf-copy-sub">Cadastre entradas e saídas manuais; o saldo respeita o intervalo informado nos filtros.</p>
+        <p class="cf-copy-sub">Todas as vendas do PDV entram automaticamente como entrada. Use o extrato para lançamentos manuais e para consultar vendas.</p>
+        <p class="cf-month-badge" id="cfMonthLabel"></p>
       </div>
       <div class="cf-hero-metrics">
         <div class="cf-metric cf-metric--in">
@@ -14,6 +15,10 @@
         <div class="cf-metric cf-metric--out">
           <span class="cf-metric-label">Saídas</span>
           <strong class="cf-metric-val" id="cfTotalExpense">R$ 0,00</strong>
+        </div>
+        <div class="cf-metric cf-metric--profit">
+          <span class="cf-metric-label">Lucro</span>
+          <strong class="cf-metric-val" id="cfTotalProfit">R$ 0,00</strong>
         </div>
         <div class="cf-metric cf-metric--balance">
           <span class="cf-metric-label">Saldo</span>
@@ -29,6 +34,7 @@
             <option value="">Todos os lançamentos</option>
             <option value="income">Apenas entradas</option>
             <option value="expense">Apenas saídas</option>
+            <option value="pdv">Vendas e orçamentos</option>
           </select>
         </label>
         <label class="form-group-inline">
@@ -106,6 +112,71 @@
     <div class="modal-footer modal-footer--split">
       <button class="btn btn-ghost" type="button" onclick="closeModal('cfEntry')">Cancelar</button>
       <button class="btn btn-primary" type="button" onclick="submitCashFlowForm()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-saleDetail">
+  <div class="modal modal-sale-detail">
+    <div class="modal-header">
+      <div class="modal-title">Venda — <span class="mono" id="saleDetailId">—</span></div>
+      <button type="button" class="modal-close" onclick="closeModal('saleDetail')">✕</button>
+    </div>
+    <div class="sale-detail-body">
+      <div class="sale-detail-grid">
+        <div class="sale-detail-field">
+          <div class="sale-detail-label">Cliente</div>
+          <div id="saleDetailClient" class="sale-detail-value">—</div>
+        </div>
+        <div class="sale-detail-field">
+          <div class="sale-detail-label">Data/Hora</div>
+          <div id="saleDetailDate" class="sale-detail-value mono">—</div>
+        </div>
+      </div>
+      <div class="sale-detail-table-wrap">
+        <table class="sale-detail-items">
+          <thead>
+            <tr>
+              <th>Produto</th>
+              <th class="ta-r">Qtd</th>
+              <th class="ta-r">Preço</th>
+              <th class="ta-r">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody id="saleDetailItems"></tbody>
+        </table>
+      </div>
+      <div class="sale-detail-summary">
+        <div class="sale-detail-row muted">
+          <span>Subtotal</span>
+          <span class="mono" id="saleDetailSubtotal">R$ 0,00</span>
+        </div>
+        <div class="sale-detail-row muted">
+          <span>Desconto</span>
+          <span class="mono" id="saleDetailDiscount">R$ 0,00</span>
+        </div>
+        <div class="sale-detail-row sale-detail-total">
+          <span>Total</span>
+          <span class="mono" id="saleDetailTotal">R$ 0,00</span>
+        </div>
+      </div>
+      <div class="sale-detail-pay">
+        <div class="sale-detail-label">Pagamento</div>
+        <div id="saleDetailPayment" class="sale-detail-pay-value">—</div>
+        <div id="saleDetailCashWrap" class="sale-detail-cash" style="display:none">
+          <div class="sale-detail-row muted">
+            <span>Valor recebido</span>
+            <span class="mono" id="saleDetailCashReceived">—</span>
+          </div>
+          <div class="sale-detail-row">
+            <span>Troco</span>
+            <span class="mono sale-change" id="saleDetailCashChange">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer modal-footer--split">
+      <button type="button" class="btn btn-ghost" onclick="closeModal('saleDetail')">Fechar</button>
     </div>
   </div>
 </div>

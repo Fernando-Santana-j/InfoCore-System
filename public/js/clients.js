@@ -126,8 +126,20 @@ function selectClient(id) {
     bindDetailActions(c.id);
 }
 
+function budgetsForCustomer(c) {
+    const budgets = Array.isArray(window.appData?.budgets) ? window.appData.budgets : [];
+    const cid = String(c?.id || '').trim();
+    const nameKey = String(c?.name || '').trim().toLowerCase();
+    return budgets.filter((b) => {
+        if (cid && String(b.customerId || '').trim() === cid) return true;
+        if (!b.customerId && nameKey && String(b.customerName || '').trim().toLowerCase() === nameKey) return true;
+        return false;
+    }).sort((a, b) => String(b.code || '').localeCompare(String(a.code || '')));
+}
+
 function buildDetailMarkup(c) {
     const reqs = Array.isArray(c.requests) ? c.requests : [];
+    const clientBudgets = budgetsForCustomer(c);
 
     const reqBlocks = reqs.length
         ? reqs.map((r) => {
@@ -189,6 +201,32 @@ function buildDetailMarkup(c) {
           <div class="stat-pill-label">Requisições</div>
           <div class="stat-pill-value mono">${reqs.length}</div>
         </div>
+        <div class="stat-pill">
+          <div class="stat-pill-label">Orçamentos</div>
+          <div class="stat-pill-value mono">${clientBudgets.length}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="crm-requests-head">
+        <div class="crm-section-title" style="margin:0;">Orçamentos</div>
+        <a class="btn btn-primary btn-sm" href="/budgets?customer=${encodeURIComponent(String(c.id || ''))}">+ Novo orçamento</a>
+      </div>
+      <div class="crm-budgets-list">
+        ${clientBudgets.length
+        ? clientBudgets.map((b) => `
+          <article class="crm-budget-row">
+            <div class="crm-budget-row-head">
+              <strong class="mono">${escapeHtml(b.code || 'ORC')}</strong>
+              <span class="badge ${b.status === 'finalized' ? 'green' : ''}">${b.status === 'finalized' ? 'Finalizado' : 'Rascunho'}</span>
+            </div>
+            <div class="crm-budget-row-meta">
+              <span>Validade: ${escapeHtml(b.validUntil || 'N/I')}</span>
+              <span class="mono gold-fg">${formatCurrency(Number(b.total) || 0)}</span>
+            </div>
+          </article>`).join('')
+        : '<p style="margin:0;color:var(--text3);font-size:0.88rem;">Nenhum orçamento vinculado a este cliente.</p>'}
       </div>
     </div>
 
@@ -421,6 +459,7 @@ function initCustomersPage() {
 
     window.appData = window.appData || {};
     window.appData.customers = Array.isArray(window.appData.customers) ? window.appData.customers : [];
+    window.appData.budgets = Array.isArray(window.appData.budgets) ? window.appData.budgets : [];
 
     updateTopbarTitle('Clientes CRM');
     markNavActive('/clients');
@@ -430,7 +469,11 @@ function initCustomersPage() {
 
     renderClientList('');
 
-    if (window.appData.customers.length === 1) {
+    const params = new URLSearchParams(window.location.search);
+    const clientFromUrl = params.get('client');
+    if (clientFromUrl && window.appData.customers.some((c) => String(c.id) === String(clientFromUrl))) {
+        selectClient(clientFromUrl);
+    } else if (window.appData.customers.length === 1) {
         selectClient(window.appData.customers[0].id);
     }
 }

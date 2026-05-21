@@ -8,6 +8,7 @@ let cartAdjustments = {
 let currentAdjustmentTarget = 'discount';
 let budgetItemsDraft = [];
 let budgetCurrentRecord = null;
+let confirmAllowInsufficientStock = false;
 
 function asArray(value) {
     if (Array.isArray(value)) return value;
@@ -149,7 +150,7 @@ function setQuickAdjustmentValue(value) {
 function ensureAppDataShape() {
     if (!window.appData || typeof window.appData !== 'object') window.appData = {};
     window.appData.products = asArray(window.appData.products);
-    window.appData.sales = asArray(window.appData.sales);
+    if (!Array.isArray(window.appData.cashFlowEntries)) window.appData.cashFlowEntries = [];
     window.appData.cart = asArray(window.appData.cart);
     window.appData.budgets = asArray(window.appData.budgets);
 }
@@ -527,7 +528,7 @@ function renderPDV(filter) {
         const img = p.image
             ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt=""></div>`
             : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || '📦'}</span></div>`;
-        const minStock = asNumber(p.min_stock || 0);
+        const minStock = asNumber(p.min ?? p.min_stock ?? 0);
         const isOutOfStock = asNumber(p.qty) <= 0;
         const shouldShowOutOfStock = isOutOfStock && minStock > 0;
         const outOfStockClass = shouldShowOutOfStock ? ' pdv-product-out-of-stock' : '';
@@ -651,13 +652,11 @@ function addToCart(id) {
     }
 
     const productQty = asNumber(product.qty);
-    const minStock = asNumber(product.min_stock || 0);
+    const minStock = asNumber(product.min ?? product.min_stock ?? 0);
     const isOutOfStock = productQty <= 0;
 
-    // Validar permissão de adicionar ao carrinho baseado em min_stock
-    if (isOutOfStock && minStock > 0) {
-        // Produto sem estoque mas com min_stock > 0: mostrar aviso, mas permitir
-        showToast(`⚠️ ${product.name} está sem estoque, mas será adicionado ao carrinho.`, 'warning');
+    if (isOutOfStock) {
+        showToast(`⚠️ ${product.name} está sem estoque. Você poderá confirmar na finalização.`, 'warning');
     }
 
     const existing = cart.find((x) => String(x.id) === String(id));
@@ -698,8 +697,28 @@ function getCurrentTotals() {
     return { subtotal, discount, extra, total };
 }
 
+function getCartStockWarnings() {
+    const cart = asArray(window.appData?.cart);
+    const products = asArray(window.appData?.products);
+    const warnings = [];
+    cart.forEach((item) => {
+        const product = products.find((x) => String(x.id) === String(item.id));
+        const stock = asNumber(product?.qty);
+        const requested = asNumber(item.qty);
+        if (requested > stock) {
+            warnings.push({
+                name: item.name || product?.name || 'Produto',
+                stock,
+                requested
+            });
+        }
+    });
+    return warnings;
+}
+
 function openConfirmActionModal(actionType) {
     confirmActionType = actionType;
+    confirmAllowInsufficientStock = false;
     const title = document.getElementById('confirmActionTitle');
     const message = document.getElementById('confirmActionMessage');
     const confirmBtn = document.getElementById('confirmActionBtn');
@@ -752,11 +771,35 @@ function openConfirmActionModal(actionType) {
             : `<div class="empty-state" style="padding:20px;"><p>Carrinho vazio</p></div>`;
     }
 
+    const stockWarnEl = document.getElementById('confirmStockWarning');
+    const stockWarnings = actionType === 'finalizar' ? getCartStockWarnings() : [];
+    if (stockWarnEl) {
+        if (stockWarnings.length > 0) {
+            const lines = stockWarnings.map((w) =>
+                `${w.name}: pedido ${w.requested}, disponível ${w.stock}`
+            ).join('<br>');
+            stockWarnEl.innerHTML = `<strong>⚠️ Estoque insuficiente</strong><br>${lines}<br>Deseja finalizar mesmo assim? O estoque ficará negativo.`;
+            stockWarnEl.hidden = false;
+            confirmAllowInsufficientStock = true;
+        } else {
+            stockWarnEl.innerHTML = '';
+            stockWarnEl.hidden = true;
+        }
+    }
+
     if (actionType === 'finalizar') {
         if (title) title.textContent = 'Finalizar venda';
-        if (message) message.textContent = 'Revise os itens e valores abaixo antes de finalizar.';
-        if (confirmBtn) confirmBtn.textContent = 'Finalizar';
+        if (message) {
+            message.textContent = stockWarnings.length > 0
+                ? 'Confirme a venda mesmo com estoque abaixo do solicitado.'
+                : 'Revise os itens e valores abaixo antes de finalizar.';
+        }
+        if (confirmBtn) confirmBtn.textContent = stockWarnings.length > 0 ? 'Finalizar mesmo assim' : 'Finalizar';
     } else {
+        if (stockWarnEl) {
+            stockWarnEl.innerHTML = '';
+            stockWarnEl.hidden = true;
+        }
         if (title) title.textContent = 'Limpar carrinho';
         if (message) message.textContent = 'Confirme os itens e totais que serao removidos.';
         if (confirmBtn) confirmBtn.textContent = 'Limpar';
@@ -769,6 +812,12 @@ function closeConfirmActionModal() {
     const modal = document.getElementById('confirmActionModal');
     if (modal) modal.classList.remove('open');
     confirmActionType = null;
+    confirmAllowInsufficientStock = false;
+    const stockWarnEl = document.getElementById('confirmStockWarning');
+    if (stockWarnEl) {
+        stockWarnEl.innerHTML = '';
+        stockWarnEl.hidden = true;
+    }
 }
 
 async function executeConfirmedAction() {
@@ -825,26 +874,12 @@ function changeQty(id, delta) {
 
     const product = products.find((x) => String(x.id) === String(id));
     const productQty = asNumber(product?.qty || 0);
-    const minStock = asNumber(product?.min_stock || 0);
     const next = asNumber(item.qty) + delta;
-    
+
     if (next <= 0) return removeFromCart(id);
-    
-    // Determinar quantidade máxima permitida no carrinho
-    let maxQty = productQty > 0 ? productQty : 0;
-    
-    // Se produto está sem estoque mas tem min_stock
-    if (productQty <= 0 && minStock > 0) {
-        // Permitir adicionar até 10 unidades quando sem estoque mas com min_stock
-        maxQty = 10;
-    } else if (productQty <= 0 && minStock === 0) {
-        // Se min_stock = 0, permitir quantidade bem alta
-        maxQty = 999;
-    }
-    
-    if (next > maxQty) {
-        showToast('Estoque insuficiente!', 'error');
-        return;
+
+    if (next > productQty) {
+        showToast(`⚠️ ${item.name || 'Produto'}: estoque ${productQty}, carrinho ${next}. Confirme na finalização.`, 'warning');
     }
     item.qty = next;
     renderCart();
@@ -979,8 +1014,10 @@ function applySuccessfulSale(data, totals, payment) {
         });
     }
 
-    window.appData.sales = asArray(window.appData.sales);
-    window.appData.sales.unshift(sale);
+    if (data.cashFlowEntry) {
+        if (!Array.isArray(window.appData.cashFlowEntries)) window.appData.cashFlowEntries = [];
+        window.appData.cashFlowEntries.unshift(data.cashFlowEntry);
+    }
 
     window.appData.cart = [];
     setAdjustment('discount', 'fixed', 0);
@@ -1073,7 +1110,8 @@ async function finalizeSaleCore() {
         discount: { ...cartAdjustments.discount },
         extra: { ...cartAdjustments.extra },
         payment,
-        client: 'Balcão'
+        client: 'Balcão',
+        allowInsufficientStock: confirmAllowInsufficientStock
     };
 
     if (payment === 'money') {
@@ -1126,6 +1164,15 @@ async function finalizeSaleCore() {
             data = {};
         }
         if (!res.ok || data.error) {
+            if (data.stockInsufficient && !confirmAllowInsufficientStock) {
+                const warnings = getCartStockWarnings();
+                if (warnings.length > 0) {
+                    confirmAllowInsufficientStock = true;
+                    openConfirmActionModal('finalizar');
+                    showToast('Confirme a venda para prosseguir sem estoque suficiente.', 'warning');
+                    return false;
+                }
+            }
             if (payment !== 'money') {
                 closePaymentWaitingModal();
                 const paymentInfo = data?.payment || {};

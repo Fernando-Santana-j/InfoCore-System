@@ -32,21 +32,44 @@
 <div class="pdv-modal-overlay" id="budgetCreateModal">
   <div class="pdv-modal-card pdv-budget-create-card">
     <div class="pdv-modal-header">
-      <div class="pdv-modal-title">Criar orçamento</div>
+      <div class="pdv-modal-title" id="budgetCreateModalTitle">Criar orçamento</div>
       <button class="pdv-modal-close" id="closeCreateBudgetModalBtn">✕</button>
     </div>
     <div class="pdv-modal-body">
-      <div class="budget-form-grid">
-        <input class="form-input" id="budgetCustomerName" placeholder="Nome do cliente">
-        <input class="form-input" id="budgetCustomerPhone" placeholder="WhatsApp">
-        <input class="form-input" id="budgetCustomerEmail" placeholder="Email">
-        <input class="form-input" id="budgetdate" type="date">
+      <div class="budget-customer-section">
+        <label class="form-label">Cliente (CRM)</label>
+        <div class="budget-ac-wrap" id="budgetCustomerAcWrap">
+          <span class="budget-ac-icon" aria-hidden="true">👤</span>
+          <input class="form-input budget-ac-input" id="budgetCustomerSearch" type="search" placeholder="Buscar por nome, telefone, email ou documento..." autocomplete="off">
+          <div class="budget-ac-list" id="budgetCustomerResults" hidden></div>
+        </div>
+        <div class="budget-customer-selected" id="budgetCustomerSelected" hidden>
+          <div class="budget-customer-chip">
+            <span class="budget-customer-chip-name" id="budgetCustomerChipName"></span>
+            <a class="btn btn-ghost btn-sm" id="budgetCustomerCrmLink" href="/clients">Ver no CRM</a>
+            <button type="button" class="btn btn-ghost btn-sm" id="budgetCustomerClearBtn">Trocar</button>
+          </div>
+        </div>
+        <input type="hidden" id="budgetCustomerId" value="">
+        <div class="budget-form-grid budget-form-grid--contact">
+          <input class="form-input" id="budgetCustomerName" placeholder="Nome (preenchido ao selecionar)">
+          <input class="form-input" id="budgetCustomerPhone" placeholder="WhatsApp">
+          <input class="form-input" id="budgetCustomerEmail" placeholder="Email" type="email">
+          <input class="form-input" id="budgetdate" type="date">
+        </div>
       </div>
       <textarea class="form-input" id="budgetNotes" rows="2" placeholder="Observações, prazo, garantia, condições..."></textarea>
-      <div class="budget-add-row">
-        <select class="form-input" id="budgetProductSelect"></select>
-        <button class="btn btn-ghost btn-sm" type="button" id="budgetAddProductBtn">+ Adicionar produto</button>
-        <button class="btn btn-ghost btn-sm" type="button" id="budgetAddCustomBtn">+ Item personalizado</button>
+      <div class="budget-product-section">
+        <label class="form-label">Adicionar produto</label>
+        <div class="budget-ac-wrap" id="budgetProductAcWrap">
+          <span class="budget-ac-icon" aria-hidden="true">🔍</span>
+          <input class="form-input budget-ac-input" id="budgetProductSearch" type="search" placeholder="Nome, SKU, código de barras..." autocomplete="off">
+          <div class="budget-ac-list" id="budgetProductResults" hidden></div>
+        </div>
+        <div class="budget-add-actions">
+          <button class="btn btn-ghost btn-sm" type="button" id="budgetAddProductBtn">+ Adicionar selecionado</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="budgetAddCustomBtn">+ Item personalizado</button>
+        </div>
       </div>
       <div class="budget-items-table-wrap">
         <div class="budget-items-table-head">
