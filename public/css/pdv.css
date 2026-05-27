@@ -820,3 +820,400 @@
         grid-template-columns: 1fr;
     }
 }
+
+.pdv-service-modal-card {
+    width: min(820px, 100%);
+    max-height: min(94vh, 920px);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(240, 192, 64, 0.15);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.pdv-service-modal-header {
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.pdv-service-subtitle {
+    font-size: 0.8rem;
+    color: var(--text2);
+    margin-top: 6px;
+    line-height: 1.45;
+    max-width: 420px;
+}
+
+.pdv-service-modal-body {
+    overflow-y: auto;
+    max-height: calc(94vh - 168px);
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.pdv-service-steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding: 4px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pdv-service-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text3);
+    border: 1px solid transparent;
+    transition: all var(--transition);
+}
+
+.pdv-service-step-num {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 0.8rem;
+    font-weight: 800;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    transition: all var(--transition);
+}
+
+.pdv-service-step-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.pdv-service-step.is-active {
+    color: var(--gold);
+    border-color: rgba(240, 192, 64, 0.35);
+    background: var(--gold-glow);
+}
+
+.pdv-service-step.is-active .pdv-service-step-num {
+    background: linear-gradient(135deg, var(--gold2), var(--gold));
+    color: #1a1408;
+    border-color: transparent;
+    box-shadow: 0 4px 12px rgba(240, 192, 64, 0.35);
+}
+
+.pdv-service-step.is-done {
+    color: #6ee7a8;
+}
+
+.pdv-service-step.is-done .pdv-service-step-num {
+    background: rgba(61, 220, 132, 0.2);
+    border-color: rgba(61, 220, 132, 0.45);
+    color: #6ee7a8;
+}
+
+.pdv-service-pane {
+    display: none;
+    animation: fadeIn .28s ease;
+}
+
+.pdv-service-pane.is-active {
+    display: block;
+}
+
+.pdv-service-pane-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pdv-service-pane-head--checklist {
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.pdv-service-pane-icon {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+    border-radius: 12px;
+    background: linear-gradient(145deg, rgba(240, 192, 64, 0.12), rgba(176, 106, 255, 0.08));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pdv-service-pane-title {
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.pdv-service-pane-desc {
+    font-size: 0.8rem;
+    color: var(--text2);
+    line-height: 1.4;
+}
+
+.pdv-service-defect-badge {
+    margin-left: auto;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    white-space: nowrap;
+}
+
+.pdv-service-defect-badge.has-defects {
+    border-color: rgba(255, 90, 90, 0.45);
+    background: rgba(255, 90, 90, 0.12);
+    color: #ff9a9a;
+}
+
+.pdv-service-field-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.pdv-service-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.pdv-service-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.pdv-service-field--full {
+    grid-column: 1 / -1;
+}
+
+.pdv-service-customer-chip {
+    margin-bottom: 4px;
+}
+
+.pdv-service-checklist {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.pdv-svc-check-item {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    overflow: hidden;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.03), transparent);
+    transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
+}
+
+.pdv-svc-check-item:hover {
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.pdv-svc-check-item.is-defective {
+    border-color: rgba(255, 90, 90, 0.5);
+    background: linear-gradient(160deg, rgba(255, 90, 90, 0.1), rgba(255, 90, 90, 0.02));
+    box-shadow: 0 8px 24px rgba(255, 60, 60, 0.08);
+}
+
+.pdv-svc-check-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+}
+
+.pdv-svc-check-box {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    border-radius: 7px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 800;
+    color: transparent;
+    transition: all var(--transition);
+}
+
+.pdv-svc-check-item.is-defective .pdv-svc-check-box {
+    border-color: #ff6b6b;
+    background: linear-gradient(135deg, #ff6b6b, #e04545);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(255, 90, 90, 0.4);
+}
+
+.pdv-svc-check-icon {
+    font-size: 1.35rem;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.25);
+    flex-shrink: 0;
+}
+
+.pdv-svc-check-item.is-defective .pdv-svc-check-icon {
+    background: rgba(255, 90, 90, 0.15);
+}
+
+.pdv-svc-check-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.pdv-svc-check-label {
+    display: block;
+    font-weight: 700;
+    font-size: 0.88rem;
+    line-height: 1.3;
+    margin-bottom: 2px;
+}
+
+.pdv-svc-check-hint {
+    display: block;
+    font-size: 0.68rem;
+    color: var(--text3);
+    font-weight: 500;
+}
+
+.pdv-svc-check-item.is-defective .pdv-svc-check-hint {
+    color: #ff9a9a;
+}
+
+.pdv-svc-check-detail {
+    padding: 0 16px 16px 16px;
+    margin-left: 34px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-top: 1px dashed rgba(255, 90, 90, 0.25);
+    padding-top: 14px;
+    margin-top: 0;
+    margin-right: 12px;
+    margin-bottom: 4px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 0 0 10px 10px;
+}
+
+.pdv-svc-check-detail .form-input {
+    font-size: 0.84rem;
+}
+
+.pdv-svc-check-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: stretch;
+}
+
+.pdv-svc-check-row .form-input {
+    flex: 1;
+    min-width: 100px;
+}
+
+.pdv-svc-photo-btn {
+    cursor: pointer;
+    margin: 0;
+    white-space: nowrap;
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+}
+
+.pdv-svc-pending-photos {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--green);
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(61, 220, 132, 0.1);
+    border: 1px solid rgba(61, 220, 132, 0.25);
+}
+
+.pdv-service-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 20px 18px;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.pdv-service-footer-hint {
+    font-size: 0.75rem;
+    color: var(--text3);
+    text-align: center;
+}
+
+.pdv-service-footer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.pdv-service-submit-btn {
+    min-width: 200px;
+}
+
+@media (max-width: 680px) {
+    .pdv-service-checklist {
+        grid-template-columns: 1fr;
+    }
+
+    .pdv-service-steps {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 560px) {
+    .pdv-service-grid-2 {
+        grid-template-columns: 1fr;
+    }
+
+    .pdv-service-field--full {
+        grid-column: auto;
+    }
+
+    .pdv-service-pane-head--checklist .pdv-service-defect-badge {
+        margin-left: 58px;
+        width: 100%;
+        text-align: center;
+    }
+}

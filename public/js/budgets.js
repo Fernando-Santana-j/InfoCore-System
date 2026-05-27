@@ -409,6 +409,9 @@ function renderSavedBudgets() {
             const crmBtn = budget.customerId
                 ? `<a class="btn btn-ghost btn-sm" href="/clients?client=${encodeURIComponent(String(budget.customerId))}">CRM</a>`
                 : '';
+            const osBtn = budget.serviceOrderId
+                ? `<a class="btn btn-ghost btn-sm" href="/services">OS vinculada</a>`
+                : '';
             return `
             <div class="budget-card-item" data-budget-id="${escapeHtml(bid)}">
                 <div class="budget-card-head">
@@ -420,9 +423,11 @@ function renderSavedBudgets() {
                     <div>Itens: ${asArray(budget.items).length}</div>
                     <div>Validade: ${escapeHtml(budget.validUntil || budget.date || 'N/I')}</div>
                     <div>Total: ${formatCurrency(asNumber(budget.total))}</div>
+                    ${budget.serviceOrderId ? '<div class="text-xs text-muted">Gerado a partir de ordem de serviço</div>' : ''}
                 </div>
                 <div class="budget-card-actions">
                     ${crmBtn}
+                    ${osBtn}
                     <button class="btn btn-ghost btn-sm" type="button" data-budget-action="template" data-budget-id="${escapeHtml(bid)}">Template</button>
                     ${allowFinalize ? `<button class="btn btn-ghost btn-sm" type="button" data-budget-action="edit" data-budget-id="${escapeHtml(bid)}">Editar</button>` : ''}
                     ${allowFinalize ? `<button class="btn btn-ghost btn-sm text-danger-btn" type="button" data-budget-action="delete" data-budget-id="${escapeHtml(bid)}">Excluir</button>` : ''}
@@ -916,6 +921,10 @@ function initBudgetsPage() {
         const params = new URLSearchParams(window.location.search);
         const preCustomer = params.get('customer');
         if (preCustomer) openCreateModalWithOptionalCustomer(preCustomer);
+        const openBudgetId = params.get('open');
+        if (openBudgetId) {
+            setTimeout(() => openEditBudgetById(openBudgetId), 120);
+        }
     });
 }
 

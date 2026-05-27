@@ -72,6 +72,9 @@
 
 
   <script src="/js/<%= body %>.js"></script>
+  <% if (body === 'pdv') { %>
+  <script src="/js/pdv-service.js"></script>
+  <% } %>
 
 
   <%- include('reusable/script') %>

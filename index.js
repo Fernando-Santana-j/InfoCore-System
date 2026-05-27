@@ -15,6 +15,7 @@ const axios = require('axios');
 const QRCode = require('qrcode');
 const { randomUUID } = require("crypto");
 const nodemailer = require('nodemailer');
+require('dotenv').config();
 // const config = require('./config/config.json');
 
 const PRODUCTS_COLLECTION = 'products';
@@ -22,6 +23,7 @@ const SALES_COLLECTION = 'sales';
 const BUDGETS_COLLECTION = 'budgets';
 const CUSTOMERS_COLLECTION = 'customers';
 const CASH_FLOW_COLLECTION = 'cash_flow';
+const SERVICE_ORDERS_COLLECTION = 'service_orders';
 const { FieldValue } = require('firebase-admin/firestore');
 
 const PAYMENT_KEYS = new Set(['money', 'credit_card', 'debit_card', 'pix']);
@@ -126,7 +128,8 @@ function normalizeBudgetRow(row) {
         profit: Number.isFinite(Number(r.profit)) ? Number(r.profit) : null,
         createdAt: r.createdAt || null,
         updatedAt: r.updatedAt || null,
-        finalizedAt: r.finalizedAt || null
+        finalizedAt: r.finalizedAt || null,
+        serviceOrderId: r.serviceOrderId != null ? String(r.serviceOrderId) : ''
     };
 }
 
@@ -274,6 +277,227 @@ function normalizeCashFlowRow(row) {
         source: r.source != null ? String(r.source).trim() : '',
         createdAt: createdAt ? createdAt.toISOString() : null
     };
+}
+
+function serviceDisplayCode() {
+    const t = Date.now().toString(36).toUpperCase();
+    return `OS-${t.slice(-6)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
+}
+
+const SERVICE_CHECKLIST_BASE = [
+    { key: 'power', label: 'Não liga / energia', icon: '⚡' },
+    { key: 'screen', label: 'Tela / display', icon: '📱' },
+    { key: 'battery', label: 'Bateria', icon: '🔋' },
+    { key: 'charging', label: 'Conector de carga', icon: '🔌' },
+    { key: 'audio', label: 'Áudio (alto-falante/mic)', icon: '🔊' },
+    { key: 'camera', label: 'Câmera', icon: '📷' },
+    { key: 'buttons', label: 'Botões físicos', icon: '🔘' },
+    { key: 'wifi', label: 'Wi-Fi / Bluetooth', icon: '📶' },
+    { key: 'software', label: 'Software / sistema', icon: '💾' },
+    { key: 'housing', label: 'Carcaça / estrutura', icon: '🛡️' },
+    { key: 'keyboard', label: 'Teclado', icon: '⌨️' },
+    { key: 'trackpad', label: 'Touchpad / mouse', icon: '🖱️' },
+    { key: 'overheat', label: 'Superaquecimento', icon: '🌡️' },
+    { key: 'liquid', label: 'Contato com líquido', icon: '💧' },
+    { key: 'other', label: 'Outro defeito', icon: '➕' }
+];
+
+const SERVICE_CHECKLIST_BY_DEVICE = {
+    Celular: ['power', 'screen', 'battery', 'charging', 'audio', 'camera', 'buttons', 'wifi', 'software', 'housing', 'liquid', 'other'],
+    Notebook: ['power', 'screen', 'battery', 'charging', 'audio', 'keyboard', 'trackpad', 'wifi', 'software', 'overheat', 'housing', 'liquid', 'other'],
+    Computador: ['power', 'screen', 'audio', 'wifi', 'software', 'overheat', 'housing', 'liquid', 'other'],
+    Tablet: ['power', 'screen', 'battery', 'charging', 'audio', 'wifi', 'software', 'housing', 'other'],
+    Outro: ['power', 'screen', 'battery', 'charging', 'audio', 'software', 'other']
+};
+
+function getServiceChecklistTemplate(deviceType) {
+    const keys = SERVICE_CHECKLIST_BY_DEVICE[deviceType] || SERVICE_CHECKLIST_BY_DEVICE.Outro;
+    const map = new Map(SERVICE_CHECKLIST_BASE.map((item) => [item.key, item]));
+    return keys.map((key) => {
+        const base = map.get(key);
+        if (!base) return null;
+        return { key: base.key, label: base.label, icon: base.icon };
+    }).filter(Boolean);
+}
+
+function defaultServiceChecklistState(deviceType) {
+    return getServiceChecklistTemplate(deviceType).map((item) => ({
+        key: item.key,
+        label: item.label,
+        icon: item.icon,
+        defective: false,
+        customerNote: '',
+        estimatedPrice: null,
+        photos: [],
+        done: false,
+        techNote: '',
+        techPhotos: []
+    }));
+}
+
+function normalizeServicePhotoItem(item) {
+    const r = item && typeof item === 'object' ? item : {};
+    return {
+        id: r.id != null ? String(r.id) : randomUUID(),
+        url: r.url != null ? String(r.url).trim() : '',
+        caption: r.caption != null ? String(r.caption).trim() : '',
+        createdAt: r.createdAt || null
+    };
+}
+
+function normalizeServiceChecklistItem(item) {
+    const r = item && typeof item === 'object' ? item : {};
+    const key = String(r.key || r.id || '').trim() || randomUUID();
+    const label = String(r.label || r.title || '').trim();
+    let estimatedPrice = r.estimatedPrice;
+    if (estimatedPrice != null && estimatedPrice !== '') {
+        estimatedPrice = Math.max(0, Number(estimatedPrice) || 0);
+    } else {
+        estimatedPrice = null;
+    }
+    return {
+        key,
+        label,
+        icon: r.icon != null ? String(r.icon) : '',
+        defective: Boolean(r.defective),
+        customerNote: r.customerNote != null ? String(r.customerNote).trim() : (r.notes != null ? String(r.notes).trim() : ''),
+        estimatedPrice,
+        photos: Array.isArray(r.photos) ? r.photos.map(normalizeServicePhotoItem).filter((p) => p.url) : [],
+        done: Boolean(r.done),
+        techNote: r.techNote != null ? String(r.techNote).trim() : '',
+        techPhotos: Array.isArray(r.techPhotos) ? r.techPhotos.map(normalizeServicePhotoItem).filter((p) => p.url) : []
+    };
+}
+
+function normalizeServiceOrderRow(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    const allowedStatuses = new Set(['open', 'in_progress', 'waiting_parts', 'done', 'delivered']);
+    const status = String(r.status || 'open').toLowerCase();
+    const checklist = Array.isArray(r.checklist)
+        ? r.checklist.map(normalizeServiceChecklistItem).filter((item) => item.label)
+        : [];
+    return {
+        id: r.id != null ? String(r.id) : '',
+        code: r.code != null ? String(r.code) : serviceDisplayCode(),
+        budgetId: r.budgetId != null ? String(r.budgetId) : '',
+        customerId: r.customerId != null ? String(r.customerId) : '',
+        customerName: r.customerName != null ? String(r.customerName).trim() : '',
+        customerPhone: r.customerPhone != null ? String(r.customerPhone).trim() : '',
+        customerEmail: r.customerEmail != null ? String(r.customerEmail).trim() : '',
+        deviceType: r.deviceType != null ? String(r.deviceType).trim() : '',
+        deviceBrandModel: r.deviceBrandModel != null ? String(r.deviceBrandModel).trim() : '',
+        accessories: r.accessories != null ? String(r.accessories).trim() : '',
+        issueReport: r.issueReport != null ? String(r.issueReport).trim() : '',
+        budgetRawNotes: r.budgetRawNotes != null ? String(r.budgetRawNotes).trim() : '',
+        estimateValue: Number.isFinite(Number(r.estimateValue)) ? Math.max(0, Number(r.estimateValue)) : null,
+        checklist,
+        defectiveCount: checklist.filter((item) => item.defective).length,
+        doneCount: checklist.filter((item) => item.defective && item.done).length,
+        progressNotes: Array.isArray(r.progressNotes)
+            ? r.progressNotes.map((n) => ({
+                id: n?.id != null ? String(n.id) : randomUUID(),
+                text: n?.text != null ? String(n.text).trim() : '',
+                createdAt: n?.createdAt || null
+            })).filter((note) => note.text)
+            : [],
+        status: allowedStatuses.has(status) ? status : 'open',
+        priority: String(r.priority || 'normal') === 'high' ? 'high' : (String(r.priority || '') === 'urgent' ? 'urgent' : 'normal'),
+        createdAt: r.createdAt || null,
+        updatedAt: r.updatedAt || null,
+        createdBy: r.createdBy && typeof r.createdBy === 'object' ? {
+            name: r.createdBy.name != null ? String(r.createdBy.name) : '',
+            email: r.createdBy.email != null ? String(r.createdBy.email) : ''
+        } : null
+    };
+}
+
+function buildServiceBudgetNotes(serviceRow, budgetRawNotes) {
+    const lines = [];
+    const raw = String(budgetRawNotes || serviceRow.budgetRawNotes || '').trim();
+    if (raw) lines.push(raw);
+    lines.push(`--- OS ${serviceRow.code} (rascunho para polir) ---`);
+    lines.push(`Aparelho: ${serviceRow.deviceType || '—'} ${serviceRow.deviceBrandModel || ''}`.trim());
+    if (serviceRow.accessories) lines.push(`Acessórios: ${serviceRow.accessories}`);
+    if (serviceRow.issueReport) lines.push(`Relato geral: ${serviceRow.issueReport}`);
+    const defects = (serviceRow.checklist || []).filter((item) => item.defective);
+    if (defects.length) {
+        lines.push('Itens marcados com defeito:');
+        for (const item of defects) {
+            let line = `- ${item.label}`;
+            if (item.customerNote) line += ` — ${item.customerNote}`;
+            if (item.estimatedPrice != null && item.estimatedPrice > 0) {
+                line += ` (ref. ${moneyBr(item.estimatedPrice)})`;
+            }
+            lines.push(line);
+        }
+    }
+    if (serviceRow.estimateValue != null && serviceRow.estimateValue > 0) {
+        lines.push(`Valor estimado informado no balcão: ${moneyBr(serviceRow.estimateValue)}`);
+    }
+    return lines.join('\n');
+}
+
+async function createLinkedBudgetForService(serviceDraft, sessionUser) {
+    const serviceId = String(serviceDraft.id || '').trim();
+    const budgetId = randomUUID();
+    const osCode = String(serviceDraft.code || serviceDisplayCode());
+    const estimateValue = serviceDraft.estimateValue != null ? Math.max(0, Number(serviceDraft.estimateValue) || 0) : 0;
+    const defects = (serviceDraft.checklist || []).filter((item) => item.defective);
+
+    const items = [{
+        kind: 'custom',
+        name: `Serviço ${osCode} — ${serviceDraft.deviceType || 'Aparelho'} ${serviceDraft.deviceBrandModel || ''}`.trim(),
+        qty: 1,
+        unitPrice: estimateValue
+    }];
+
+    for (const defect of defects) {
+        const price = defect.estimatedPrice != null ? Math.max(0, Number(defect.estimatedPrice) || 0) : 0;
+        if (price <= 0) continue;
+        items.push({
+            kind: 'custom',
+            name: `[OS] ${defect.label}`,
+            qty: 1,
+            unitPrice: price
+        });
+    }
+
+    const notes = buildServiceBudgetNotes(serviceDraft, serviceDraft.budgetRawNotes);
+    const built = await buildBudgetRecordFromBody({
+        customerId: serviceDraft.customerId,
+        customerName: serviceDraft.customerName,
+        customerPhone: serviceDraft.customerPhone,
+        customerEmail: serviceDraft.customerEmail,
+        notes,
+        items,
+        discount: 0,
+        extra: 0,
+        status: 'draft',
+        serviceOrderId: serviceId
+    }, {
+        id: budgetId,
+        code: null,
+        createdAt: null,
+        prevStatus: null
+    });
+
+    if (built.error) return built;
+
+    const payload = { ...built.payload, serviceOrderId: serviceId };
+    await db.create(BUDGETS_COLLECTION, budgetId, payload);
+    const budget = await fetchBudgetNormalized(budgetId);
+    return { error: false, budgetId, budget: budget || built.budget, customer: built.customer, customerCreated: built.customerCreated };
+}
+
+async function loadServiceOrdersNormalized() {
+    const rows = await db.findAll({ colecao: SERVICE_ORDERS_COLLECTION }).catch(() => []);
+    const list = Array.isArray(rows) ? rows.map(normalizeServiceOrderRow) : [];
+    list.sort((a, b) => {
+        const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return tb - ta;
+    });
+    return list;
 }
 
 function currentMonthKey() {
@@ -1238,6 +1462,16 @@ function verifyLogin(req, res, next) {
     next();
 }
 
+function verifyAdmin(req, res, next) {
+    if (!req.session.user) {
+        return res.redirect('/login');
+    }
+    if (req.session.user.type !== 'admin') {
+        return res.redirect('/dashboard');
+    }
+    next();
+}
+
 function isBudgetFinalized(row) {
     return String(row?.status || 'draft').toLowerCase() === 'finalized';
 }
@@ -1339,7 +1573,21 @@ app.get('/pdv',verifyLogin, async (req, res) => {
     const products = await loadProductsFromDb();
     const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
     const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-    res.render('layout', { body: 'pdv',appData:{configs:configs, user:req.session.user, products, budgets} });
+    const customers = await loadCustomersNormalized();
+    res.render('layout', {
+        body: 'pdv',
+        appData: {
+            configs,
+            user: req.session.user,
+            products,
+            budgets,
+            customers,
+            serviceChecklistTemplates: {
+                base: SERVICE_CHECKLIST_BASE,
+                byDevice: SERVICE_CHECKLIST_BY_DEVICE
+            }
+        }
+    });
 });
 
 app.get('/budgets', verifyLogin, async (req, res) => {
@@ -1361,6 +1609,32 @@ app.get('/stock',verifyLogin, async (req, res) => {
     const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     const products = await loadProductsFromDb();
     res.render('layout', { body: 'stock', appData: { configs, user: req.session.user, products } });
+});
+
+app.get('/services', verifyAdmin, async (req, res) => {
+    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
+    const services = await loadServiceOrdersNormalized();
+    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
+    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+    res.render('layout', {
+        body: 'services',
+        appData: { configs, user: req.session.user, services, budgets }
+    });
+});
+
+app.get('/services/:id', verifyAdmin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.redirect('/services');
+    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
+    const services = await loadServiceOrdersNormalized();
+    const service = services.find((s) => String(s.id) === id);
+    if (!service) return res.redirect('/services');
+    res.render('layout', {
+        body: 'service-work',
+        appData: { configs, user: req.session.user, service }
+    });
 });
 
 app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
@@ -1641,6 +1915,8 @@ async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus
     });
 
     const now = FieldValue.serverTimestamp();
+    const serviceOrderId = body.serviceOrderId != null ? String(body.serviceOrderId).trim() : '';
+
     const payload = {
         id,
         code: budgetCode,
@@ -1660,6 +1936,7 @@ async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus
         status,
         updatedAt: now
     };
+    if (serviceOrderId) payload.serviceOrderId = serviceOrderId;
     if (createdAt != null) payload.createdAt = createdAt;
     else payload.createdAt = now;
     if (status === 'finalized') payload.finalizedAt = now;
@@ -2954,6 +3231,251 @@ app.delete('/api/cash-flow/:id', verifyLogin, async (req, res) => {
     }
 
     return res.json({ error: false });
+});
+
+app.get('/api/services/templates', verifyLogin, (req, res) => {
+    const deviceType = String(req.query.deviceType || 'Celular').trim();
+    return res.json({
+        error: false,
+        deviceType,
+        template: getServiceChecklistTemplate(deviceType)
+    });
+});
+
+app.get('/api/services', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const services = await loadServiceOrdersNormalized();
+    return res.json({ error: false, services });
+});
+
+app.get('/api/services/:id', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
+    }
+    const service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
+    return res.json({ error: false, service });
+});
+
+app.post('/api/services', verifyLogin, async (req, res) => {
+    const body = req.body || {};
+    const customerName = String(body.customerName || '').trim();
+    const deviceType = String(body.deviceType || 'Celular').trim() || 'Celular';
+    const deviceBrandModel = String(body.deviceBrandModel || '').trim();
+    const issueReport = String(body.issueReport || '').trim();
+    const budgetRawNotes = String(body.budgetRawNotes || '').trim();
+    const estimateValueRaw = body.estimateValue;
+    const estimateValue = estimateValueRaw === '' || estimateValueRaw == null
+        ? null
+        : Math.max(0, Number(estimateValueRaw) || 0);
+
+    const incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
+    const checklist = incomingChecklist.length
+        ? incomingChecklist.map(normalizeServiceChecklistItem).filter((item) => item.label)
+        : defaultServiceChecklistState(deviceType);
+
+    const defectiveItems = checklist.filter((item) => item.defective);
+    if (!customerName) {
+        return res.status(400).json({ error: true, message: 'Informe o nome do cliente.' });
+    }
+    if (!deviceBrandModel) {
+        return res.status(400).json({ error: true, message: 'Informe marca/modelo do aparelho.' });
+    }
+    if (!defectiveItems.length && !issueReport) {
+        return res.status(400).json({
+            error: true,
+            message: 'Marque ao menos um item com defeito ou preencha o relato geral.'
+        });
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const code = serviceDisplayCode();
+    const serviceDraft = normalizeServiceOrderRow({
+        id,
+        code,
+        budgetId: '',
+        customerId: String(body.customerId || '').trim(),
+        customerName,
+        customerPhone: String(body.customerPhone || '').trim(),
+        customerEmail: String(body.customerEmail || '').trim(),
+        deviceType,
+        deviceBrandModel,
+        accessories: String(body.accessories || '').trim(),
+        issueReport,
+        budgetRawNotes,
+        estimateValue,
+        checklist,
+        progressNotes: [],
+        status: 'open',
+        priority: String(body.priority || 'normal'),
+        createdAt: now,
+        updatedAt: now,
+        createdBy: {
+            name: req.session.user?.name || '',
+            email: req.session.user?.email || ''
+        }
+    });
+
+    let budgetLink;
+    try {
+        budgetLink = await createLinkedBudgetForService(serviceDraft, req.session.user);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao criar orçamento vinculado.' });
+    }
+    if (budgetLink.error) {
+        return res.status(400).json({ error: true, message: budgetLink.message || 'Erro ao criar orçamento vinculado.' });
+    }
+
+    const payload = normalizeServiceOrderRow({
+        ...serviceDraft,
+        budgetId: budgetLink.budgetId,
+        customerId: budgetLink.budget?.customerId || serviceDraft.customerId,
+        customerName: budgetLink.budget?.customerName || serviceDraft.customerName,
+        customerPhone: budgetLink.budget?.customerPhone || serviceDraft.customerPhone,
+        customerEmail: budgetLink.budget?.customerEmail || serviceDraft.customerEmail
+    });
+
+    try {
+        await db.create(SERVICE_ORDERS_COLLECTION, id, payload);
+    } catch (e) {
+        console.error(e);
+        try {
+            await firestore.collection(BUDGETS_COLLECTION).doc(budgetLink.budgetId).delete();
+        } catch (cleanupErr) {
+            console.error(cleanupErr);
+        }
+        return res.status(500).json({ error: true, message: 'Erro ao criar ordem de serviço.' });
+    }
+
+    return res.json({
+        error: false,
+        service: payload,
+        budget: budgetLink.budget,
+        customerCreated: budgetLink.customerCreated
+    });
+});
+
+app.patch('/api/services/:id', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+        return res.status(400).json({ error: true, message: 'ID inválido.' });
+    }
+
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
+    }
+
+    const body = req.body || {};
+    const prev = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
+    const patch = {};
+
+    if (body.status != null) patch.status = String(body.status || '').trim();
+    if (body.priority != null) patch.priority = String(body.priority || '').trim();
+    if (Array.isArray(body.checklist)) patch.checklist = body.checklist.map(normalizeServiceChecklistItem).filter((item) => item.label);
+    if (Array.isArray(body.progressNotes)) {
+        patch.progressNotes = body.progressNotes.map((n) => ({
+            id: n?.id != null ? String(n.id) : randomUUID(),
+            text: String(n?.text || '').trim(),
+            createdAt: n?.createdAt || new Date().toISOString()
+        })).filter((n) => n.text);
+    }
+    if (body.deviceBrandModel != null) patch.deviceBrandModel = String(body.deviceBrandModel || '').trim();
+    if (body.accessories != null) patch.accessories = String(body.accessories || '').trim();
+
+    const merged = normalizeServiceOrderRow({
+        ...prev,
+        ...patch,
+        updatedAt: new Date().toISOString()
+    });
+
+    try {
+        await db.update(SERVICE_ORDERS_COLLECTION, id, {
+            status: merged.status,
+            priority: merged.priority,
+            checklist: merged.checklist,
+            progressNotes: merged.progressNotes,
+            deviceBrandModel: merged.deviceBrandModel,
+            accessories: merged.accessories,
+            updatedAt: merged.updatedAt
+        });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar ordem de serviço.' });
+    }
+
+    return res.json({ error: false, service: merged });
+});
+
+app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, next) => {
+    upload.array('photos', 6)(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({ error: true, message: err.message || 'Upload inválido.' });
+        }
+        next();
+    });
+}, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    const itemKey = String(req.params.itemKey || '').trim();
+    const phase = String(req.query.phase || 'intake').trim() === 'tech' ? 'tech' : 'intake';
+    if (!id || !itemKey) {
+        return res.status(400).json({ error: true, message: 'Parâmetros inválidos.' });
+    }
+    if (phase === 'tech' && req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
+    }
+
+    const prev = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (!files.length) {
+        return res.status(400).json({ error: true, message: 'Selecione pelo menos uma foto.' });
+    }
+
+    const caption = String(req.body?.caption || '').trim();
+    const newPhotos = files.map((file) => normalizeServicePhotoItem({
+        id: randomUUID(),
+        url: `/uploads/${file.filename}`,
+        caption,
+        createdAt: new Date().toISOString()
+    }));
+
+    const checklist = (prev.checklist || []).map((item) => {
+        if (String(item.key) !== itemKey) return item;
+        const target = phase === 'tech' ? 'techPhotos' : 'photos';
+        return { ...item, [target]: [...(item[target] || []), ...newPhotos] };
+    });
+
+    const updatedAt = new Date().toISOString();
+    try {
+        await db.update(SERVICE_ORDERS_COLLECTION, id, { checklist, updatedAt });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao salvar fotos.' });
+    }
+
+    return res.json({
+        error: false,
+        service: normalizeServiceOrderRow({ ...prev, checklist, updatedAt })
+    });
 });
 
 app.get('/api/sales/:id', verifyLogin, async (req, res) => {
