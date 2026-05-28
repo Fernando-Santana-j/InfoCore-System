@@ -514,10 +514,12 @@ const Stock = (() => {
 
 window.Stock = Stock;
 
-/** Exporta para .xlsx os produtos da visualização atual (pesquisa + filtros). Requer SheetJS (layout stock). */
-function exportStockExcel() {
-    if (typeof XLSX === 'undefined') {
-        showToast('Exportação Excel indisponível. Recarregue a página.', 'error');
+/** Exporta para .xlsx os produtos da visualização atual (pesquisa + filtros). */
+async function exportStockExcel() {
+    try {
+        await ensureXlsx();
+    } catch {
+        showToast('Exportação Excel indisponível.', 'error');
         return;
     }
     const products = Stock.getVisibleProducts?.() || [];
@@ -566,8 +568,11 @@ function deleteProductModal() {
     Stock.deleteEditing();
 }
 
+function bootStock() {
+    whenAppReady(() => Stock.init?.());
+}
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => Stock.init?.());
+    document.addEventListener('DOMContentLoaded', bootStock);
 } else {
-    Stock.init?.();
+    bootStock();
 }

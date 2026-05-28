@@ -15,6 +15,7 @@ const axios = require('axios');
 const QRCode = require('qrcode');
 const { randomUUID } = require("crypto");
 const nodemailer = require('nodemailer');
+const compression = require('compression');
 require('dotenv').config();
 // const config = require('./config/config.json');
 
@@ -1385,16 +1386,21 @@ app.use(session({
 app.use(cookieParser());
 
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json())
+app.use(bodyParser.json());
+app.use(compression());
 
-app.use(express.static('views'));
-app.use(express.static('public'));
-app.use(express.static('uploads'));
-app.use(express.static('src'));
+const staticMaxAge = process.env.NODE_ENV === 'production' ? '7d' : 0;
+const staticOpts = { maxAge: staticMaxAge, etag: true, lastModified: true };
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/uploads', express.static(path.join(__dirname, 'src')));
-app.use('/public', express.static(path.join(__dirname, 'public')));
+app.use((req, res, next) => {
+    const p = String(req.path || '').replace(/\/$/, '') || '/';
+    res.locals.currentPath = p;
+    next();
+});
+
+app.use(express.static(path.join(__dirname, 'public'), staticOpts));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), staticOpts));
+app.use('/public', express.static(path.join(__dirname, 'public'), staticOpts));
 
 app.set('views', path.join(__dirname, '/views'))
 app.set('view engine', 'ejs');
@@ -1522,6 +1528,102 @@ async function fetchBudgetNormalized(id) {
     return normalizeBudgetRow({ id, ...snap.data() });
 }
 
+async function getConfigsSafe() {
+    const raw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
+    return raw && raw.error !== true ? raw : {};
+}
+
+function renderAppShell(res, body, user) {
+    res.render('layout', {
+        body,
+        bootstrap: body,
+        appData: { user, configs: {}, cart: [] }
+    });
+}
+
+app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
+    try {
+        const scope = String(req.params.scope || '').trim();
+        const configs = await getConfigsSafe();
+
+        if (scope === 'dashboard') {
+            const [products, salesRows] = await Promise.all([
+                loadProductsFromDb(),
+                db.findAll({ colecao: SALES_COLLECTION }).catch(() => [])
+            ]);
+            let sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+            sales.sort((a, b) => {
+                const ta = new Date(a.createdAt || a.date || 0).getTime();
+                const tb = new Date(b.createdAt || b.date || 0).getTime();
+                return tb - ta;
+            });
+            return res.json({ configs, products, sales });
+        }
+
+        if (scope === 'pdv') {
+            const [products, budgetRows, customers] = await Promise.all([
+                loadProductsFromDb(),
+                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+                loadCustomersNormalized()
+            ]);
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+            return res.json({
+                configs,
+                products,
+                budgets,
+                customers,
+                serviceChecklistTemplates: {
+                    base: SERVICE_CHECKLIST_BASE,
+                    byDevice: SERVICE_CHECKLIST_BY_DEVICE
+                }
+            });
+        }
+
+        if (scope === 'budgets') {
+            const [products, budgetRows, customers] = await Promise.all([
+                loadProductsFromDb(),
+                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+                loadCustomersNormalized()
+            ]);
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+            return res.json({ configs, products, budgets, customers });
+        }
+
+        if (scope === 'stock') {
+            const products = await loadProductsFromDb();
+            return res.json({ configs, products });
+        }
+
+        if (scope === 'clients') {
+            const [customers, budgetRows] = await Promise.all([
+                loadCustomersNormalized(),
+                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
+            ]);
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+            return res.json({ configs, customers, budgets });
+        }
+
+        if (scope === 'services') {
+            const [services, budgetRows] = await Promise.all([
+                loadServiceOrdersNormalized(),
+                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
+            ]);
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+            return res.json({ configs, services, budgets });
+        }
+
+        if (scope === 'cashflow') {
+            const cashFlowEntries = await loadCashFlowNormalized();
+            return res.json({ configs, cashFlowEntries });
+        }
+
+        return res.status(404).json({ error: true, message: 'Página não suportada.' });
+    } catch (err) {
+        console.error('bootstrap', err);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar dados da página.' });
+    }
+});
+
 app.post('/login', async (req, res) => {
     let { email, pass } = req.body;
     let user = await db.findOne({ colecao: 'users', where: ['email', '==', email] });
@@ -1552,75 +1654,27 @@ app.get('/login', (req, res) => {
     res.render('login');
 });
 
-app.get('/dashboard',verifyLogin, async (req, res) => {
-    let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const products = await loadProductsFromDb();
-    const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
-    let sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
-    sales.sort((a, b) => {
-        const ta = new Date(a.createdAt || a.date || 0).getTime();
-        const tb = new Date(b.createdAt || b.date || 0).getTime();
-        return tb - ta;
-    });
-
-    res.render('layout', { body: 'dashboard', appData: { configs, user: req.session.user, products, sales } });
+app.get('/dashboard', verifyLogin, (req, res) => {
+    renderAppShell(res, 'dashboard', req.session.user);
 });
 
-app.get('/pdv',verifyLogin, async (req, res) => {
-   
-    let configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    
-    const products = await loadProductsFromDb();
-    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
-    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-    const customers = await loadCustomersNormalized();
-    res.render('layout', {
-        body: 'pdv',
-        appData: {
-            configs,
-            user: req.session.user,
-            products,
-            budgets,
-            customers,
-            serviceChecklistTemplates: {
-                base: SERVICE_CHECKLIST_BASE,
-                byDevice: SERVICE_CHECKLIST_BY_DEVICE
-            }
-        }
-    });
+app.get('/pdv', verifyLogin, (req, res) => {
+    renderAppShell(res, 'pdv', req.session.user);
 });
 
-app.get('/budgets', verifyLogin, async (req, res) => {
-    const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const products = await loadProductsFromDb();
-    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
-    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-    const customers = await loadCustomersNormalized();
-    res.render('layout', {
-        body: 'budgets',
-        appData: { configs, user: req.session.user, products, budgets, customers }
-    });
+app.get('/budgets', verifyLogin, (req, res) => {
+    renderAppShell(res, 'budgets', req.session.user);
 });
 
-app.get('/stock',verifyLogin, async (req, res) => {
+app.get('/stock', verifyLogin, (req, res) => {
     if (req.session.user.type !== 'admin') {
         return res.redirect('/dashboard');
     }
-    const configs = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const products = await loadProductsFromDb();
-    res.render('layout', { body: 'stock', appData: { configs, user: req.session.user, products } });
+    renderAppShell(res, 'stock', req.session.user);
 });
 
-app.get('/services', verifyAdmin, async (req, res) => {
-    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
-    const services = await loadServiceOrdersNormalized();
-    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
-    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-    res.render('layout', {
-        body: 'services',
-        appData: { configs, user: req.session.user, services, budgets }
-    });
+app.get('/services', verifyAdmin, (req, res) => {
+    renderAppShell(res, 'services', req.session.user);
 });
 
 app.get('/services/:id', verifyAdmin, async (req, res) => {
@@ -3518,26 +3572,12 @@ app.get('/products', (req, res) => {
     res.render('layout', { body: 'products' });
 });
 
-app.get('/clients', verifyLogin, async (req, res) => {
-    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
-    const customers = await loadCustomersNormalized();
-    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
-    const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-    res.render('layout', {
-        body: 'clients',
-        appData: { configs, user: req.session.user, customers, budgets }
-    });
+app.get('/clients', verifyLogin, (req, res) => {
+    renderAppShell(res, 'clients', req.session.user);
 });
 
-app.get('/cash-flow', verifyLogin, async (req, res) => {
-    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
-    const cashFlowEntries = await loadCashFlowNormalized();
-    res.render('layout', {
-        body: 'cashflow',
-        appData: { configs, user: req.session.user, cashFlowEntries }
-    });
+app.get('/cash-flow', verifyLogin, (req, res) => {
+    renderAppShell(res, 'cashflow', req.session.user);
 });
 
 app.get('/analytics', (req, res) => {

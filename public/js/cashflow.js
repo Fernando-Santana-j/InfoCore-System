@@ -434,6 +434,13 @@ function initCashFlowPage() {
     renderCashFlow();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    if (typeof initCashFlowPage === 'function') initCashFlowPage();
-});
+function bootCashFlow() {
+    whenAppReady(() => {
+        if (typeof initCashFlowPage === 'function') initCashFlowPage();
+    });
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootCashFlow);
+} else {
+    bootCashFlow();
+}

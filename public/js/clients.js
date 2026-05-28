@@ -478,6 +478,13 @@ function initCustomersPage() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    if (typeof initCustomersPage === 'function') initCustomersPage();
-});
+function bootClients() {
+    whenAppReady(() => {
+        if (typeof initCustomersPage === 'function') initCustomersPage();
+    });
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootClients);
+} else {
+    bootClients();
+}

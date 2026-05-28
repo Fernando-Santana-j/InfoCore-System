@@ -1,15 +1,16 @@
 <div class="page" id="page-pdv">
   <div class="pdv-layout">
     <div class="pdv-products">
-      <div class="flex gap-12 mb-16" style="flex-wrap:wrap">
-        <div class="search-bar" style="flex:1;min-width:160px">
-          <span>🔍</span>
-          <input type="text" placeholder="Buscar produto..." id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
+      <div class="pdv-toolbar">
+        <div class="search-bar">
+          <span aria-hidden="true">🔍</span>
+          <input type="text" placeholder="Buscar produto por nome ou SKU…" id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
         </div>
-        <div class="search-bar pdv-barcode-wrap" style="flex:0 1 260px;min-width:200px">
-          <span>📷</span>
-          <input type="text" id="pdvBarcodeInput" autocomplete="off" spellcheck="false" inputmode="text" placeholder="Código de barras / SKU…" aria-label="Leitor de código de barras">
+        <div class="pdv-scan-status" id="pdvScanIndicator" title="Leitor USB ativo em toda a tela do PDV">
+          <span class="pdv-scan-dot" aria-hidden="true"></span>
+          Leitor ativo
         </div>
+        <input type="text" id="pdvBarcodeCapture" class="visually-hidden" tabindex="-1" aria-hidden="true" autocomplete="off">
         <div class="filter-bar">
           <button class="filter-btn active" onclick="setPDVFilter('todos',this)">Todos</button>
           <button class="filter-btn" onclick="setPDVFilter('cell',this)">📱</button>

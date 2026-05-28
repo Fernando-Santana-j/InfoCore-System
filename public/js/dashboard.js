@@ -288,8 +288,11 @@ const Dashboard = (() => {
     return { init, render };
 })();
 
+function bootDashboard() {
+    whenAppReady(() => Dashboard.init?.());
+}
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => Dashboard.init?.());
+    document.addEventListener('DOMContentLoaded', bootDashboard);
 } else {
-    Dashboard.init?.();
+    bootDashboard();
 }

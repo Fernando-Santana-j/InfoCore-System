@@ -1,25 +1,33 @@
 <script>
   document.addEventListener('keydown', e => {
     if (e.key === 'F2') { e.preventDefault(); window.location.href = '/pdv'; }
-    if (e.key === 'F3') { e.preventDefault(); window.location.href = '/stock'; }
-    if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+    if (e.key === 'F3' && '<%= appData.user.type %>' === 'admin') { e.preventDefault(); window.location.href = '/stock'; }
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+      document.body.style.overflow = '';
+    }
   });
 
-  
   const globalSearchEl = document.getElementById('globalSearch');
   if (globalSearchEl) {
     globalSearchEl.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && e.target.value.trim()) {
-        const val = e.target.value.toLowerCase();
-        const { products, clients } = window.appData;
-        const prods = products.filter(p => p.name.toLowerCase().includes(val));
-        if (prods.length > 0) {
-          showToast(`Encontrado "${prods[0].name}"`, 'info');
-        } else {
-          const clis = clients.filter(c => c.name.toLowerCase().includes(val));
-          if (clis.length > 0) showToast(`Encontrado "${clis[0].name}"`, 'info');
-        }
+      if (e.key !== 'Enter') return;
+      const val = e.target.value.trim().toLowerCase();
+      if (!val) return;
+      const data = window.appData || {};
+      const products = Array.isArray(data.products) ? data.products : [];
+      const customers = Array.isArray(data.customers) ? data.customers : (Array.isArray(data.clients) ? data.clients : []);
+      const prod = products.find(p => String(p.name || '').toLowerCase().includes(val));
+      if (prod) {
+        showToast(`Produto: ${prod.name}`, 'success');
+        return;
       }
+      const client = customers.find(c => String(c.name || '').toLowerCase().includes(val));
+      if (client) {
+        showToast(`Cliente: ${client.name}`, 'success');
+        return;
+      }
+      showToast('Nenhum resultado encontrado.', 'info');
     });
   }
 </script>

@@ -37,8 +37,10 @@ async function loadBudgetTemplatePreview(budget, previewEl) {
 }
 
 async function downloadBudgetTemplateImage(budget) {
-    if (typeof html2canvas !== 'function') {
-        showToast('Biblioteca de imagem indisponível. Recarregue a página.', 'error');
+    try {
+        await ensureHtml2Canvas();
+    } catch {
+        showToast('Biblioteca de imagem indisponível.', 'error');
         return;
     }
     showToast('Gerando imagem...', 'info');

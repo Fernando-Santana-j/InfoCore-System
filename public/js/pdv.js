@@ -503,7 +503,6 @@ function initPDV() {
     renderPaymentButtons();
     renderPDV();
     renderCart();
-    requestAnimationFrame(() => focusPDVBarcodeInput());
 }
 
 function renderPDV(filter) {
@@ -572,33 +571,37 @@ function addToCartByProductCode(code) {
     addToCart(product.id);
 }
 
-function focusPDVBarcodeInput() {
-    const el = document.getElementById('pdvBarcodeInput');
-    if (el) el.focus();
+const PDV_SCAN_GAP_MS = 50;
+const PDV_SCAN_MIN_LEN = 3;
+let pdvScanBuf = '';
+let pdvScanPending = '';
+let pdvScanLastKeyAt = 0;
+
+function isOnPDVPage() {
+    return document.body?.dataset?.page === 'pdv';
+}
+
+function flashBarcodeScan() {
+    const el = document.getElementById('pdvScanIndicator');
+    if (!el) return;
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 500);
 }
 
 function isPDVModalOpen() {
     return Boolean(
         document.getElementById('cartAdjustmentModal')?.classList.contains('open')
         || document.getElementById('confirmActionModal')?.classList.contains('open')
+        || document.getElementById('paymentWaitingModal')?.classList.contains('open')
+        || document.getElementById('paymentResultModal')?.classList.contains('open')
     );
 }
 
 function bindPDVBarcodeCapture() {
-    const barcodeEl = document.getElementById('pdvBarcodeInput');
+    if (!isOnPDVPage() || window.__pdvBarcodeBound) return;
+    window.__pdvBarcodeBound = true;
+
     const searchEl = document.getElementById('pdvSearch');
-
-    if (barcodeEl) {
-        barcodeEl.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
-            e.preventDefault();
-            const raw = barcodeEl.value;
-            barcodeEl.value = '';
-            const code = String(raw || '').trim();
-            if (code) addToCartByProductCode(code);
-        });
-    }
-
     if (searchEl) {
         searchEl.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter') return;
@@ -608,34 +611,53 @@ function bindPDVBarcodeCapture() {
             searchEl.value = '';
             filterPDV();
             addToCartByProductCode(code);
+            flashBarcodeScan();
         });
     }
 
-    let scanBuf = '';
-    let scanLast = 0;
     window.addEventListener(
         'keydown',
         (e) => {
-            if (isPDVModalOpen()) return;
-            const t = e.target;
-            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
-                if (t.id === 'pdvBarcodeInput' || t.id === 'pdvSearch') return;
-                return;
-            }
+            if (!isOnPDVPage() || isPDVModalOpen()) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
             const now = Date.now();
-            if (now - scanLast > 70) scanBuf = '';
-            scanLast = now;
+            const gap = now - pdvScanLastKeyAt;
+            pdvScanLastKeyAt = now;
+
             if (e.key === 'Enter') {
-                if (scanBuf.length >= 3) {
+                const code = (pdvScanBuf || pdvScanPending).trim();
+                pdvScanBuf = '';
+                pdvScanPending = '';
+                if (code.length >= PDV_SCAN_MIN_LEN) {
                     e.preventDefault();
-                    addToCartByProductCode(scanBuf);
+                    e.stopImmediatePropagation();
+                    addToCartByProductCode(code);
+                    flashBarcodeScan();
                 }
-                scanBuf = '';
                 return;
             }
-            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-                scanBuf += e.key;
+
+            if (e.key.length !== 1) return;
+
+            if (gap > PDV_SCAN_GAP_MS) {
+                pdvScanPending = e.key;
+                pdvScanBuf = '';
+                return;
             }
+
+            if (pdvScanPending) {
+                pdvScanBuf = pdvScanPending + e.key;
+                pdvScanPending = '';
+                const t = e.target;
+                if (t && t.tagName === 'INPUT' && typeof t.value === 'string' && t.value.length > 0) {
+                    t.value = t.value.slice(0, -1);
+                }
+            } else {
+                pdvScanBuf += e.key;
+            }
+            e.preventDefault();
+            e.stopImmediatePropagation();
         },
         true
     );
@@ -1024,7 +1046,6 @@ function applySuccessfulSale(data, totals, payment) {
     setAdjustment('extra', 'fixed', 0);
     renderCart();
     renderPDV(currentPDVFilter);
-    focusPDVBarcodeInput();
 
     const label = sale?.code || sale?.id || 'Venda';
     const totalVal = sale?.total != null ? asNumber(sale.total) : totals.total;
@@ -1348,8 +1369,8 @@ function bindCartAdjustmentModal() {
     });
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+function bootPDV() {
+    whenAppReady(() => {
         initPDV();
         bindConfirmModal();
         bindPaymentWaitingModal();
@@ -1361,15 +1382,10 @@ if (document.readyState === 'loading') {
         const cashInput = document.getElementById('pdvCashReceivedInput');
         if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
     });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootPDV);
 } else {
-    initPDV();
-    bindConfirmModal();
-    bindPaymentWaitingModal();
-    bindPaymentResultModal();
-    bindCartAdjustmentModal();
-    bindBudgetModal();
-    bindBudgetTemplateModal();
-    bindPDVBarcodeCapture();
-    const cashInput = document.getElementById('pdvCashReceivedInput');
-    if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
+    bootPDV();
 }

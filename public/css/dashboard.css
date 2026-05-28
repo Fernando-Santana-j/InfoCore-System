@@ -7,14 +7,14 @@
 }
 
 .stat-card {
-    background: var(--bg2);
+    background: linear-gradient(160deg, var(--bg2), rgba(22, 22, 31, 0.5));
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 20px;
+    padding: 22px;
     position: relative;
     overflow: hidden;
-    transition: all var(--transition);
-    animation: fadeIn 0.4s ease both;
+    transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+    animation: fadeIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .stat-card:nth-child(1) {

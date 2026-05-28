@@ -1,12 +1,14 @@
 <header class="topbar">
-      <div class="topbar-title" id="topbarTitle">Dashboard <span>↗</span></div>
-      <div class="topbar-search">
-        <span class="search-icon">🔍</span>
-        <input type="text" placeholder="Pesquisa rápida..." id="globalSearch" oninput="globalSearchHandler(this.value)">
-      </div>
-      <div class="topbar-actions">
-        <button class="icon-btn" title="Notificações" onclick="showToast('2 alertas de estoque baixo', 'error')">🔔</button>
-        <button class="icon-btn" title="Exportar" onclick="showToast('Exportando dados...', 'info')">📤</button>
-        <button class="icon-btn" title="Sincronizar Backend" onclick="syncBackend()">🔄</button>
-      </div>
-    </header>
+  <div class="topbar-title" id="topbarTitle">Dashboard</div>
+  <div class="topbar-search">
+    <span class="search-icon" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+    </span>
+    <input type="search" placeholder="Buscar… (Enter)" id="globalSearch" autocomplete="off">
+    <kbd class="topbar-kbd">F2 PDV</kbd>
+  </div>
+  <div class="topbar-actions">
+    <button class="icon-btn" type="button" title="Abrir PDV (F2)" onclick="window.location.href='/pdv'">🛒</button>
+    <button class="icon-btn" type="button" title="Recarregar página" onclick="location.reload()">↻</button>
+  </div>
+</header>

@@ -928,8 +928,11 @@ function initBudgetsPage() {
     });
 }
 
+function bootBudgets() {
+    whenAppReady(() => initBudgetsPage());
+}
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initBudgetsPage);
+    document.addEventListener('DOMContentLoaded', bootBudgets);
 } else {
-    initBudgetsPage();
+    bootBudgets();
 }

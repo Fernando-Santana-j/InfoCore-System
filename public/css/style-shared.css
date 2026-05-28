@@ -4,14 +4,15 @@
     gap: 10px;
     background: var(--bg3);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    transition: all var(--transition);
+    border-radius: 12px;
+    padding: 11px 16px;
+    transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
 }
 
 .search-bar:focus-within {
-    border-color: var(--gold2);
+    border-color: var(--gold-ring);
     box-shadow: 0 0 0 3px var(--gold-glow);
+    background: var(--bg-elevated);
 }
 
 .search-bar input {
@@ -20,7 +21,7 @@
     outline: none;
     color: var(--text);
     font-family: inherit;
-    font-size: 0.85rem;
+    font-size: 0.88rem;
     flex: 1;
 }
 
@@ -31,13 +32,13 @@
 .filter-bar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
 }
 
 .filter-btn {
-    padding: 6px 14px;
-    border-radius: 20px;
+    padding: 8px 16px;
+    border-radius: 999px;
     border: 1px solid var(--border);
     background: var(--bg3);
     color: var(--text2);
@@ -51,40 +52,49 @@
 .filter-btn:hover {
     border-color: var(--border2);
     color: var(--text);
+    transform: translateY(-1px);
 }
 
 .filter-btn.active {
     background: var(--gold-glow);
-    border-color: rgba(240, 192, 64, 0.4);
+    border-color: var(--gold-ring);
     color: var(--gold);
+    box-shadow: 0 0 20px var(--gold-glow);
 }
 
 .empty-state {
     text-align: center;
-    padding: 60px 20px;
+    padding: 64px 24px;
     color: var(--text3);
+    animation: fadeIn 0.5s ease both;
 }
 
 .empty-state .empty-icon {
-    font-size: 2.5rem;
-    margin-bottom: 12px;
+    font-size: 2.8rem;
+    margin-bottom: 14px;
+    opacity: 0.85;
+    animation: scaleIn 0.5s var(--transition-spring) both;
 }
 
 .empty-state p {
-    font-size: 0.9rem;
+    font-size: 0.92rem;
+    max-width: 320px;
+    margin: 0 auto;
+    line-height: 1.5;
 }
 
 .progress-bar {
     height: 6px;
     background: var(--bg3);
-    border-radius: 3px;
+    border-radius: 999px;
     overflow: hidden;
 }
 
 .progress-fill {
     height: 100%;
-    border-radius: 3px;
-    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 999px;
+    transition: width 0.65s cubic-bezier(0.34, 1.2, 0.64, 1);
+    background: linear-gradient(90deg, var(--gold2), var(--gold));
 }
 
 .editable-cell {
@@ -96,48 +106,87 @@
 .editable-input {
     background: var(--bg3);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 8px;
+    border-radius: 8px;
+    padding: 5px 10px;
     color: var(--text);
     font-family: "Inter", sans-serif;
     font-size: 0.8rem;
     outline: none;
     width: 90px;
-    transition: border-color var(--transition);
+    transition: border-color var(--transition), box-shadow var(--transition);
 }
 
 .editable-input:focus {
     border-color: var(--gold2);
+    box-shadow: 0 0 0 3px var(--gold-glow);
 }
 
 .detail-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 12px;
 }
 
 .detail-item {
     background: var(--bg3);
-    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
     padding: 14px 16px;
+    transition: border-color var(--transition), transform var(--transition);
+}
+
+.detail-item:hover {
+    border-color: var(--border2);
+    transform: translateY(-1px);
 }
 
 .detail-item-label {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     color: var(--text3);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+    font-weight: 600;
 }
 
 .detail-item-value {
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 700;
+    font-family: "Inter", sans-serif;
 }
 
 .shimmer {
     background: linear-gradient(90deg, var(--bg3) 25%, var(--border) 50%, var(--bg3) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.2s infinite;
-    border-radius: 6px;
+    border-radius: 8px;
+}
+
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.page-header h2 {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+}
+
+.page-header p {
+    color: var(--text2);
+    font-size: 0.88rem;
+    margin-top: 4px;
+}
+
+.interactive-row {
+    transition: background var(--transition), transform var(--transition);
+}
+
+.interactive-row:hover td {
+    background: var(--bg3);
 }

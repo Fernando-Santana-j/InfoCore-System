@@ -1,83 +1,81 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
   <%- include('reusable/head') %>
-  <link rel="stylesheet" href="/public/css/<%= body %>.css">
-</head>
-
-<body>
-  <div class="app">
-
-    <%- include('reusable/sidebar') %>
-
-      <script id="appData" type="application/json">
-    <%- JSON.stringify( appData) %>
-  </script>
-  <script>
-    const serverData = JSON.parse(document.getElementById('appData').textContent);
-
-    const fallbackData = {
-      
-      sales: [
-        {
-          id: "VD-001",
-          date: "2025-04-05 08:32",
-          client: "Ana Souza",
-          items: [
-            { name: "capinha para celular", qty: 2, price: 8.99, category: "cell" },
-            { name: "fonte 500w", qty: 1, price: 300.99, category: "pc" }
-          ],
-          discount: 0,
-          total: 318.97,
-          payment: "pix"
-        }
-      ],
-      products: [
-        { id: 1, sku: "SKU-001", name: "Fonte 500w", category: "pc", emoji: "🥤", image: "", cost: 4.5, price: 8.99, qty: 45, min: 10, active: true }
-      ],
-      clients: [],
-      customers: [],
-      cashFlowEntries: [],
-      cart: []
-    };
-    let appData = {
-      ...fallbackData,
-      ...serverData,
+  <link rel="stylesheet" href="/css/<%= body %>.css?v=3">
+  <style>
+    html.app-is-loading, html.app-is-loading body { overflow: hidden; }
+    html.app-is-loading .app { opacity: 0; pointer-events: none; }
+    #pageLoader {
+      position: fixed; inset: 0; z-index: 99999;
+      display: flex; align-items: center; justify-content: center;
+      background: #050508;
+      transition: opacity .5s ease, visibility .5s ease;
     }
-    window.appData = appData;
-  </script>
-  <script src="/js/shared.js"></script>
-  <% if (body === 'stock') { %>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <% } %>
-  <% if (body === 'budgets' || body === 'pdv') { %>
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-  <script src="/js/budget-templates.js"></script>
-  <% } %>
+    #pageLoader.is-done { opacity: 0; visibility: hidden; pointer-events: none; }
+    .pl-ring {
+      width: 72px; height: 72px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.08);
+      border-top-color: #f2c94c;
+      animation: plSpin .75s linear infinite;
+    }
+    .pl-logo {
+      position: absolute; font-weight: 800; font-size: 1rem;
+      color: #f2c94c; letter-spacing: .12em;
+    }
+    .pl-text { margin-top: 20px; color: #9a9aad; font-size: .85rem; font-weight: 600; }
+    @keyframes plSpin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body data-page="<%= body %>" class="app-is-loading">
+  <div id="pageLoader" role="status" aria-live="polite" aria-busy="true">
+    <div style="display:flex;flex-direction:column;align-items:center;position:relative">
+      <div class="pl-ring"></div>
+      <p class="pl-text" id="pageLoaderText">Carregando…</p>
+    </div>
+  </div>
+
+  <div class="app">
+    <%- include('reusable/sidebar') %>
     <main class="main">
       <%- include('reusable/topbar') %>
-
       <div class="content" id="content">
         <%- include(`./${body}`) %>
       </div>
     </main>
   </div>
 
-
   <div class="toast-container" id="toastContainer"></div>
 
-
-
-
-
-  <script src="/js/<%= body %>.js"></script>
-  <% if (body === 'pdv') { %>
-  <script src="/js/pdv-service.js"></script>
+  <script id="appData" type="application/json"><%- JSON.stringify(appData || {}) %></script>
+  <script>
+    window.appData = JSON.parse(document.getElementById('appData').textContent || '{}');
+    window.__page = '<%= body %>';
+    window.__bootstrap = '<%= typeof bootstrap !== "undefined" ? bootstrap : "" %>';
+    window.__needsHtml2canvas = <%= (body === 'budgets' || body === 'pdv') ? 'true' : 'false' %>;
+    window.__needsXlsx = <%= body === 'stock' ? 'true' : 'false' %>;
+    window.__dataReady = (async () => {
+      if (!window.__bootstrap) return window.appData;
+      const el = document.getElementById('pageLoaderText');
+      if (el) el.textContent = 'Sincronizando dados…';
+      const res = await fetch('/api/bootstrap/' + encodeURIComponent(window.__bootstrap), {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.message || 'Falha ao carregar');
+      Object.assign(window.appData, data);
+      return window.appData;
+    })();
+  </script>
+  <script src="/js/shared.js?v=3"></script>
+  <% if (body === 'budgets' || body === 'pdv') { %>
+  <script src="/js/budget-templates.js?v=3"></script>
   <% } %>
-
-
+  <script src="/js/<%= body %>.js?v=3"></script>
+  <% if (body === 'pdv') { %>
+  <script src="/js/pdv-service.js?v=3"></script>
+  <% } %>
   <%- include('reusable/script') %>
 </body>
-
 </html>

@@ -109,11 +109,18 @@ function renderServicesList() {
     }).join('');
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    updateTopbarTitle('Oficina — Serviços');
-    markNavActive('/services');
-    renderAdminStats();
-    renderStatusFilters();
-    document.getElementById('serviceSearchInput')?.addEventListener('input', renderServicesList);
-    renderServicesList();
-});
+function bootServices() {
+    whenAppReady(() => {
+        updateTopbarTitle('Oficina — Serviços');
+        markNavActive('/services');
+        renderAdminStats();
+        renderStatusFilters();
+        document.getElementById('serviceSearchInput')?.addEventListener('input', renderServicesList);
+        renderServicesList();
+    });
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootServices);
+} else {
+    bootServices();
+}
