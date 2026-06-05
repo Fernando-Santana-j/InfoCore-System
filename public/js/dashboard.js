@@ -65,8 +65,9 @@ const Dashboard = (() => {
 
     const updateStats = ({ products, sales, clients }) => {
         const totalSales = sales.reduce((sum, s) => sum + asNumber(s.total), 0);
-        const totalItems = products.reduce((sum, p) => sum + asNumber(p.qty), 0);
-        const lowStock = products.filter((p) => asNumber(p.qty) < asNumber(p.min)).length;
+        const catalogProducts = products.filter((p) => String(p?.itemType || '').toLowerCase() !== 'service');
+        const totalItems = catalogProducts.reduce((sum, p) => sum + asNumber(p.qty), 0);
+        const lowStock = catalogProducts.filter((p) => asNumber(p.qty) < asNumber(p.min)).length;
 
         setText('statTotal', fmt(totalSales));
         setText('statSales', String(sales.length));

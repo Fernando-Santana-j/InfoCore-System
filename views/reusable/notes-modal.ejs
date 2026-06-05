@@ -1,0 +1,17 @@
+<div class="modal-overlay" id="sharedNotesModal" aria-labelledby="sharedNotesModalTitle">
+  <div class="modal modal-notes">
+    <div class="modal-header">
+      <div class="modal-title" id="sharedNotesModalTitle">Notas gerais</div>
+      <button type="button" class="modal-close" onclick="closeSharedNotesModal()" aria-label="Fechar">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-sm text-muted shared-notes-hint">Visível e editável por todos os usuários logados. Use para avisos, lembretes e informações da loja.</p>
+      <textarea id="sharedNotesContent" class="form-textarea shared-notes-textarea" rows="14" placeholder="Escreva as notas da equipe aqui…"></textarea>
+      <div class="shared-notes-meta text-xs text-muted" id="sharedNotesMeta">Carregando…</div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="closeSharedNotesModal()">Fechar</button>
+      <button type="button" class="btn btn-primary btn-sm" id="sharedNotesSaveBtn" onclick="saveSharedNotes()">Salvar notas</button>
+    </div>
+  </div>
+</div>

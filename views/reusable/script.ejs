@@ -8,26 +8,4 @@
     }
   });
 
-  const globalSearchEl = document.getElementById('globalSearch');
-  if (globalSearchEl) {
-    globalSearchEl.addEventListener('keydown', e => {
-      if (e.key !== 'Enter') return;
-      const val = e.target.value.trim().toLowerCase();
-      if (!val) return;
-      const data = window.appData || {};
-      const products = Array.isArray(data.products) ? data.products : [];
-      const customers = Array.isArray(data.customers) ? data.customers : (Array.isArray(data.clients) ? data.clients : []);
-      const prod = products.find(p => String(p.name || '').toLowerCase().includes(val));
-      if (prod) {
-        showToast(`Produto: ${prod.name}`, 'success');
-        return;
-      }
-      const client = customers.find(c => String(c.name || '').toLowerCase().includes(val));
-      if (client) {
-        showToast(`Cliente: ${client.name}`, 'success');
-        return;
-      }
-      showToast('Nenhum resultado encontrado.', 'info');
-    });
-  }
 </script>

@@ -25,6 +25,8 @@ const BUDGETS_COLLECTION = 'budgets';
 const CUSTOMERS_COLLECTION = 'customers';
 const CASH_FLOW_COLLECTION = 'cash_flow';
 const SERVICE_ORDERS_COLLECTION = 'service_orders';
+const INFOCORE_COLLECTION = 'infocore';
+const SHARED_NOTES_DOC = 'shared_notes';
 const { FieldValue } = require('firebase-admin/firestore');
 
 const PAYMENT_KEYS = new Set(['money', 'credit_card', 'debit_card', 'pix']);
@@ -1153,19 +1155,29 @@ function normalizeProduct(row) {
     else if (!sku && id) sku = '';
     const imageRaw = d.image != null ? String(d.image).trim() : '';
     const image = imageRaw.startsWith('/') ? imageRaw : (imageRaw ? `/uploads/${imageRaw}` : '');
+    const itemType = isServiceItemType(d) ? 'service' : 'product';
+    const laborCost = productLaborCost(d);
+    const partsCost = parsePartsCostField(d);
+    const emojiDefault = itemType === 'service' ? '🔧' : '📦';
     return {
         id,
         sku,
         name: String(d.name || ''),
         category: String(d.category || '').trim() || 'others',
-        emoji: String(d.emoji || '📦'),
+        itemType,
+        emoji: String(d.emoji || emojiDefault),
         image,
-        cost: productUnitCost(d),
+        cost: laborCost,
+        laborCost,
+        partsCost,
+        unitCostTotal: productUnitCost(d),
         price: Number(d.price) || 0,
         qty: Number.parseInt(String(d.qty), 10) || 0,
         min: Number.parseInt(String(d.min), 10) || 0,
+        trackStock: productTracksStock({ ...d, itemType }),
         active: d.active !== false,
-        description: d.description != null ? String(d.description) : ''
+        description: d.description != null ? String(d.description) : '',
+        serviceDuration: d.serviceDuration != null ? String(d.serviceDuration).trim() : ''
     };
 }
 
@@ -1185,9 +1197,22 @@ function asItemsArray(items) {
     return [];
 }
 
-function productUnitCost(product) {
+function isServiceItemType(product) {
     const p = product && typeof product === 'object' ? product : {};
-    const candidates = [p.cost, p.custo, p.precoCusto, p.preco_custo, p.costPrice];
+    return String(p.itemType || '').toLowerCase() === 'service';
+}
+
+function parsePartsCostField(product) {
+    const p = product && typeof product === 'object' ? product : {};
+    const n = parseMoneyField(p.partsCost);
+    if (n > 0) return n;
+    const raw = Number(p.partsCost);
+    return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function productLaborCost(product) {
+    const p = product && typeof product === 'object' ? product : {};
+    const candidates = [p.cost, p.laborCost, p.custo, p.precoCusto, p.preco_custo, p.costPrice];
     for (const raw of candidates) {
         const parsed = parseMoneyField(raw);
         if (parsed > 0) return parsed;
@@ -1195,6 +1220,19 @@ function productUnitCost(product) {
         if (Number.isFinite(n) && n > 0) return n;
     }
     return 0;
+}
+
+function productUnitCost(product) {
+    const labor = productLaborCost(product);
+    const parts = parsePartsCostField(product);
+    if (isServiceItemType(product)) return labor + parts;
+    return labor;
+}
+
+function productTracksStock(product) {
+    const p = product && typeof product === 'object' ? product : {};
+    if (isServiceItemType(p)) return false;
+    return p.trackStock !== false;
 }
 
 function lineCostFromUnit(unitCost, qty) {
@@ -1468,6 +1506,41 @@ function verifyLogin(req, res, next) {
     next();
 }
 
+app.get('/api/shared-notes', verifyLogin, async (req, res) => {
+    try {
+        const notes = await readSharedNotes();
+        return res.json({ error: false, notes });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar notas.' });
+    }
+});
+
+app.put('/api/shared-notes', verifyLogin, async (req, res) => {
+    const body = req.body || {};
+    const content = body.content != null ? String(body.content) : '';
+    if (content.length > 50000) {
+        return res.status(400).json({ error: true, message: 'Notas muito longas (máx. 50.000 caracteres).' });
+    }
+    const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
+    const updatedBy = user ? {
+        name: user.name != null ? String(user.name) : '',
+        email: user.email != null ? String(user.email) : ''
+    } : null;
+    try {
+        await firestore.collection(INFOCORE_COLLECTION).doc(SHARED_NOTES_DOC).set({
+            content,
+            updatedAt: FieldValue.serverTimestamp(),
+            updatedBy
+        }, { merge: true });
+        const notes = await readSharedNotes();
+        return res.json({ error: false, notes });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao salvar notas.' });
+    }
+});
+
 function verifyAdmin(req, res, next) {
     if (!req.session.user) {
         return res.redirect('/login');
@@ -1531,6 +1604,29 @@ async function fetchBudgetNormalized(id) {
 async function getConfigsSafe() {
     const raw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
     return raw && raw.error !== true ? raw : {};
+}
+
+async function readSharedNotes() {
+    const snap = await firestore.collection(INFOCORE_COLLECTION).doc(SHARED_NOTES_DOC).get();
+    if (!snap.exists) {
+        return { content: '', updatedAt: null, updatedBy: null };
+    }
+    const d = snap.data() || {};
+    let updatedAt = null;
+    if (d.updatedAt && typeof d.updatedAt.toDate === 'function') {
+        updatedAt = d.updatedAt.toDate().toISOString();
+    } else if (d.updatedAt) {
+        updatedAt = String(d.updatedAt);
+    }
+    const by = d.updatedBy && typeof d.updatedBy === 'object' ? d.updatedBy : null;
+    return {
+        content: d.content != null ? String(d.content) : '',
+        updatedAt,
+        updatedBy: by ? {
+            name: by.name != null ? String(by.name) : '',
+            email: by.email != null ? String(by.email) : ''
+        } : null
+    };
 }
 
 function renderAppShell(res, body, user) {
@@ -1701,10 +1797,20 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
         return res.status(400).json({ error: true, message: 'Nome do produto é obrigatório.' });
     }
 
+    const itemType = String(body.itemType || 'product').toLowerCase() === 'service' ? 'service' : 'product';
     const cost = parseMoneyField(body.cost);
+    const partsCost = parseMoneyField(body.partsCost);
     const price = parseMoneyField(body.price);
-    const qty = Number.parseInt(String(body.qty), 10) || 0;
-    const min = Number.parseInt(String(body.min), 10) || 10;
+    let qty = Number.parseInt(String(body.qty), 10) || 0;
+    let min = Number.parseInt(String(body.min), 10) || 10;
+    const trackStock = itemType === 'service'
+        ? false
+        : body.trackStock !== false && body.trackStock !== 'false';
+    if (itemType === 'service') {
+        qty = 0;
+        min = 0;
+    }
+    const serviceDuration = body.serviceDuration != null ? String(body.serviceDuration).trim() : '';
 
     const id = randomUUID();
     const existingRows = await fetchProductRows();
@@ -1727,15 +1833,19 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
         sku,
         name,
         category,
-        emoji: '📦',
+        itemType,
+        emoji: itemType === 'service' ? '🔧' : '📦',
         image,
         cost,
+        partsCost,
         price,
         qty,
         min,
+        trackStock,
         active: true
     };
     if (description) payload.description = description;
+    if (serviceDuration) payload.serviceDuration = serviceDuration;
 
     try {
         await db.create(PRODUCTS_COLLECTION, id, payload);
@@ -1769,15 +1879,33 @@ app.patch('/api/products/:id', verifyLogin, uploadProductImageIfMultipart, async
         patch.name = nm;
     }
     if (body.category != null) patch.category = String(body.category).trim() || 'others';
+    if (body.itemType != null) {
+        patch.itemType = String(body.itemType).toLowerCase() === 'service' ? 'service' : 'product';
+    }
     if (body.cost != null) patch.cost = parseMoneyField(body.cost);
+    if (body.partsCost != null) patch.partsCost = parseMoneyField(body.partsCost);
     if (body.price != null) patch.price = parseMoneyField(body.price);
     if (body.qty != null) patch.qty = Number.parseInt(String(body.qty), 10) || 0;
     if (body.min != null) patch.min = Number.parseInt(String(body.min), 10) || 0;
+    if (body.trackStock != null) {
+        patch.trackStock = body.trackStock === true || body.trackStock === 'true';
+    }
+    if (body.serviceDuration != null) {
+        patch.serviceDuration = String(body.serviceDuration).trim();
+    }
     if (body.description != null) {
         const d = String(body.description).trim();
         if (d) patch.description = d;
     }
+    if (body.emoji != null) patch.emoji = String(body.emoji).trim() || '📦';
     if (req.file) patch.image = `/uploads/${req.file.filename}`;
+
+    const mergedType = patch.itemType || snap.data().itemType || 'product';
+    if (String(mergedType).toLowerCase() === 'service') {
+        patch.trackStock = false;
+        patch.qty = 0;
+        patch.min = 0;
+    }
 
     if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: true, message: 'Nada para atualizar.' });
@@ -2185,6 +2313,23 @@ let cachedPointTerminal = null;
 let activePointOrderId = null;
 const pendingPointSales = new Map();
 const PIX_PENDING_STATUSES = new Set(['pending', 'in_process']);
+const MP_TERMINAL_BUSY_CODES = new Set([
+    'already_queued_order_on_terminal',
+    'property_value',
+    'terminal_busy'
+]);
+
+let pointPaymentLock = Promise.resolve();
+
+function withPointPaymentLock(task) {
+    const run = pointPaymentLock.then(() => task());
+    pointPaymentLock = run.catch(() => {});
+    return run;
+}
+
+function getMpErrorCode(err) {
+    return String(err?.response?.data?.errors?.[0]?.code || '').trim();
+}
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -2209,13 +2354,92 @@ async function resolvePointTerminalId() {
     return terminal.id;
 }
 
+function formatMpAxiosError(err) {
+    const data = err?.response?.data;
+    if (data && typeof data === 'object') {
+        const first = Array.isArray(data.errors) ? data.errors[0] : null;
+        if (first?.details) {
+            return { ...data, detailsExpanded: first.details };
+        }
+        return data;
+    }
+    const status = err?.response?.status;
+    const raw = typeof data === 'string' ? data.replace(/\s+/g, ' ').trim().slice(0, 240) : String(err?.message || err);
+    return { status, message: raw };
+}
+
+async function fetchMpOrderSafe(orderId) {
+    if (!orderId) return null;
+    try {
+        const { data } = await api.get(`/v1/orders/${orderId}`);
+        return data;
+    } catch {
+        return null;
+    }
+}
+
+async function isMpOrderFinished(orderId) {
+    const order = await fetchMpOrderSafe(orderId);
+    return !order || POINT_FINAL_STATUSES.has(order?.status);
+}
+
+async function waitForMpOrdersIdle(orderIds, maxMs = 20000) {
+    const ids = [...new Set((orderIds || []).filter(Boolean))];
+    if (!ids.length) return;
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+        let allDone = true;
+        for (const orderId of ids) {
+            const order = await fetchMpOrderSafe(orderId);
+            if (order && !POINT_FINAL_STATUSES.has(order.status)) {
+                allDone = false;
+                break;
+            }
+        }
+        if (allDone) {
+            await syncActivePointOrderTracking(ids);
+            return;
+        }
+        await sleep(800);
+    }
+}
+
+async function postCancelMpOrder(orderId, extraHeaders = {}) {
+    await api.post(
+        `/v1/orders/${orderId}/cancel`,
+        {},
+        { headers: { 'X-Idempotency-Key': randomUUID(), ...extraHeaders } }
+    );
+}
+
+async function releaseActivePointPayment() {
+    return withPointPaymentLock(async () => {
+        await cancelAllKnownPendingSales();
+        return { error: false };
+    });
+}
+
 async function cancelPointOrder(orderId) {
     if (!orderId) return;
     try {
-        await api.put(`/v1/orders/${orderId}/cancel`, {}, { headers: { "X-Idempotency-Key": randomUUID() } });
+        await postCancelMpOrder(orderId);
     } catch (err) {
         const status = err?.response?.status;
-        if (status && [400, 404, 409].includes(status)) return;
+        const code = getMpErrorCode(err);
+        if (status === 404 || code === 'order_already_canceled') return;
+        if (await isMpOrderFinished(orderId)) return;
+
+        if (status === 409 && code === 'cannot_cancel_order') {
+            try {
+                await postCancelMpOrder(orderId, { 'x-allow-cancelable-status': 'at_terminal' });
+                return;
+            } catch (err2) {
+                const code2 = getMpErrorCode(err2);
+                if (code2 === 'order_already_canceled' || await isMpOrderFinished(orderId)) return;
+                throw err2;
+            }
+        }
+
         throw err;
     }
 }
@@ -2223,22 +2447,42 @@ async function cancelPointOrder(orderId) {
 async function cancelQrStoreOrder(orderId) {
     if (!orderId) return;
     try {
-        await api.put(
-            `/v1/orders/${orderId}`,
-            { status: 'canceled' },
-            { headers: { "X-Idempotency-Key": randomUUID() } }
-        );
+        await postCancelMpOrder(orderId);
     } catch (err) {
         const status = err?.response?.status;
-        if (status && [400, 404, 409].includes(status)) return;
+        const code = getMpErrorCode(err);
+        if (status === 404 || code === 'order_already_canceled') return;
+        if (await isMpOrderFinished(orderId)) return;
         throw err;
+    }
+}
+
+async function syncActivePointOrderTracking(orderIds = []) {
+    let stillActiveId = null;
+    for (const orderId of orderIds) {
+        const order = await fetchMpOrderSafe(orderId);
+        if (order && !POINT_FINAL_STATUSES.has(order.status)) {
+            stillActiveId = orderId;
+        }
+    }
+    if (stillActiveId) {
+        activePointOrderId = stillActiveId;
+        return;
+    }
+    if (!orderIds.length || !activePointOrderId || orderIds.includes(activePointOrderId)) {
+        activePointOrderId = null;
     }
 }
 
 async function cancelAnyPendingPointOrder() {
     if (!activePointOrderId) return;
-    await cancelPointOrder(activePointOrderId);
-    activePointOrderId = null;
+    const orderId = activePointOrderId;
+    try {
+        await cancelPointOrder(orderId);
+    } catch (e) {
+        console.error('Falha ao cancelar order ativa:', formatMpAxiosError(e));
+    }
+    await syncActivePointOrderTracking([orderId]);
 }
 
 async function cancelAllKnownPendingSales() {
@@ -2257,18 +2501,19 @@ async function cancelAllKnownPendingSales() {
         try {
             await cancelPointOrder(orderId);
         } catch (e) {
-            console.error('Falha ao cancelar order pendente:', e?.response?.data || e);
+            console.error('Falha ao cancelar order pendente:', formatMpAxiosError(e));
         }
     }
     for (const orderId of qrOrderIds) {
         try {
             await cancelQrStoreOrder(orderId);
         } catch (e) {
-            console.error('Falha ao cancelar order QR loja:', e?.response?.data || e);
+            console.error('Falha ao cancelar order QR loja:', formatMpAxiosError(e));
         }
     }
-    activePointOrderId = null;
+    await waitForMpOrdersIdle([...pointOrderIds, ...qrOrderIds]);
     pendingPointSales.clear();
+    await syncActivePointOrderTracking([...pointOrderIds, ...qrOrderIds]);
 }
 
 function extractPointReason(order) {
@@ -2291,7 +2536,15 @@ async function waitPointOrderFinal(orderId) {
     throw new Error('Tempo limite aguardando confirmação da maquininha.');
 }
 
-async function createPointOrder({ amount, payment, saleCode }) {
+async function postPointOrder(payload) {
+    return api.post('/v1/orders', payload, { headers: { 'X-Idempotency-Key': randomUUID() } });
+}
+
+async function createPointOrder({ amount, payment, saleCode, installments = 1 }) {
+    return withPointPaymentLock(() => createPointOrderUnlocked({ amount, payment, saleCode, installments }));
+}
+
+async function createPointOrderUnlocked({ amount, payment, saleCode, installments = 1 }) {
     if (!MP_ENABLED) {
         throw new Error('Mercado Pago não configurado. Defina MERCADOPAGO_ACCESS_TOKEN e MERCADOPAGO_DEVICE_ID.');
     }
@@ -2311,29 +2564,49 @@ async function createPointOrder({ amount, payment, saleCode }) {
         }
     };
     if (defaultType) {
-        let paymentMethod = { default_type: defaultType, default_installments: 1};
+        const installmentCount = defaultType === 'credit_card'
+            ? Math.min(12, Math.max(1, Number.parseInt(String(installments), 10) || 1))
+            : 1;
+        const paymentMethod = { default_type: defaultType, default_installments: installmentCount };
         if (defaultType === 'credit_card') {
             paymentMethod.installments_cost = 'buyer';
         }
         payload.config.payment_method = paymentMethod;
     }
 
+    const tryCreate = async () => {
+        const { data } = await postPointOrder(payload);
+        return data;
+    };
+
     let createdOrder;
-    try {
-        ({ data: createdOrder } = await api.post('/v1/orders', payload, { headers: { "X-Idempotency-Key": randomUUID() } }));
-    } catch (err) {
-        const code = err?.response?.data?.errors?.[0]?.code;
-        // Fallback para PIX: alguns terminais rejeitam default_type para QR.
-        if (payment === 'pix' && payload.config.payment_method) {
-            delete payload.config.payment_method;
-            ({ data: createdOrder } = await api.post('/v1/orders', payload, { headers: { "X-Idempotency-Key": randomUUID() } }));
-        } else if (code === 'already_queued_order_on_terminal') {
+    let lastErr;
+    const maxAttempts = 4;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (attempt > 0) {
             await cancelAllKnownPendingSales();
-            ({ data: createdOrder } = await api.post('/v1/orders', payload, { headers: { "X-Idempotency-Key": randomUUID() } }));
-        } else {
-            throw err;
+            await sleep(600 + attempt * 700);
+        }
+        try {
+            createdOrder = await tryCreate();
+            lastErr = null;
+            break;
+        } catch (err) {
+            lastErr = err;
+            const code = getMpErrorCode(err);
+            if (payment === 'pix' && payload.config.payment_method) {
+                delete payload.config.payment_method;
+                continue;
+            }
+            const pm = payload.config?.payment_method;
+            if (code === 'property_value' && pm?.installments_cost) {
+                delete pm.installments_cost;
+                continue;
+            }
+            if (!MP_TERMINAL_BUSY_CODES.has(code)) throw err;
         }
     }
+    if (!createdOrder) throw lastErr || new Error('Falha ao criar cobrança na maquininha.');
 
     activePointOrderId = createdOrder.id;
     return createdOrder;
@@ -2465,20 +2738,16 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         return res.status(400).json({ error: true, message: 'Forma de pagamento inválida.' });
     }
 
+    let creditInstallments = 1;
+    if (payment === 'credit_card') {
+        const parsed = Number.parseInt(String(body.installments ?? body.creditInstallments ?? 1), 10);
+        if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 12) creditInstallments = parsed;
+    }
+
     const discountAdj = parseAdjustment(body, 'discount');
     const extraAdj = parseAdjustment(body, 'extra');
     const clientLabel = body.client != null ? String(body.client).trim() : '';
     const client = clientLabel || 'Balcão';
-
-    const lines = [];
-    for (const row of rawItems) {
-        const id = String(row.id || '').trim();
-        const qty = parsePositiveInt(row.qty);
-        if (!id || !qty) {
-            return res.status(400).json({ error: true, message: 'Item inválido no carrinho.' });
-        }
-        lines.push({ id, qty });
-    }
 
     const allowInsufficientStock = body.allowInsufficientStock === true;
     const resolvedItems = [];
@@ -2486,17 +2755,56 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     let subtotalCents = 0;
     let costTotalCents = 0;
 
-    for (const line of lines) {
-        const snap = await firestore.collection(PRODUCTS_COLLECTION).doc(line.id).get();
+    for (const row of rawItems) {
+        const isCustom = row.custom === true || String(row.id || '').startsWith('custom:');
+        const qty = parsePositiveInt(row.qty);
+        if (!qty) {
+            return res.status(400).json({ error: true, message: 'Quantidade inválida no carrinho.' });
+        }
+
+        if (isCustom) {
+            const name = String(row.name || '').trim();
+            const price = parseMoneyField(row.price) ?? Number(row.price) ?? 0;
+            if (!name) {
+                return res.status(400).json({ error: true, message: 'Nome do item personalizado é obrigatório.' });
+            }
+            if (!Number.isFinite(price) || price < 0) {
+                return res.status(400).json({ error: true, message: 'Preço do item personalizado inválido.' });
+            }
+            const lineTotal = lineCostFromUnit(price, qty);
+            const customId = String(row.id || '').trim() || `custom:${randomUUID()}`;
+            subtotalCents += toCents(lineTotal);
+            resolvedItems.push({
+                id: customId,
+                sku: '',
+                name,
+                category: 'custom',
+                custom: true,
+                price,
+                cost: 0,
+                qty,
+                lineTotal,
+                lineCost: 0
+            });
+            continue;
+        }
+
+        const id = String(row.id || '').trim();
+        if (!id) {
+            return res.status(400).json({ error: true, message: 'Item inválido no carrinho.' });
+        }
+
+        const snap = await firestore.collection(PRODUCTS_COLLECTION).doc(id).get();
         if (!snap.exists) {
-            return res.status(400).json({ error: true, message: `Produto não encontrado (${line.id}).` });
+            return res.status(400).json({ error: true, message: `Produto não encontrado (${id}).` });
         }
         const p = snap.data();
         if (p.active === false) {
-            return res.status(400).json({ error: true, message: `Produto inativo: ${p.name || line.id}.` });
+            return res.status(400).json({ error: true, message: `Produto inativo: ${p.name || id}.` });
         }
+        const tracksStock = productTracksStock(p);
         const stock = Number.parseInt(String(p.qty), 10) || 0;
-        if (stock < line.qty && !allowInsufficientStock) {
+        if (tracksStock && stock < qty && !allowInsufficientStock) {
             return res.status(400).json({
                 error: true,
                 stockInsufficient: true,
@@ -2505,23 +2813,24 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         }
         const price = parseMoneyField(p.price) || Number(p.price) || 0;
         const cost = productUnitCost(p);
-        const lineTotal = lineCostFromUnit(price, line.qty);
-        const lineCost = lineCostFromUnit(cost, line.qty);
+        const lineTotal = lineCostFromUnit(price, qty);
+        const lineCost = lineCostFromUnit(cost, qty);
         subtotalCents += toCents(lineTotal);
         costTotalCents += toCents(lineCost);
-        const nextQty = stock - line.qty;
+        const nextQty = tracksStock ? stock - qty : stock;
         resolvedItems.push({
-            id: line.id,
+            id,
             sku: p.sku != null ? String(p.sku) : '',
             name: p.name != null ? String(p.name) : '',
             category: p.category != null ? String(p.category) : '',
+            itemType: p.itemType != null ? String(p.itemType) : 'product',
             price,
-            cost,
-            qty: line.qty,
+            cost: productUnitCost(p),
+            qty,
             lineTotal,
             lineCost
         });
-        stockUpdates.push({ id: line.id, nextQty, p });
+        if (tracksStock) stockUpdates.push({ id, nextQty, p });
     }
 
     const subtotal = fromCents(subtotalCents);
@@ -2551,6 +2860,11 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         profit,
         createdAt: FieldValue.serverTimestamp()
     };
+
+    if (payment === 'credit_card') {
+        saleRecord.creditInstallments = creditInstallments;
+        saleRecord.installmentsCost = 'buyer';
+    }
 
     let pointPaymentInfo = null;
     if (payment === 'money') {
@@ -2676,18 +2990,27 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     } else {
         let pointOrder;
         try {
-            pointOrder = await createPointOrder({ amount: total, payment, saleCode: code });
+            pointOrder = await createPointOrder({
+                amount: total,
+                payment,
+                saleCode: code,
+                installments: creditInstallments
+            });
         } catch (e) {
-            const details = e?.response?.data?.errors?.[0]?.details;
+            const mpErr = e?.response?.data?.errors?.[0];
+            const details = mpErr?.details;
             console.error('Falha Mercado Pago:', e?.response?.data || e);
+            const detailsText = Array.isArray(details)
+                ? details.map((d) => (typeof d === 'string' ? d : JSON.stringify(d))).join(' | ')
+                : undefined;
             return res.status(502).json({
                 error: true,
-                message: e.message || 'Falha ao comunicar com a maquininha.',
+                message: e.message || 'Falha ao comunicar com a maquininha. Tente novamente em alguns segundos.',
                 payment: {
                     provider: 'mercado_pago_point',
                     approved: false,
                     reason: 'Erro de comunicação com a maquininha.',
-                    details: Array.isArray(details) ? details.join(' | ') : undefined
+                    details: detailsText
                 }
             });
         }
@@ -3550,26 +3873,56 @@ app.get('/api/sales/:id', verifyLogin, async (req, res) => {
     }
 });
 
+app.delete('/api/sales/pending/active', verifyLogin, async (req, res) => {
+    try {
+        const result = await releaseActivePointPayment();
+        return res.json(result);
+    } catch (e) {
+        console.error('Falha ao liberar terminal:', formatMpAxiosError(e));
+        return res.json({ error: false, cancelWarning: true });
+    }
+});
+
 app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
     const token = String(req.params.token || '').trim();
-    const pending = pendingPointSales.get(token);
-    if (!pending) return res.json({ error: false });
-    try {
-        if (pending?.mode === 'point') await cancelPointOrder(pending.pointOrderId);
-        if (pending?.mode === 'mp_qr_instore') await cancelQrStoreOrder(pending.qrOrderId);
-    } catch (e) {
-        console.error('Falha ao cancelar pagamento pendente:', e?.response?.data || e);
-    } finally {
-        pendingPointSales.delete(token);
-        if (activePointOrderId === pending.pointOrderId) activePointOrderId = null;
-    }
-    return res.json({ error: false });
+    return withPointPaymentLock(async () => {
+        const pending = pendingPointSales.get(token);
+        const trackedOrderIds = [];
+        let cancelWarning = false;
+
+        if (pending) {
+            if (pending?.pointOrderId) trackedOrderIds.push(pending.pointOrderId);
+            if (pending?.qrOrderId) trackedOrderIds.push(pending.qrOrderId);
+            try {
+                if (pending?.mode === 'point') await cancelPointOrder(pending.pointOrderId);
+                if (pending?.mode === 'mp_qr_instore') await cancelQrStoreOrder(pending.qrOrderId);
+                await waitForMpOrdersIdle(trackedOrderIds);
+            } catch (e) {
+                cancelWarning = true;
+                console.error('Falha ao cancelar pagamento pendente:', formatMpAxiosError(e));
+            } finally {
+                pendingPointSales.delete(token);
+            }
+        } else if (activePointOrderId) {
+            trackedOrderIds.push(activePointOrderId);
+            try {
+                await cancelPointOrder(activePointOrderId);
+                await waitForMpOrdersIdle(trackedOrderIds);
+            } catch (e) {
+                cancelWarning = true;
+                console.error('Falha ao cancelar order ativa (token ausente):', formatMpAxiosError(e));
+            }
+        }
+
+        await syncActivePointOrderTracking(trackedOrderIds);
+        return res.json({ error: false, cancelWarning });
+    });
 });
 
 app.get('/sells', verifyLogin, (req, res) => res.redirect('/cash-flow'));
 
-app.get('/products', (req, res) => {
-    res.render('layout', { body: 'products' });
+app.get('/products', verifyLogin, (req, res) => {
+    renderAppShell(res, 'products', req.session.user);
 });
 
 app.get('/clients', verifyLogin, (req, res) => {
@@ -3580,12 +3933,21 @@ app.get('/cash-flow', verifyLogin, (req, res) => {
     renderAppShell(res, 'cashflow', req.session.user);
 });
 
-app.get('/analytics', (req, res) => {
-    res.render('layout', { body: 'analytics' });
+app.get('/analytics', verifyLogin, (req, res) => {
+    renderAppShell(res, 'analytics', req.session.user);
 });
 
-app.get('/config', (req, res) => {
-    res.render('layout', { body: 'config' });
+app.get('/config', verifyLogin, (req, res) => {
+    renderAppShell(res, 'config', req.session.user);
+});
+
+app.use((err, req, res, next) => {
+    console.error('Erro não tratado:', err);
+    const isApi = String(req.path || '').startsWith('/api/');
+    if (isApi) {
+        return res.status(500).json({ error: true, message: 'Erro interno do servidor.' });
+    }
+    return res.status(500).send('Erro interno do servidor. <a href="/dashboard">Voltar ao início</a>');
 });
 
 let port = process.env.PORT || 3131;

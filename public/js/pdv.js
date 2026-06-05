@@ -9,6 +9,8 @@ let currentAdjustmentTarget = 'discount';
 let budgetItemsDraft = [];
 let budgetCurrentRecord = null;
 let confirmAllowInsufficientStock = false;
+let selectedCreditInstallments = 1;
+const CREDIT_INSTALLMENT_MAX = 12;
 
 function asArray(value) {
     if (Array.isArray(value)) return value;
@@ -68,6 +70,49 @@ function getPaymentMethods() {
 
 function getCategories() {
     return window.appData?.configs?.category || {};
+}
+
+function isServiceProduct(p) {
+    return String(p?.itemType || '').toLowerCase() === 'service';
+}
+
+function getServiceProductDetails(p) {
+    return {
+        duration: String(p?.serviceDuration || '').trim(),
+        description: String(p?.description || '').trim()
+    };
+}
+
+function renderPdvServiceExtra(p) {
+    if (!isServiceProduct(p)) return '';
+    const { duration, description } = getServiceProductDetails(p);
+    if (!duration && !description) return '';
+    const durationHtml = duration
+        ? `<span class="pdv-service-duration">⏱ ${escapeHtml(duration)}</span>`
+        : '';
+    const descHtml = description
+        ? `<span class="pdv-service-desc">${escapeHtml(description)}</span>`
+        : '';
+    return `<div class="pdv-service-foot">${durationHtml}${descHtml}</div>`;
+}
+
+function renderCartServiceHint(product) {
+    if (!product || !isServiceProduct(product)) return '';
+    const { duration, description } = getServiceProductDetails(product);
+    if (!duration && !description) return '';
+    const title = [duration, description].filter(Boolean).join(' · ');
+    const bits = [];
+    if (duration) bits.push(`<span class="cart-item-service-duration">⏱ ${escapeHtml(duration)}</span>`);
+    if (description) {
+        const short = description.length > 48 ? `${description.slice(0, 48).trim()}…` : description;
+        bits.push(`<span class="cart-item-service-desc">${escapeHtml(short)}</span>`);
+    }
+    return `<div class="cart-item-service-hint" title="${escapeAttr(title)}">${bits.join('')}</div>`;
+}
+
+function productTracksStock(p) {
+    if (isServiceProduct(p)) return false;
+    return p.trackStock !== false;
 }
 
 function getPaymentLabel(paymentKey) {
@@ -162,6 +207,10 @@ function escapeHtml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(str) {
+    return escapeHtml(str).replace(/`/g, '&#96;');
 }
 
 function budgetTotals(items = budgetItemsDraft) {
@@ -456,13 +505,72 @@ function renderPDVFilters() {
     const container = document.querySelector('#page-pdv .filter-bar');
     if (!container) return;
     const categories = getCategories();
-    const buttons = [`<button class="filter-btn ${currentPDVFilter === 'todos' ? 'active' : ''}" onclick="setPDVFilter('todos',this)">Todos</button>`];
+    const buttons = [
+        `<button class="filter-btn ${currentPDVFilter === 'todos' ? 'active' : ''}" onclick="setPDVFilter('todos',this)">Todos</button>`,
+        `<button class="filter-btn ${currentPDVFilter === 'servicos' ? 'active' : ''}" onclick="setPDVFilter('servicos',this)">🔧 Serviços</button>`
+    ];
     Object.keys(categories).forEach((key) => {
         const isActive = currentPDVFilter === key ? 'active' : '';
         const label = categories[key]?.name || key;
         buttons.push(`<button class="filter-btn ${isActive}" onclick="setPDVFilter('${key}',this)">${label}</button>`);
     });
     container.innerHTML = buttons.join('');
+}
+
+function getCreditInstallmentOptions() {
+    const cfg = window.appData?.configs?.pdv;
+    const fromCfg = cfg?.credit_installment_options;
+    if (Array.isArray(fromCfg) && fromCfg.length) {
+        return [...new Set(fromCfg.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n) && n >= 1 && n <= 24))].sort((a, b) => a - b);
+    }
+    return Array.from({ length: CREDIT_INSTALLMENT_MAX }, (_, i) => i + 1);
+}
+
+function renderCreditInstallmentPicker() {
+    const grid = document.getElementById('creditInstallmentsButtons');
+    if (!grid) return;
+    const opts = getCreditInstallmentOptions();
+    if (!opts.includes(selectedCreditInstallments)) selectedCreditInstallments = opts[0] || 1;
+    grid.innerHTML = opts.map((n) => {
+        const active = n === selectedCreditInstallments ? ' is-active' : '';
+        return `<button type="button" class="pdv-installment-btn${active}" data-installments="${n}">${n}x</button>`;
+    }).join('');
+    grid.querySelectorAll('.pdv-installment-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            selectedCreditInstallments = parseInt(btn.dataset.installments, 10) || 1;
+            renderCreditInstallmentPicker();
+            if (document.getElementById('confirmActionModal')?.classList.contains('open') && confirmActionType === 'finalizar') {
+                openConfirmActionModal('finalizar');
+            }
+        });
+    });
+}
+
+function syncConfirmPaymentExtras(actionType, paymentUiKey) {
+    const payment = normalizePaymentKey(paymentUiKey);
+    const cashSection = document.getElementById('pdvCashPaymentSection');
+    const installmentsSection = document.getElementById('pdvCreditInstallmentsSection');
+    const cashInput = document.getElementById('pdvCashReceivedInput');
+
+    if (installmentsSection) {
+        const showInstallments = actionType === 'finalizar' && payment === 'credit_card';
+        installmentsSection.hidden = !showInstallments;
+        if (showInstallments) renderCreditInstallmentPicker();
+    }
+
+    if (cashSection && cashInput) {
+        if (actionType === 'finalizar' && paymentUiKey === 'money') {
+            cashSection.style.display = 'flex';
+            cashInput.value = '';
+            requestAnimationFrame(() => {
+                cashInput.focus();
+                cashInput.select();
+            });
+        } else {
+            cashSection.style.display = 'none';
+            cashInput.value = '';
+        }
+    }
 }
 
 function renderPaymentButtons() {
@@ -492,7 +600,97 @@ function renderPaymentButtons() {
 
 function selectPaymentMethod(key) {
     selectedPaymentMethod = normalizePaymentKey(key);
+    if (normalizePaymentKey(key) !== 'credit_card') selectedCreditInstallments = 1;
     renderPaymentButtons();
+}
+
+function openCustomItemModal() {
+    const modal = document.getElementById('customItemModal');
+    if (!modal) return;
+    const nameEl = document.getElementById('customItemName');
+    const priceEl = document.getElementById('customItemPrice');
+    const qtyEl = document.getElementById('customItemQty');
+    if (nameEl) nameEl.value = '';
+    if (priceEl) priceEl.value = '';
+    if (qtyEl) qtyEl.value = '1';
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => nameEl?.focus());
+}
+
+function closeCustomItemModal() {
+    const modal = document.getElementById('customItemModal');
+    if (modal) modal.classList.remove('open');
+    if (!document.querySelector('.pdv-modal-overlay.open')) {
+        document.body.style.overflow = '';
+    }
+}
+
+function saveCustomItemFromModal() {
+    const name = document.getElementById('customItemName')?.value;
+    const price = document.getElementById('customItemPrice')?.value;
+    const qty = document.getElementById('customItemQty')?.value;
+    if (!addCustomItemToCart(name, price, qty)) return;
+    closeCustomItemModal();
+}
+
+function bindCustomItemModal() {
+    const openBtn = document.getElementById('btnOpenCustomItemModal');
+    const closeBtn = document.getElementById('closeCustomItemModalBtn');
+    const cancelBtn = document.getElementById('cancelCustomItemBtn');
+    const saveBtn = document.getElementById('saveCustomItemBtn');
+    const modal = document.getElementById('customItemModal');
+    const quickWrap = document.getElementById('customItemQuickPrices');
+
+    closeBtn?.addEventListener('click', closeCustomItemModal);
+    cancelBtn?.addEventListener('click', closeCustomItemModal);
+    saveBtn?.addEventListener('click', saveCustomItemFromModal);
+    modal?.addEventListener('click', (e) => {
+        if (e.target === modal) closeCustomItemModal();
+    });
+
+    quickWrap?.querySelectorAll('[data-price]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const priceEl = document.getElementById('customItemPrice');
+            if (priceEl) priceEl.value = String(btn.getAttribute('data-price') || '');
+        });
+    });
+
+    document.getElementById('customItemName')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            document.getElementById('customItemPrice')?.focus();
+        }
+    });
+    document.getElementById('customItemPrice')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveCustomItemFromModal();
+        }
+    });
+}
+
+function bindPDVKeyboardShortcuts() {
+    if (window.__pdvShortcutsBound) return;
+    window.__pdvShortcutsBound = true;
+
+    document.addEventListener('keydown', (e) => {
+        if (!isOnPDVPage() || isPDVModalOpen()) return;
+        if (e.ctrlKey && (e.key === 'i' || e.key === 'I')) {
+            e.preventDefault();
+            openCustomItemModal();
+            return;
+        }
+        if (e.key === 'F10') {
+            e.preventDefault();
+            finalizarVenda();
+            return;
+        }
+        if (e.key === 'F4') {
+            e.preventDefault();
+            document.getElementById('pdvSearch')?.focus();
+        }
+    });
 }
 
 function initPDV() {
@@ -503,6 +701,29 @@ function initPDV() {
     renderPaymentButtons();
     renderPDV();
     renderCart();
+    requestAnimationFrame(() => document.getElementById('pdvSearch')?.focus());
+}
+
+function renderPdvPinnedCards() {
+  const isAdmin = window.appData?.user?.type === 'admin';
+  const catalogCard = isAdmin
+    ? `
+    <div class="pdv-product-card pdv-product-card--pinned pdv-product-card--catalog" role="button" tabindex="0" onclick="window.location.href='/stock'">
+      <div class="prod-thumb"><span class="prod-emoji">📋</span></div>
+      <div class="prod-name">Catálogo</div>
+      <div class="prod-price text-muted" style="font-size:0.85rem">Cadastrar / editar</div>
+      <div class="pdv-pinned-hint">Produtos e serviços</div>
+    </div>`
+    : '';
+  return `
+    <div class="pdv-product-card pdv-product-card--pinned pdv-product-card--custom" role="button" tabindex="0" onclick="openCustomItemModal()" title="Atalho: Ctrl+I">
+      <div class="prod-thumb"><span class="prod-emoji">✨</span></div>
+      <div class="prod-name">Item personalizado</div>
+      <div class="prod-price text-muted" style="font-size:0.85rem">Avulso</div>
+      <div class="pdv-pinned-hint">Toque · Ctrl+I</div>
+    </div>
+    ${catalogCard}
+  `;
 }
 
 function renderPDV(filter) {
@@ -517,30 +738,58 @@ function renderPDV(filter) {
 
     let list = products.filter((p) => p.active !== false);
     if (search) {
-        list = list.filter((p) => String(p.name || '').toLowerCase().includes(search) || String(p.sku || '').toLowerCase().includes(search));
+        list = list.filter((p) => {
+            const name = String(p.name || '').toLowerCase();
+            const sku = String(p.sku || '').toLowerCase();
+            const desc = String(p.description || '').toLowerCase();
+            return name.includes(search) || sku.includes(search) || desc.includes(search);
+        });
     }
-    if (currentPDVFilter !== 'todos') {
+    if (currentPDVFilter === 'servicos') {
+        list = list.filter((p) => isServiceProduct(p));
+    } else if (currentPDVFilter !== 'todos') {
         list = list.filter((p) => String(p.category) === String(currentPDVFilter));
     }
 
-    grid.innerHTML = list.map((p) => {
+    const productCards = list.map((p) => {
         const img = p.image
             ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt=""></div>`
-            : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || '📦'}</span></div>`;
-        const minStock = asNumber(p.min ?? p.min_stock ?? 0);
-        const isOutOfStock = asNumber(p.qty) <= 0;
-        const shouldShowOutOfStock = isOutOfStock && minStock > 0;
+            : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || (isServiceProduct(p) ? '🔧' : '📦')}</span></div>`;
+        const tracks = productTracksStock(p);
+        const isOutOfStock = tracks && asNumber(p.qty) <= 0;
+        const shouldShowOutOfStock = isOutOfStock;
         const outOfStockClass = shouldShowOutOfStock ? ' pdv-product-out-of-stock' : '';
-        const stockStatus = shouldShowOutOfStock ? '❌ Sem estoque' : `${asNumber(p.qty)} em estoque`;
+        const svcTag = isServiceProduct(p) ? '<span class="pdv-card-type-tag">Serviço</span>' : '';
+        const stockStatus = isServiceProduct(p)
+            ? 'Serviço'
+            : (shouldShowOutOfStock ? '❌ Sem estoque' : `${asNumber(p.qty)} em estoque`);
+        const partsHint = isServiceProduct(p) && asNumber(p.partsCost) > 0
+            ? ` · peças ${formatCurrency(asNumber(p.partsCost))}`
+            : '';
+        const serviceExtra = renderPdvServiceExtra(p);
+        const serviceTitle = isServiceProduct(p)
+            ? getServiceProductDetails(p)
+            : null;
+        const cardTitle = serviceTitle && (serviceTitle.duration || serviceTitle.description)
+            ? escapeAttr([serviceTitle.duration, serviceTitle.description].filter(Boolean).join(' · '))
+            : '';
         return `
-    <div class="pdv-product-card${outOfStockClass}" onclick='addToCart(${JSON.stringify(p.id)})'>
+    <div class="pdv-product-card${outOfStockClass}${isServiceProduct(p) ? ' pdv-product-card--service' : ''}" onclick='addToCart(${JSON.stringify(p.id)})'${cardTitle ? ` title="${cardTitle}"` : ''}>
+      ${svcTag}
       ${img}
-      <div class="prod-name">${p.name || 'Produto'}</div>
+      <div class="prod-name">${escapeHtml(p.name || 'Produto')}</div>
       <div class="prod-price">${formatCurrency(asNumber(p.price))}</div>
-      <div style="font-size:0.65rem;color:var(--text3);margin-top:2px;">${categories[p.category]?.name || p.category || 'Sem categoria'} • ${stockStatus}</div>
+      <div class="pdv-card-meta">${categories[p.category]?.name || p.category || 'Sem categoria'} • ${stockStatus}${partsHint}</div>
+      ${serviceExtra}
     </div>
   `;
-    }).join('') || `<div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum produto</p></div>`;
+    }).join('');
+
+    const emptyBlock = !productCards && search
+        ? '<div class="pdv-grid-empty empty-state"><div class="empty-icon">🔍</div><p>Nenhum resultado para esta busca</p></div>'
+        : '';
+
+    grid.innerHTML = renderPdvPinnedCards() + productCards + emptyBlock;
 }
 
 function setPDVFilter(filter, btn) {
@@ -559,23 +808,81 @@ function findProductByProductCode(code) {
     if (!c) return null;
     const lower = c.toLowerCase();
     const products = asArray(window.appData.products);
-    return products.find((p) => p.active !== false && String(p.sku || '').trim().toLowerCase() === lower) || null;
+    return (
+        products.find((p) => p.active !== false && String(p.sku || '').trim().toLowerCase() === lower)
+        || products.find((p) => p.active !== false && String(p.id || '').trim().toLowerCase() === lower)
+        || null
+    );
+}
+
+function isCartItemCustom(item) {
+    return item?.custom === true || String(item?.id || '').startsWith('custom:');
+}
+
+function newCustomCartId() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return `custom:${crypto.randomUUID()}`;
+    }
+    return `custom:${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function addToCartByProductCode(code) {
     const product = findProductByProductCode(code);
     if (!product) {
         showToast('Produto não encontrado para este código.', 'error');
-        return;
+        return false;
     }
     addToCart(product.id);
+    return true;
 }
 
-const PDV_SCAN_GAP_MS = 50;
+function tryAddFromSearchValue(rawValue, { clearSearch = true } = {}) {
+    const code = String(rawValue || '').trim();
+    if (!code) return false;
+    const product = findProductByProductCode(code);
+    if (!product) return false;
+    const searchEl = document.getElementById('pdvSearch');
+    if (clearSearch && searchEl) {
+        searchEl.value = '';
+        filterPDV('');
+    }
+    addToCart(product.id);
+    flashBarcodeScan();
+    return true;
+}
+
+function addCustomItemToCart(name, price, qty = 1) {
+    const label = String(name || '').trim();
+    const unitPrice = asNumber(price);
+    const amount = Math.max(1, Math.floor(asNumber(qty)));
+    if (!label) {
+        showToast('Informe a descrição do item.', 'error');
+        return false;
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+        showToast('Informe um preço válido.', 'error');
+        return false;
+    }
+    ensureAppDataShape();
+    window.appData.cart.push({
+        id: newCustomCartId(),
+        custom: true,
+        name: label,
+        category: 'custom',
+        price: unitPrice,
+        qty: amount
+    });
+    renderCart();
+    showToast(`${label} adicionado ao carrinho`, 'success');
+    return true;
+}
+
+const PDV_SCAN_GAP_MS = 85;
 const PDV_SCAN_MIN_LEN = 3;
 let pdvScanBuf = '';
 let pdvScanPending = '';
 let pdvScanLastKeyAt = 0;
+let pdvSearchScanTimer = null;
 
 function isOnPDVPage() {
     return document.body?.dataset?.page === 'pdv';
@@ -590,11 +897,31 @@ function flashBarcodeScan() {
 
 function isPDVModalOpen() {
     return Boolean(
-        document.getElementById('cartAdjustmentModal')?.classList.contains('open')
+        document.getElementById('customItemModal')?.classList.contains('open')
+        || document.getElementById('cartAdjustmentModal')?.classList.contains('open')
         || document.getElementById('confirmActionModal')?.classList.contains('open')
         || document.getElementById('paymentWaitingModal')?.classList.contains('open')
         || document.getElementById('paymentResultModal')?.classList.contains('open')
     );
+}
+
+function clearPdvSearchField() {
+    const searchEl = document.getElementById('pdvSearch');
+    if (searchEl) {
+        searchEl.value = '';
+        filterPDV('');
+    }
+}
+
+function resolveBarcodeCode(fallbackFromSearch = true) {
+    let code = (pdvScanBuf || pdvScanPending || '').trim();
+    pdvScanBuf = '';
+    pdvScanPending = '';
+    if (!code && fallbackFromSearch) {
+        const searchEl = document.getElementById('pdvSearch');
+        code = String(searchEl?.value || '').trim();
+    }
+    return code;
 }
 
 function bindPDVBarcodeCapture() {
@@ -602,16 +929,28 @@ function bindPDVBarcodeCapture() {
     window.__pdvBarcodeBound = true;
 
     const searchEl = document.getElementById('pdvSearch');
+
     if (searchEl) {
         searchEl.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter') return;
             const code = String(searchEl.value || '').trim();
-            if (!code || !findProductByProductCode(code)) return;
+            if (!code) return;
             e.preventDefault();
-            searchEl.value = '';
-            filterPDV();
-            addToCartByProductCode(code);
-            flashBarcodeScan();
+            e.stopPropagation();
+            pdvScanBuf = '';
+            pdvScanPending = '';
+            if (tryAddFromSearchValue(code)) return;
+            showToast('Nenhum produto com este código/SKU.', 'info');
+        }, true);
+
+        searchEl.addEventListener('input', () => {
+            clearTimeout(pdvSearchScanTimer);
+            pdvSearchScanTimer = setTimeout(() => {
+                const code = String(searchEl.value || '').trim();
+                if (code.length >= PDV_SCAN_MIN_LEN && findProductByProductCode(code)) {
+                    tryAddFromSearchValue(code);
+                }
+            }, 140);
         });
     }
 
@@ -626,14 +965,14 @@ function bindPDVBarcodeCapture() {
             pdvScanLastKeyAt = now;
 
             if (e.key === 'Enter') {
-                const code = (pdvScanBuf || pdvScanPending).trim();
-                pdvScanBuf = '';
-                pdvScanPending = '';
+                const code = resolveBarcodeCode(true);
                 if (code.length >= PDV_SCAN_MIN_LEN) {
                     e.preventDefault();
                     e.stopImmediatePropagation();
-                    addToCartByProductCode(code);
-                    flashBarcodeScan();
+                    clearPdvSearchField();
+                    if (!tryAddFromSearchValue(code, { clearSearch: false })) {
+                        showToast('Produto não encontrado para este código.', 'error');
+                    }
                 }
                 return;
             }
@@ -649,13 +988,14 @@ function bindPDVBarcodeCapture() {
             if (pdvScanPending) {
                 pdvScanBuf = pdvScanPending + e.key;
                 pdvScanPending = '';
-                const t = e.target;
-                if (t && t.tagName === 'INPUT' && typeof t.value === 'string' && t.value.length > 0) {
-                    t.value = t.value.slice(0, -1);
-                }
             } else {
                 pdvScanBuf += e.key;
             }
+
+            if (searchEl && document.activeElement === searchEl) {
+                searchEl.value = '';
+            }
+
             e.preventDefault();
             e.stopImmediatePropagation();
         },
@@ -673,9 +1013,10 @@ function addToCart(id) {
         return;
     }
 
+    const tracks = productTracksStock(product);
     const productQty = asNumber(product.qty);
     const minStock = asNumber(product.min ?? product.min_stock ?? 0);
-    const isOutOfStock = productQty <= 0;
+    const isOutOfStock = tracks && productQty <= 0;
 
     if (isOutOfStock) {
         showToast(`⚠️ ${product.name} está sem estoque. Você poderá confirmar na finalização.`, 'warning');
@@ -724,7 +1065,9 @@ function getCartStockWarnings() {
     const products = asArray(window.appData?.products);
     const warnings = [];
     cart.forEach((item) => {
+        if (isCartItemCustom(item)) return;
         const product = products.find((x) => String(x.id) === String(item.id));
+        if (product && !productTracksStock(product)) return;
         const stock = asNumber(product?.qty);
         const requested = asNumber(item.qty);
         if (requested > stock) {
@@ -759,33 +1102,20 @@ function openConfirmActionModal(actionType) {
             <div class="pdv-confirm-row"><span>Subtotal</span><strong>${formatCurrency(totals.subtotal)}</strong></div>
             <div class="pdv-confirm-row"><span>Desconto (${formatAdjustment(getAdjustmentType('discount'), getAdjustmentValue('discount'))})</span><strong>- ${formatCurrency(totals.discount)}</strong></div>
             <div class="pdv-confirm-row"><span>Acréscimo (${formatAdjustment(getAdjustmentType('extra'), getAdjustmentValue('extra'))})</span><strong>+ ${formatCurrency(totals.extra)}</strong></div>
-            <div class="pdv-confirm-row"><span>Pagamento</span><strong><span class="pdv-confirm-payment-icon">${getPaymentIcon(paymentUiKey)}</span> ${getPaymentLabel(paymentUiKey)}</strong></div>
+            <div class="pdv-confirm-row"><span>Pagamento</span><strong><span class="pdv-confirm-payment-icon">${getPaymentIcon(paymentUiKey)}</span> ${getPaymentLabel(paymentUiKey)}${payment === 'credit_card' ? ` · ${selectedCreditInstallments}x` : ''}</strong></div>
+            ${payment === 'credit_card' ? '<div class="pdv-confirm-row"><span>Juros</span><strong>Cliente (na maquininha)</strong></div>' : ''}
             <div class="pdv-confirm-row"><span>Itens</span><strong>${totalItems}</strong></div>
             <div class="pdv-confirm-row total"><span>Total</span><strong>${formatCurrency(totals.total)}</strong></div>
         `;
     }
 
-    const cashSection = document.getElementById('pdvCashPaymentSection');
-    const cashInput = document.getElementById('pdvCashReceivedInput');
-    if (cashSection && cashInput) {
-        if (actionType === 'finalizar' && paymentUiKey === 'money') {
-            cashSection.style.display = 'flex';
-            cashInput.value = '';
-            requestAnimationFrame(() => {
-                cashInput.focus();
-                cashInput.select();
-            });
-        } else {
-            cashSection.style.display = 'none';
-            cashInput.value = '';
-        }
-    }
+    syncConfirmPaymentExtras(actionType, paymentUiKey);
 
     if (itemsEl) {
         itemsEl.innerHTML = cart.length
             ? cart.map((item) => `
                 <div class="pdv-confirm-item">
-                    <div class="pdv-confirm-item-name">${item.name || 'Produto'}</div>
+                    <div class="pdv-confirm-item-name">${escapeHtml(item.name || 'Produto')}${isCartItemCustom(item) ? ' <span class="cart-item-custom-tag">Personalizado</span>' : ''}</div>
                     <div class="pdv-confirm-item-qty">x${asNumber(item.qty)}</div>
                     <div class="pdv-confirm-item-value">${formatCurrency(asNumber(item.price) * asNumber(item.qty))}</div>
                 </div>
@@ -860,18 +1190,30 @@ function renderCart() {
     if (cart.length === 0) {
         container.innerHTML = '<div class="empty-state" style="padding:30px;"><div class="empty-icon">🛒</div><p>Carrinho vazio</p></div>';
     } else {
-        container.innerHTML = cart.map((item) => `
-      <div class="cart-item">
-        <div class="cart-item-name">${item.name || 'Produto'}</div>
+        const products = asArray(window.appData?.products);
+        container.innerHTML = cart.map((item) => {
+        const cid = JSON.stringify(String(item.id));
+        const customTag = isCartItemCustom(item)
+            ? '<span class="cart-item-custom-tag">Personalizado</span>'
+            : '';
+        const product = products.find((x) => String(x.id) === String(item.id));
+        const serviceHint = renderCartServiceHint(product);
+        return `
+      <div class="cart-item${isCartItemCustom(item) ? ' cart-item--custom' : ''}">
+        <div class="cart-item-main">
+          <div class="cart-item-name">${escapeHtml(item.name || 'Produto')}${customTag}</div>
+          ${serviceHint}
+        </div>
         <div class="cart-item-qty">
-          <button class="qty-btn" onclick='changeQty(${JSON.stringify(item.id)},-1)'>−</button>
+          <button type="button" class="qty-btn" onclick='changeQty(${cid},-1)'>−</button>
           <span class="qty-num">${asNumber(item.qty)}</span>
-          <button class="qty-btn" onclick='changeQty(${JSON.stringify(item.id)},1)'>+</button>
+          <button type="button" class="qty-btn" onclick='changeQty(${cid},1)'>+</button>
         </div>
         <div class="cart-item-price">${formatCurrency(asNumber(item.price) * asNumber(item.qty))}</div>
-        <div class="cart-item-remove" onclick='removeFromCart(${JSON.stringify(item.id)})'>✕</div>
+        <button type="button" class="cart-item-remove" onclick='removeFromCart(${cid})' aria-label="Remover">✕</button>
       </div>
-    `).join('');
+    `;
+    }).join('');
     }
 
     const totals = getCurrentTotals();
@@ -881,7 +1223,8 @@ function renderCart() {
     const discountEl = document.getElementById('cartDiscount');
     const extraEl = document.getElementById('cartExtra');
 
-    if (count) count.textContent = `${cart.length} item${cart.length !== 1 ? 's' : ''}`;
+    const units = cart.reduce((s, i) => s + asNumber(i.qty), 0);
+    if (count) count.textContent = `${units} un. · ${cart.length} linha${cart.length !== 1 ? 's' : ''}`;
     if (sub) sub.textContent = formatCurrency(totals.subtotal);
     if (tot) tot.textContent = formatCurrency(totals.total);
     if (discountEl) discountEl.textContent = `- ${formatCurrency(totals.discount)}`;
@@ -894,14 +1237,17 @@ function changeQty(id, delta) {
     const item = cart.find((x) => String(x.id) === String(id));
     if (!item) return;
 
-    const product = products.find((x) => String(x.id) === String(id));
-    const productQty = asNumber(product?.qty || 0);
     const next = asNumber(item.qty) + delta;
-
     if (next <= 0) return removeFromCart(id);
 
-    if (next > productQty) {
-        showToast(`⚠️ ${item.name || 'Produto'}: estoque ${productQty}, carrinho ${next}. Confirme na finalização.`, 'warning');
+    if (!isCartItemCustom(item)) {
+        const product = products.find((x) => String(x.id) === String(id));
+        if (product && productTracksStock(product)) {
+            const productQty = asNumber(product.qty);
+            if (next > productQty) {
+                showToast(`⚠️ ${item.name || 'Produto'}: estoque ${productQty}, carrinho ${next}. Confirme na finalização.`, 'warning');
+            }
+        }
     }
     item.qty = next;
     renderCart();
@@ -928,6 +1274,11 @@ function clearCartCore() {
 let finalizeSaleInFlight = false;
 let paymentPendingPollTimer = null;
 let currentPendingToken = null;
+let paymentCancelInFlight = false;
+let paymentAbortRequested = false;
+let paymentCooldownUntil = 0;
+let paymentWaitingModalBound = false;
+let cardPaymentPostInFlight = false;
 
 function getPaymentStatusText(status, paymentKey) {
     const key = String(status || '').toLowerCase();
@@ -959,7 +1310,18 @@ function setPaymentWaitingStatus(statusText) {
     if (chip) chip.textContent = statusText || 'Aguardando confirmação';
 }
 
+async function abortPendingPaymentOnServer(token) {
+    const url = token
+        ? `/api/sales/pending/${encodeURIComponent(token)}`
+        : '/api/sales/pending/active';
+    const res = await fetch(url, { method: 'DELETE', credentials: 'same-origin' });
+    let data = {};
+    try { data = await res.json(); } catch { data = {}; }
+    return data;
+}
+
 function openPaymentWaitingModal(paymentKey) {
+    paymentAbortRequested = false;
     const modal = document.getElementById('paymentWaitingModal');
     const title = document.getElementById('paymentWaitingTitle');
     const message = document.getElementById('paymentWaitingMessage');
@@ -1067,7 +1429,32 @@ function applySuccessfulSale(data, totals, payment) {
 async function pollPendingSaleStatus(token, totals, payment) {
     stopPendingPoll();
     currentPendingToken = token;
+    if (paymentAbortRequested) {
+        try {
+            await abortPendingPaymentOnServer(token);
+        } catch (e) {
+            console.error(e);
+        }
+        currentPendingToken = null;
+        finalizeSaleInFlight = false;
+        paymentCooldownUntil = Date.now() + 2500;
+        closePaymentWaitingModal();
+        return;
+    }
     const check = async () => {
+        if (paymentAbortRequested) {
+            stopPendingPoll();
+            try {
+                await abortPendingPaymentOnServer(token);
+            } catch (e) {
+                console.error(e);
+            }
+            currentPendingToken = null;
+            finalizeSaleInFlight = false;
+            paymentCooldownUntil = Date.now() + 2500;
+            closePaymentWaitingModal();
+            return;
+        }
         try {
             const res = await fetch(`/api/sales/pending/${encodeURIComponent(token)}`, {
                 method: 'GET',
@@ -1123,17 +1510,37 @@ async function finalizeSaleCore() {
         return false;
     }
     if (finalizeSaleInFlight) return false;
+    if (Date.now() < paymentCooldownUntil) {
+        showToast('Aguarde o terminal liberar antes de uma nova cobrança.', 'warning');
+        return false;
+    }
 
     const totals = getCurrentTotals();
     const payment = normalizePaymentKey(selectedPaymentMethod);
+    paymentAbortRequested = false;
     const payload = {
-        items: cart.map((i) => ({ id: i.id, qty: asNumber(i.qty) })),
+        items: cart.map((i) => {
+            if (isCartItemCustom(i)) {
+                return {
+                    id: i.id,
+                    name: String(i.name || '').trim(),
+                    price: asNumber(i.price),
+                    qty: asNumber(i.qty),
+                    custom: true
+                };
+            }
+            return { id: i.id, qty: asNumber(i.qty) };
+        }),
         discount: { ...cartAdjustments.discount },
         extra: { ...cartAdjustments.extra },
         payment,
         client: 'Balcão',
         allowInsufficientStock: confirmAllowInsufficientStock
     };
+
+    if (payment === 'credit_card') {
+        payload.installments = selectedCreditInstallments;
+    }
 
     if (payment === 'money') {
         const cashInput = document.getElementById('pdvCashReceivedInput');
@@ -1164,6 +1571,7 @@ async function finalizeSaleCore() {
     }
 
     finalizeSaleInFlight = true;
+    if (isCardOrPix) cardPaymentPostInFlight = true;
     const confirmBtn = document.getElementById('confirmActionBtn');
     const prevBtnText = confirmBtn ? confirmBtn.textContent : '';
     if (confirmBtn && !isCardOrPix) {
@@ -1185,6 +1593,7 @@ async function finalizeSaleCore() {
             data = {};
         }
         if (!res.ok || data.error) {
+            finalizeSaleInFlight = false;
             if (data.stockInsufficient && !confirmAllowInsufficientStock) {
                 const warnings = getCartStockWarnings();
                 if (warnings.length > 0) {
@@ -1208,6 +1617,19 @@ async function finalizeSaleCore() {
         }
 
         if (payment !== 'money' && data.pending && data.token) {
+            if (paymentAbortRequested) {
+                try {
+                    await abortPendingPaymentOnServer(data.token);
+                } catch (e) {
+                    console.error(e);
+                }
+                closePaymentWaitingModal();
+                showToast('Cobrança cancelada.', 'info');
+                finalizeSaleInFlight = false;
+                paymentCooldownUntil = Date.now() + 2500;
+                return false;
+            }
+            currentPendingToken = data.token;
             applyPaymentWaitingData(data.payment || {});
             setPaymentWaitingStatus(getPaymentStatusText(data?.payment?.status, payment));
             await pollPendingSaleStatus(data.token, totals, payment);
@@ -1218,10 +1640,12 @@ async function finalizeSaleCore() {
         return true;
     } catch (e) {
         console.error(e);
+        finalizeSaleInFlight = false;
         if (payment !== 'money') closePaymentWaitingModal();
         showToast('Erro de rede ao finalizar a venda.', 'error');
         return false;
     } finally {
+        cardPaymentPostInFlight = false;
         if (payment === 'money') finalizeSaleInFlight = false;
         if (confirmBtn) {
             confirmBtn.disabled = false;
@@ -1290,31 +1714,55 @@ function bindConfirmModal() {
     
 }
 
+function setPaymentWaitingActionsDisabled(disabled) {
+    const ids = ['cancelPaymentWaitingBtn', 'closePaymentWaitingModalBtn'];
+    ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    });
+}
+
+async function cancelPaymentWaiting() {
+    if (paymentCancelInFlight) return;
+    paymentCancelInFlight = true;
+    paymentAbortRequested = true;
+    setPaymentWaitingActionsDisabled(true);
+    setPaymentWaitingStatus('Cancelando cobrança...');
+    const token = currentPendingToken;
+    stopPendingPoll();
+    try {
+        const data = await abortPendingPaymentOnServer(token);
+        if (data.cancelWarning) {
+            showToast('Cancelamento enviado, mas a maquininha pode ainda estar ocupada. Aguarde alguns segundos.', 'warning');
+        } else {
+            showToast('Pagamento cancelado.', 'info');
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao cancelar pagamento.', 'error');
+    } finally {
+        currentPendingToken = null;
+        if (token || !cardPaymentPostInFlight) finalizeSaleInFlight = false;
+        paymentCancelInFlight = false;
+        paymentCooldownUntil = Date.now() + 2500;
+        setPaymentWaitingActionsDisabled(false);
+        closePaymentWaitingModal();
+    }
+}
+
 function bindPaymentWaitingModal() {
+    if (paymentWaitingModalBound) return;
+    paymentWaitingModalBound = true;
     const cancelBtn = document.getElementById('cancelPaymentWaitingBtn');
     const closeBtn = document.getElementById('closePaymentWaitingModalBtn');
     const modal = document.getElementById('paymentWaitingModal');
-    const cancelFn = async () => {
-        const token = currentPendingToken;
-        stopPendingPoll();
-        currentPendingToken = null;
-        if (token) {
-            try {
-                await fetch(`/api/sales/pending/${encodeURIComponent(token)}`, {
-                    method: 'DELETE',
-                    credentials: 'same-origin'
-                });
-            } catch (e) {
-                console.error(e);
-            }
-        }
-        finalizeSaleInFlight = false;
-        closePaymentWaitingModal();
-        showToast('Pagamento pendente cancelado.', 'info');
-    };
-    if (cancelBtn) cancelBtn.addEventListener('click', cancelFn);
-    if (closeBtn) closeBtn.addEventListener('click', cancelFn);
-    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) cancelFn(); });
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelPaymentWaiting);
+    if (closeBtn) closeBtn.addEventListener('click', cancelPaymentWaiting);
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) cancelPaymentWaiting();
+        });
+    }
 
     const copyBtn = document.getElementById('copyPixCodeBtn');
     if (copyBtn) {
@@ -1378,7 +1826,9 @@ function bootPDV() {
         bindCartAdjustmentModal();
         bindBudgetModal();
         bindBudgetTemplateModal();
+        bindCustomItemModal();
         bindPDVBarcodeCapture();
+        bindPDVKeyboardShortcuts();
         const cashInput = document.getElementById('pdvCashReceivedInput');
         if (cashInput) cashInput.addEventListener('input', updateCashChangeDisplay);
     });

@@ -4,7 +4,7 @@
       <div class="pdv-toolbar">
         <div class="search-bar">
           <span aria-hidden="true">🔍</span>
-          <input type="text" placeholder="Buscar produto por nome ou SKU…" id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
+          <input type="text" placeholder="Buscar ou escanear código… (Enter adiciona)" id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
         </div>
         <div class="pdv-scan-status" id="pdvScanIndicator" title="Leitor USB ativo em toda a tela do PDV">
           <span class="pdv-scan-dot" aria-hidden="true"></span>
@@ -18,7 +18,10 @@
           <button class="filter-btn" onclick="setPDVFilter('pc',this)">🖥️</button>
           <button class="filter-btn" onclick="setPDVFilter('others',this)">📦</button>
         </div>
-        <button type="button" class="btn btn-primary btn-sm" id="btnOpenServiceIntakeModal">🧰 Ordem de serviço</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnOpenServiceIntakeModal">🧰 Ordem de serviço</button>
+        <% if (appData.user.type === 'admin') { %>
+        <a class="btn btn-ghost btn-sm" href="/stock" title="Cadastrar produtos e serviços">📋 Catálogo</a>
+        <% } %>
         <a class="btn btn-ghost btn-sm" href="/budgets">Ver orçamentos</a>
       </div>
       <div class="pdv-products-grid" id="pdvGrid"></div>
@@ -48,9 +51,45 @@
           <button class="btn btn-ghost btn-sm" type="button" id="btnOpenDiscountModal">Desconto</button>
           <button class="btn btn-ghost btn-sm" type="button" id="btnOpenExtraModal">Acréscimo</button>
         </div>
-        <button class="btn btn-primary w-full" style="justify-content:center;" onclick="finalizarVenda()">✅ Finalizar Venda</button>
+        <button class="btn btn-primary w-full" style="justify-content:center;" id="btnFinalizeSale" onclick="finalizarVenda()">✅ Finalizar Venda <kbd class="pdv-kbd-hint">F10</kbd></button>
         <button class="btn btn-ghost btn-sm w-full" style="justify-content:center;" onclick="clearCart()">🗑️ Limpar</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay" id="customItemModal">
+  <div class="pdv-modal-card">
+    <div class="pdv-modal-header">
+      <div class="pdv-modal-title">Item personalizado</div>
+      <button type="button" class="pdv-modal-close" id="closeCustomItemModalBtn" aria-label="Fechar">✕</button>
+    </div>
+    <div class="pdv-modal-body">
+      <p class="text-sm text-muted mb-12">Serviço, taxa ou produto avulso — não desconta do estoque.</p>
+      <div class="form-group">
+        <label class="form-label" for="customItemName">Descrição</label>
+        <input class="form-input" id="customItemName" type="text" placeholder="Ex.: Instalação de programa" maxlength="120" autocomplete="off">
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="customItemPrice">Preço unitário (R$)</label>
+          <input class="form-input" id="customItemPrice" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0,00">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="customItemQty">Quantidade</label>
+          <input class="form-input" id="customItemQty" type="number" min="1" step="1" value="1">
+        </div>
+      </div>
+      <div class="pdv-custom-quick-prices" id="customItemQuickPrices">
+        <button type="button" class="filter-btn" data-price="10">R$ 10</button>
+        <button type="button" class="filter-btn" data-price="25">R$ 25</button>
+        <button type="button" class="filter-btn" data-price="50">R$ 50</button>
+        <button type="button" class="filter-btn" data-price="100">R$ 100</button>
+      </div>
+    </div>
+    <div class="pdv-modal-footer">
+      <button type="button" class="btn btn-ghost btn-sm" id="cancelCustomItemBtn">Cancelar</button>
+      <button type="button" class="btn btn-primary btn-sm" id="saveCustomItemBtn">Adicionar ao carrinho</button>
     </div>
   </div>
 </div>
@@ -94,6 +133,11 @@
       <div class="pdv-stock-warning" id="confirmStockWarning" hidden></div>
       <div class="pdv-confirm-summary" id="confirmActionSummary">
         <div class="pdv-confirm-totals" id="confirmActionTotals"></div>
+        <div id="pdvCreditInstallmentsSection" class="pdv-installments-section" hidden>
+          <label class="pdv-installments-label">Parcelas no cartão de crédito</label>
+          <p class="text-xs text-muted pdv-installments-hint">Juros por conta do cliente na maquininha.</p>
+          <div class="pdv-installments-grid" id="creditInstallmentsButtons" role="group" aria-label="Número de parcelas"></div>
+        </div>
         <div id="pdvCashPaymentSection" class="pdv-cash-section" hidden>
           <label class="pdv-cash-label" for="pdvCashReceivedInput">Valor recebido (R$) <span class="text-muted" style="font-weight:500;">— opcional</span></label>
           <input class="form-input" type="number" id="pdvCashReceivedInput" min="0" step="0.01" inputmode="decimal" autocomplete="off" placeholder="Vazio = pagou o valor exato" aria-describedby="pdvCashPaymentHint">

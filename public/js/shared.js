@@ -163,7 +163,124 @@ function prefetchLazyLibs() {
     }
 }
 
-function globalSearchHandler() {}
+function openInstructionsModal() {
+    closeSharedNotesModal({ silent: true });
+    const modal = document.getElementById('instructionsModal');
+    if (modal) {
+        modal.classList.add('open');
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+function closeInstructionsModal() {
+    const modal = document.getElementById('instructionsModal');
+    if (modal) {
+        modal.classList.remove('open');
+    }
+    if (!document.querySelector('.modal-overlay.open')) {
+        document.body.style.overflow = '';
+    }
+}
+
+function formatSharedNotesMeta(notes) {
+    if (!notes?.updatedAt && !notes?.updatedBy) {
+        return 'Nenhuma alteração registrada ainda.';
+    }
+    const who = notes.updatedBy?.name || notes.updatedBy?.email || 'Equipe';
+    let when = '';
+    if (notes.updatedAt) {
+        const d = new Date(notes.updatedAt);
+        when = Number.isNaN(d.getTime())
+            ? String(notes.updatedAt)
+            : d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    }
+    return when ? `Última edição: ${who} · ${when}` : `Última edição: ${who}`;
+}
+
+async function loadSharedNotes() {
+    const textarea = document.getElementById('sharedNotesContent');
+    const meta = document.getElementById('sharedNotesMeta');
+    const saveBtn = document.getElementById('sharedNotesSaveBtn');
+    if (textarea) textarea.disabled = true;
+    if (saveBtn) saveBtn.disabled = true;
+    if (meta) meta.textContent = 'Carregando…';
+    try {
+        const res = await fetch('/api/shared-notes', { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            throw new Error(data.message || 'Falha ao carregar notas.');
+        }
+        if (textarea) textarea.value = data.notes?.content || '';
+        if (meta) meta.textContent = formatSharedNotesMeta(data.notes);
+    } catch (e) {
+        console.error(e);
+        if (meta) meta.textContent = 'Não foi possível carregar as notas.';
+        showToast(e.message || 'Erro ao carregar notas.', 'error');
+    } finally {
+        if (textarea) textarea.disabled = false;
+        if (saveBtn) saveBtn.disabled = false;
+    }
+}
+
+async function openSharedNotesModal() {
+    closeInstructionsModal();
+    const modal = document.getElementById('sharedNotesModal');
+    if (!modal) return;
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    await loadSharedNotes();
+    document.getElementById('sharedNotesContent')?.focus();
+}
+
+function closeSharedNotesModal(opts = {}) {
+    const modal = document.getElementById('sharedNotesModal');
+    if (modal) modal.classList.remove('open');
+    if (!document.querySelector('.modal-overlay.open')) {
+        document.body.style.overflow = '';
+    }
+    if (!opts.silent && typeof showToast === 'function') {
+        /* noop — reservado para aviso de alterações não salvas */
+    }
+}
+
+async function saveSharedNotes() {
+    const textarea = document.getElementById('sharedNotesContent');
+    const saveBtn = document.getElementById('sharedNotesSaveBtn');
+    const meta = document.getElementById('sharedNotesMeta');
+    if (!textarea) return;
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Salvando…';
+    }
+    try {
+        const res = await fetch('/api/shared-notes', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ content: textarea.value })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            throw new Error(data.message || 'Falha ao salvar notas.');
+        }
+        if (meta) meta.textContent = formatSharedNotesMeta(data.notes);
+        showToast('Notas salvas para toda a equipe.', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast(e.message || 'Erro ao salvar notas.', 'error');
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Salvar notas';
+        }
+    }
+}
+
+window.openInstructionsModal = openInstructionsModal;
+window.closeInstructionsModal = closeInstructionsModal;
+window.openSharedNotesModal = openSharedNotesModal;
+window.closeSharedNotesModal = closeSharedNotesModal;
+window.saveSharedNotes = saveSharedNotes;
 
 document.addEventListener('DOMContentLoaded', () => {
     prefetchLazyLibs();
@@ -172,4 +289,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!window.__bootstrap) {
         AppShell.finishLoading();
     }
+    document.getElementById('sharedNotesContent')?.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            saveSharedNotes();
+        }
+    });
 });

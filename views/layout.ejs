@@ -35,6 +35,7 @@
     </div>
   </div>
 
+  <% if (typeof appData === 'undefined') { var appData = { user: { name: 'Usuário', type: 'user' }, configs: {}, cart: [] }; } %>
   <div class="app">
     <%- include('reusable/sidebar') %>
     <main class="main">
@@ -46,6 +47,8 @@
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
+  <%- include('reusable/instructions-modal') %>
+  <%- include('reusable/notes-modal') %>
 
   <script id="appData" type="application/json"><%- JSON.stringify(appData || {}) %></script>
   <script>

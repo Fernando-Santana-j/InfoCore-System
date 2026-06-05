@@ -1,14 +1,11 @@
 <header class="topbar">
   <div class="topbar-title" id="topbarTitle">Dashboard</div>
-  <div class="topbar-search">
-    <span class="search-icon" aria-hidden="true">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-    </span>
-    <input type="search" placeholder="Buscar… (Enter)" id="globalSearch" autocomplete="off">
-    <kbd class="topbar-kbd">F2 PDV</kbd>
-  </div>
   <div class="topbar-actions">
-    <button class="icon-btn" type="button" title="Abrir PDV (F2)" onclick="window.location.href='/pdv'">🛒</button>
-    <button class="icon-btn" type="button" title="Recarregar página" onclick="location.reload()">↻</button>
+    <button class="btn btn-ghost btn-sm topbar-instructions-btn" type="button" id="topbarInstructionsBtn" onclick="openInstructionsModal()">
+      📋 Instruções
+    </button>
+    <button class="btn btn-ghost btn-sm topbar-instructions-btn" type="button" id="topbarNotesBtn" onclick="openSharedNotesModal()">
+      📝 Notas
+    </button>
   </div>
 </header>

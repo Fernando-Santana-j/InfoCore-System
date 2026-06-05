@@ -1,0 +1,59 @@
+<div class="modal-overlay" id="instructionsModal" aria-labelledby="instructionsModalTitle">
+  <div class="modal modal-instructions">
+    <div class="modal-header">
+      <div class="modal-title" id="instructionsModalTitle">Instruções</div>
+      <button type="button" class="modal-close" onclick="closeInstructionsModal()" aria-label="Fechar">✕</button>
+    </div>
+    <div class="modal-body">
+      <section class="instructions-section">
+        <h3 class="instructions-section-title">Multiplicador de preço (custo → venda)</h3>
+        <p class="text-sm text-muted instructions-section-desc">Use o custo do produto para definir o fator de markup na precificação.</p>
+        <div class="instructions-table-wrap">
+          <table class="instructions-table">
+            <thead>
+              <tr>
+                <th>Faixa de custo do produto</th>
+                <th>Multiplicador (fator)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Até R$ 20,00</td>
+                <td class="mono">2,5x a 3,0x</td>
+              </tr>
+              <tr>
+                <td>De R$ 20,01 a R$ 50,00</td>
+                <td class="mono">2,2x</td>
+              </tr>
+              <tr>
+                <td>De R$ 50,01 a R$ 100,00</td>
+                <td class="mono">1,8x</td>
+              </tr>
+              <tr>
+                <td>De R$ 100,01 a R$ 250,00</td>
+                <td class="mono">1,5x</td>
+              </tr>
+              <tr>
+                <td>De R$ 250,01 a R$ 500,00</td>
+                <td class="mono">1,35x</td>
+              </tr>
+              <tr>
+                <td>Acima de R$ 500,00</td>
+                <td class="mono">1,2x a 1,25x</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="instructions-section">
+        <h3 class="instructions-section-title">Outras instruções</h3>
+        <ul class="instructions-list" id="instructionsList">
+          <%- include('instructions-list') %>
+        </ul>
+      </section>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-primary btn-sm" onclick="closeInstructionsModal()">Fechar</button>
+    </div>
+  </div>
+</div>

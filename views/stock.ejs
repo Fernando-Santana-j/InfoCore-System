@@ -13,24 +13,31 @@
   }
 %>
 <div class="page" id="page-estoque">
+  <div class="catalog-page-head mb-16">
+    <div>
+      <h2 class="catalog-page-title">Catálogo</h2>
+      <p class="text-sm text-muted">Produtos físicos, serviços com custo de peças e itens para o PDV.</p>
+    </div>
+  </div>
   <div class="flex flex-between flex-wrap gap-12 mb-16">
     <div class="search-bar" style="flex:1;max-width:380px;">
       <span>🔍</span>
-      <input type="text" placeholder="Pesquisar produto, SKU, categoria..." id="stockSearch" oninput="filterStock(this.value)">
+      <input type="text" placeholder="Pesquisar nome, SKU, categoria..." id="stockSearch" oninput="filterStock(this.value)">
     </div>
     <div class="filter-bar">
-      <button class="filter-btn active" onclick="setStockFilter('todos',this)">Todos</button>
+      <button class="filter-btn active" data-stock-type-filter="todos" onclick="setStockTypeFilter('todos',this)">Todos</button>
+      <button class="filter-btn" data-stock-type-filter="product" onclick="setStockTypeFilter('product',this)">📦 Produtos</button>
+      <button class="filter-btn" data-stock-type-filter="service" onclick="setStockTypeFilter('service',this)">🔧 Serviços</button>
       <button class="filter-btn" onclick="setStockFilter('baixo',this)">⚠️ Crítico</button>
       <button class="filter-btn" onclick="setStockFilter('normal',this)">✅ Normal</button>
-      <button class="filter-btn" onclick="setStockFilter('alto',this)">📦 Abundante</button>
     </div>
-    <button class="btn btn-primary" onclick="openStockAddProductModal()">✨ Novo Produto</button>
+    <button class="btn btn-primary" onclick="openStockAddProductModal()">+ Novo no catálogo</button>
   </div>
 
   <div class="card">
     <div class="card-header">
       <div>
-        <div class="card-title">Controle de Estoque</div>
+        <div class="card-title">Produtos e serviços</div>
         <div class="card-subtitle" id="stockCount">Carregando...</div>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" onclick="exportStockExcel()">📥 Exportar Excel</button>
@@ -40,7 +47,8 @@
         <thead>
           <tr>
             <th>SKU</th>
-            <th>Produto</th>
+            <th>Item</th>
+            <th>Tipo</th>
             <th>Categoria</th>
             <th>Qtd. Atual</th>
             <th>Mín.</th>
@@ -57,21 +65,28 @@
 </div>
 
 <div class="modal-overlay" id="modal-addProduct">
-  <div class="modal">
+  <div class="modal modal-catalog">
     <div class="modal-header">
-      <div class="modal-title">+ Adicionar Produto</div>
+      <div class="modal-title">+ Cadastrar no catálogo</div>
       <button class="modal-close" onclick="closeModal('addProduct')">✕</button>
     </div>
     <div class="form-grid">
       <div class="form-group form-full">
+        <label class="form-label">Tipo de item</label>
+        <div class="catalog-type-picker">
+          <label class="catalog-type-option"><input type="radio" name="newItemType" value="product" checked> 📦 Produto (estoque)</label>
+          <label class="catalog-type-option"><input type="radio" name="newItemType" value="service"> 🔧 Serviço</label>
+        </div>
+      </div>
+      <div class="form-group form-full">
         <label class="form-label">SKU</label>
-        <div class="form-readonly-hint mono" id="newSkuHint">Será gerado automaticamente ao salvar: código numérico de 8 dígitos (único por produto, adequado para código de barras).</div>
+        <div class="form-readonly-hint mono" id="newSkuHint">Gerado automaticamente (8 dígitos, ideal para código de barras).</div>
       </div>
       <div class="form-group">
-        <label class="form-label">Nome do Produto</label>
-        <input class="form-input" id="newName" placeholder="Ex: Coca-Cola 2L">
+        <label class="form-label">Nome</label>
+        <input class="form-input" id="newName" placeholder="Ex: Troca de tela iPhone 11">
       </div>
-      <div class="form-group">
+      <div class="form-group form-full">
         <label class="form-label">Categoria</label>
         <select class="form-select" id="newCategory">
           <% stockCategoryEntries.forEach(function (entry) { var key = entry[0], meta = entry[1] || {}; %>
@@ -86,50 +101,68 @@
           <img id="newImagePreview" class="stock-img-preview is-empty" alt="Pré-visualização">
         </div>
       </div>
+      <div class="form-group" data-stock-scope="new" data-service-only style="display:none">
+        <label class="form-label">Duração estimada</label>
+        <input class="form-input" id="newServiceDuration" placeholder="Ex: 2h, 1 dia útil">
+      </div>
       <div class="form-group">
-        <label class="form-label">Preço de Custo (R$)</label>
+        <label class="form-label" id="newCostLabel">Custo (R$)</label>
         <input class="form-input mono input-money" id="newCost" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00">
       </div>
+      <div class="form-group" data-stock-scope="new" data-service-only style="display:none">
+        <label class="form-label">Custo de peças / materiais (R$)</label>
+        <input class="form-input mono input-money" id="newPartsCost" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00">
+      </div>
       <div class="form-group">
-        <label class="form-label">Preço de Venda (R$)</label>
+        <label class="form-label">Preço de venda (R$)</label>
         <input class="form-input mono input-money" id="newPrice" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00">
       </div>
-      <div class="form-group">
-        <label class="form-label">Quantidade Inicial</label>
+      <div class="form-group" data-stock-scope="new" data-product-only>
+        <label class="form-label">Quantidade inicial</label>
         <input class="form-input mono" id="newQty" type="number" placeholder="0">
       </div>
-      <div class="form-group">
-        <label class="form-label">Estoque Mínimo</label>
+      <div class="form-group" data-stock-scope="new" data-product-only>
+        <label class="form-label">Estoque mínimo</label>
         <input class="form-input mono" id="newMin" type="number" placeholder="10">
       </div>
       <div class="form-group form-full">
-        <label class="form-label">Descrição</label>
-        <textarea class="form-textarea" id="newDesc" placeholder="Descrição do produto..."></textarea>
+        <label class="form-label">Descrição / observações</label>
+        <textarea class="form-textarea" id="newDesc" placeholder="Detalhes, peças inclusas, garantia..."></textarea>
+      </div>
+      <div class="form-group form-full catalog-cost-summary" id="newCostSummary" data-stock-scope="new" data-service-only style="display:none">
+        <span class="text-sm text-muted">Custo total estimado (mão de obra + peças): <strong class="mono" id="newCostTotalPreview">R$ 0,00</strong></span>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('addProduct')">Cancelar</button>
-      <button class="btn btn-primary" onclick="addProduct()">✅ Adicionar Produto</button>
+      <button class="btn btn-primary" onclick="addProduct()">Salvar</button>
     </div>
   </div>
 </div>
 
 <div class="modal-overlay" id="modal-editProduct">
-  <div class="modal">
+  <div class="modal modal-catalog">
     <div class="modal-header">
-      <div class="modal-title">✏️ Editar Produto</div>
+      <div class="modal-title">✏️ Editar item</div>
       <button class="modal-close" onclick="closeModal('editProduct')">✕</button>
     </div>
     <div class="form-grid">
+      <div class="form-group form-full">
+        <label class="form-label">Tipo de item</label>
+        <div class="catalog-type-picker">
+          <label class="catalog-type-option"><input type="radio" name="editItemType" value="product"> 📦 Produto</label>
+          <label class="catalog-type-option"><input type="radio" name="editItemType" value="service"> 🔧 Serviço</label>
+        </div>
+      </div>
       <div class="form-group">
         <label class="form-label">SKU</label>
         <input class="form-input mono" id="editSku" readonly style="opacity:0.5">
       </div>
       <div class="form-group">
-        <label class="form-label">Nome do Produto</label>
+        <label class="form-label">Nome</label>
         <input class="form-input" id="editName">
       </div>
-      <div class="form-group">
+      <div class="form-group form-full">
         <label class="form-label">Categoria</label>
         <select class="form-select" id="editCategory">
           <% stockCategoryEntries.forEach(function (entry) { var key = entry[0], meta = entry[1] || {}; %>
@@ -144,27 +177,42 @@
           <img id="editImagePreview" class="stock-img-preview is-empty" alt="Foto atual">
         </div>
       </div>
+      <div class="form-group" data-stock-scope="edit" data-service-only style="display:none">
+        <label class="form-label">Duração estimada</label>
+        <input class="form-input" id="editServiceDuration" placeholder="Ex: 2h">
+      </div>
       <div class="form-group">
-        <label class="form-label">Preço Custo (R$)</label>
+        <label class="form-label" id="editCostLabel">Custo (R$)</label>
         <input class="form-input mono input-money" id="editCost" type="text" inputmode="numeric" autocomplete="off">
       </div>
+      <div class="form-group" data-stock-scope="edit" data-service-only style="display:none">
+        <label class="form-label">Custo de peças / materiais (R$)</label>
+        <input class="form-input mono input-money" id="editPartsCost" type="text" inputmode="numeric" autocomplete="off">
+      </div>
       <div class="form-group">
-        <label class="form-label">Preço Venda (R$)</label>
+        <label class="form-label">Preço de venda (R$)</label>
         <input class="form-input mono input-money" id="editPrice" type="text" inputmode="numeric" autocomplete="off">
       </div>
-      <div class="form-group">
-        <label class="form-label">Qtd. Atual</label>
+      <div class="form-group" data-stock-scope="edit" data-product-only>
+        <label class="form-label">Qtd. atual</label>
         <input class="form-input mono" id="editQty" type="number">
       </div>
-      <div class="form-group">
-        <label class="form-label">Estoque Mínimo</label>
+      <div class="form-group" data-stock-scope="edit" data-product-only>
+        <label class="form-label">Estoque mínimo</label>
         <input class="form-input mono" id="editMin" type="number">
+      </div>
+      <div class="form-group form-full">
+        <label class="form-label">Descrição</label>
+        <textarea class="form-textarea" id="editDesc" placeholder="Detalhes do item..."></textarea>
+      </div>
+      <div class="form-group form-full catalog-cost-summary" id="editCostSummary" data-stock-scope="edit" data-service-only style="display:none">
+        <span class="text-sm text-muted">Custo total: <strong class="mono" id="editCostTotalPreview">R$ 0,00</strong></span>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-danger" onclick="deleteProductModal()">🗑️ Excluir</button>
       <button class="btn btn-ghost" onclick="closeModal('editProduct')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveEditProduct()">💾 Salvar Alterações</button>
+      <button class="btn btn-primary" onclick="saveEditProduct()">Salvar alterações</button>
     </div>
   </div>
 </div>
