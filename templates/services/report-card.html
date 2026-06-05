@@ -1,0 +1,21 @@
+<div style="font-family:Inter,Segoe UI,system-ui,sans-serif;max-width:800px;margin:0 auto;color:#0f172a;">
+  <header style="text-align:center;padding:28px 20px 24px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%);border-radius:20px 20px 0 0;color:#fff;">
+    <img src="{{logoUrl}}" alt="" style="height:48px;margin-bottom:12px;object-fit:contain;" onerror="this.style.display='none'">
+    <p style="margin:0;font-size:.75rem;text-transform:uppercase;letter-spacing:.2em;opacity:.85;">Relatório de serviço</p>
+    <h1 style="margin:8px 0 4px;font-size:1.5rem;font-weight:800;">{{code}}</h1>
+    <p style="margin:0;opacity:.9;font-size:.95rem;">{{customerName}}</p>
+  </header>
+  <div style="padding:20px 22px;background:#f8fafc;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">
+    <table style="width:100%;border-collapse:collapse;font-size:.88rem;">
+      <tr><td style="padding:6px 0;color:#64748b;">Aparelho</td><td style="text-align:right;font-weight:600;">{{deviceType}} {{deviceBrandModel}}</td></tr>
+      <tr><td style="padding:6px 0;color:#64748b;">Status</td><td style="text-align:right;font-weight:600;">{{statusLabel}}</td></tr>
+      <tr><td style="padding:6px 0;color:#64748b;">Progresso</td><td style="text-align:right;font-weight:600;">{{progressPercent}}%</td></tr>
+      {{workTemplateRowHtml}}
+    </table>
+  </div>
+  <div style="padding:8px 22px 24px;background:#fff;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 20px 20px;">
+    <h2 style="font-size:1rem;margin:16px 0 12px;color:#0f172a;">Etapas realizadas</h2>
+    {{stagesHtml}}
+    <p style="margin-top:20px;font-size:.78rem;color:#94a3b8;text-align:center;">Emitido em {{issuedAt}} · {{storeName}}</p>
+  </div>
+</div>

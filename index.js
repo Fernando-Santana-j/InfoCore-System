@@ -16,6 +16,8 @@ const QRCode = require('qrcode');
 const { randomUUID } = require("crypto");
 const nodemailer = require('nodemailer');
 const compression = require('compression');
+const whatsappClient = require('./lib/whatsapp');
+const { buildServiceReportFiles } = require('./lib/service-report-export');
 require('dotenv').config();
 // const config = require('./config/config.json');
 
@@ -25,6 +27,7 @@ const BUDGETS_COLLECTION = 'budgets';
 const CUSTOMERS_COLLECTION = 'customers';
 const CASH_FLOW_COLLECTION = 'cash_flow';
 const SERVICE_ORDERS_COLLECTION = 'service_orders';
+const SERVICE_WORK_TEMPLATES_COLLECTION = 'service_work_templates';
 const INFOCORE_COLLECTION = 'infocore';
 const SHARED_NOTES_DOC = 'shared_notes';
 const { FieldValue } = require('firebase-admin/firestore');
@@ -334,16 +337,22 @@ function defaultServiceChecklistState(deviceType) {
         photos: [],
         done: false,
         techNote: '',
-        techPhotos: []
+        techPhotos: [],
+        beforePhotos: [],
+        afterPhotos: [],
+        fromTemplate: false
     }));
 }
 
 function normalizeServicePhotoItem(item) {
     const r = item && typeof item === 'object' ? item : {};
+    const kindRaw = String(r.kind || 'general').toLowerCase();
+    const kind = kindRaw === 'before' ? 'before' : (kindRaw === 'after' ? 'after' : 'general');
     return {
         id: r.id != null ? String(r.id) : randomUUID(),
         url: r.url != null ? String(r.url).trim() : '',
         caption: r.caption != null ? String(r.caption).trim() : '',
+        kind,
         createdAt: r.createdAt || null
     };
 }
@@ -368,7 +377,11 @@ function normalizeServiceChecklistItem(item) {
         photos: Array.isArray(r.photos) ? r.photos.map(normalizeServicePhotoItem).filter((p) => p.url) : [],
         done: Boolean(r.done),
         techNote: r.techNote != null ? String(r.techNote).trim() : '',
-        techPhotos: Array.isArray(r.techPhotos) ? r.techPhotos.map(normalizeServicePhotoItem).filter((p) => p.url) : []
+        techPhotos: Array.isArray(r.techPhotos) ? r.techPhotos.map(normalizeServicePhotoItem).filter((p) => p.url) : [],
+        beforePhotos: Array.isArray(r.beforePhotos) ? r.beforePhotos.map(normalizeServicePhotoItem).filter((p) => p.url) : [],
+        afterPhotos: Array.isArray(r.afterPhotos) ? r.afterPhotos.map(normalizeServicePhotoItem).filter((p) => p.url) : [],
+        fromTemplate: Boolean(r.fromTemplate),
+        archived: Boolean(r.archived)
     };
 }
 
@@ -410,8 +423,431 @@ function normalizeServiceOrderRow(row) {
         createdBy: r.createdBy && typeof r.createdBy === 'object' ? {
             name: r.createdBy.name != null ? String(r.createdBy.name) : '',
             email: r.createdBy.email != null ? String(r.createdBy.email) : ''
-        } : null
+        } : null,
+        workTemplateId: r.workTemplateId != null ? String(r.workTemplateId).trim() : '',
+        workTemplateName: r.workTemplateName != null ? String(r.workTemplateName).trim() : '',
+        shareToken: r.shareToken != null ? String(r.shareToken).trim() : '',
+        shareCreatedAt: r.shareCreatedAt || null
     };
+}
+
+function normalizeServiceWorkTemplateRow(row) {
+    const r = row && typeof row === 'object' ? row : {};
+    const stages = Array.isArray(r.stages) ? r.stages.map((s, i) => {
+        const stage = s && typeof s === 'object' ? s : {};
+        const key = String(stage.key || stage.id || `stage-${i + 1}`).trim() || `stage-${i + 1}`;
+        return {
+            key,
+            label: String(stage.label || stage.title || `Etapa ${i + 1}`).trim(),
+            icon: stage.icon != null ? String(stage.icon) : '🔧',
+            defaultNote: stage.defaultNote != null ? String(stage.defaultNote).trim() : '',
+            sortOrder: Number.isFinite(Number(stage.sortOrder)) ? Number(stage.sortOrder) : i
+        };
+    }).filter((s) => s.label) : [];
+    stages.sort((a, b) => a.sortOrder - b.sortOrder);
+    const deviceTypes = Array.isArray(r.deviceTypes)
+        ? r.deviceTypes.map((d) => String(d).trim()).filter(Boolean)
+        : [];
+    return {
+        id: r.id != null ? String(r.id) : '',
+        name: String(r.name || '').trim(),
+        description: r.description != null ? String(r.description).trim() : '',
+        icon: r.icon != null ? String(r.icon) : '🔧',
+        deviceTypes,
+        stages,
+        active: r.active !== false,
+        createdAt: r.createdAt || null,
+        updatedAt: r.updatedAt || null
+    };
+}
+
+async function loadServiceWorkTemplatesNormalized() {
+    const rows = await db.findAll({ colecao: SERVICE_WORK_TEMPLATES_COLLECTION }).catch(() => []);
+    const list = Array.isArray(rows) ? rows.map(normalizeServiceWorkTemplateRow).filter((t) => t.name) : [];
+    list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
+    return list;
+}
+
+function getPublicBaseUrl(req) {
+    const reqBase = req?.get?.('host')
+        ? `${req.protocol}://${req.get('host')}`
+        : '';
+    const envBase = process.env.APP_PUBLIC_BASE_URL
+        ? String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '')
+        : '';
+    // Prioriza o host da requisição para links gerados durante o uso (evita APP_PUBLIC_BASE_URL desatualizado).
+    return process.env.APP_PUBLIC_BASE_URL;
+}
+
+function serviceShareUrl(shareToken, req) {
+    const base = getPublicBaseUrl(req);
+    if (!base || !shareToken) return '';
+    return `${base}/p/os/${encodeURIComponent(shareToken)}`;
+}
+
+async function ensureServiceShareToken(serviceRow, req) {
+    const prev = normalizeServiceOrderRow(serviceRow);
+    if (prev.shareToken) {
+        return {
+            service: prev,
+            shareUrl: serviceShareUrl(prev.shareToken, req),
+            created: false
+        };
+    }
+    const shareToken = randomUUID().replace(/-/g, '').slice(0, 24);
+    const shareCreatedAt = new Date().toISOString();
+    await db.update(SERVICE_ORDERS_COLLECTION, prev.id, { shareToken, shareCreatedAt });
+    const service = normalizeServiceOrderRow({
+        ...prev,
+        shareToken,
+        shareCreatedAt
+    });
+    return {
+        service,
+        shareUrl: serviceShareUrl(shareToken, req),
+        created: true
+    };
+}
+
+function serviceStatusLabelPt(status) {
+    const m = {
+        open: 'Aberta',
+        in_progress: 'Em andamento',
+        waiting_parts: 'Aguardando peça',
+        done: 'Concluída',
+        delivered: 'Entregue'
+    };
+    return m[String(status || '')] || 'Em andamento';
+}
+
+function serviceShareableStages(service) {
+    return (service?.checklist || []).filter((item) => item.defective);
+}
+
+function buildServiceStagesHtml(service, options = {}) {
+    const compact = options?.compact === true;
+    const stages = serviceShareableStages(service);
+    if (!stages.length) {
+        return '<p style="color:#64748b;font-size:.9rem;">Nenhuma etapa registrada nesta ordem.</p>';
+    }
+    const pad = compact ? '14px' : '20px';
+    return stages.map((item, index) => {
+        const intakePhotos = item.photos || [];
+        const before = (item.beforePhotos || []).length
+            ? item.beforePhotos
+            : (item.techPhotos || []).filter((p) => p.kind === 'before');
+        const after = (item.afterPhotos || []).length
+            ? item.afterPhotos
+            : (item.techPhotos || []).filter((p) => p.kind === 'after');
+        const generalTech = (item.techPhotos || []).filter((p) => !p.kind || p.kind === 'general');
+        const photoCell = (photos, label) => {
+            if (!photos?.length) return '';
+            const thumbs = photos.map((p) => {
+                const cap = p.caption ? `<span style="display:block;font-size:.65rem;color:#64748b;margin-top:4px;">${safeTemplateValue(p.caption)}</span>` : '';
+                return `<figure style="margin:0;flex:1;min-width:100px;max-width:200px;">
+  <img src="${safeTemplateValue(p.url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px;border:1px solid #e2e8f0;">
+  ${cap}
+</figure>`;
+            }).join('');
+            return `<div style="margin-top:10px;">
+  <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:6px;">${label}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;">${thumbs}</div>
+</div>`;
+        };
+        const statusBadge = item.done
+            ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Concluído</span>'
+            : '<span style="background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Em andamento</span>';
+        return `
+<article style="border:1px solid #e2e8f0;border-radius:16px;padding:${pad};margin-bottom:16px;background:#fff;box-shadow:0 4px 24px rgba(15,23,42,.06);">
+  <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;">
+    <span style="font-size:1.6rem;line-height:1;">${safeTemplateValue(item.icon || '🔧')}</span>
+    <div style="flex:1;">
+      <div style="font-size:.72rem;color:#94a3b8;font-weight:600;">Etapa ${index + 1}</div>
+      <h3 style="margin:4px 0 0;font-size:1.05rem;color:#0f172a;">${safeTemplateValue(item.label)}</h3>
+    </div>
+    ${statusBadge}
+  </div>
+  ${item.customerNote ? `<p style="margin:0 0 10px;font-size:.88rem;color:#475569;"><strong>Relato:</strong> ${safeTemplateValue(item.customerNote)}</p>` : ''}
+  ${item.techNote ? `<p style="margin:0 0 10px;font-size:.88rem;color:#0f172a;background:#f8fafc;padding:12px;border-radius:10px;border-left:3px solid #f2c94c;"><strong>Serviço realizado:</strong> ${safeTemplateValue(item.techNote)}</p>` : ''}
+  ${intakePhotos.length ? photoCell(intakePhotos, 'Fotos do recebimento') : ''}
+  ${before.length || after.length ? `
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+    ${before.length ? `<div style="background:#fef2f2;border-radius:12px;padding:10px;">${photoCell(before, 'Antes')}</div>` : '<div></div>'}
+    ${after.length ? `<div style="background:#f0fdf4;border-radius:12px;padding:10px;">${photoCell(after, 'Depois')}</div>` : '<div></div>'}
+  </div>` : ''}
+  ${generalTech.length ? photoCell(generalTech, 'Registro do reparo') : ''}
+</article>`;
+    }).join('');
+}
+
+function serviceTemplateData(service, req, options = {}) {
+    const compact = options?.compact === true;
+    const base = getPublicBaseUrl(req);
+    const logoUrl = base ? `${base}/public/img/logo_bg.png` : '/public/img/logo_bg.png';
+    const shareUrl = serviceShareUrl(service?.shareToken, req);
+    const stages = serviceShareableStages(service);
+    const done = stages.filter((s) => s.done).length;
+    const progress = stages.length ? Math.round((done / stages.length) * 100) : 0;
+    const storeName = options?.storeName != null
+        ? String(options.storeName)
+        : (options?.configs?.storeName || options?.configs?.name || 'InfoCore');
+    return {
+        code: safeTemplateValue(service?.code || 'OS'),
+        customerName: safeTemplateValue(service?.customerName || 'Cliente'),
+        customerPhone: safeTemplateValue(service?.customerPhone || '-'),
+        deviceType: safeTemplateValue(service?.deviceType || ''),
+        deviceBrandModel: safeTemplateValue(service?.deviceBrandModel || ''),
+        accessories: safeTemplateValue(service?.accessories || '-'),
+        issueReport: safeTemplateValue(service?.issueReport || '-'),
+        statusLabel: safeTemplateValue(serviceStatusLabelPt(service?.status)),
+        progressPercent: String(progress),
+        progressLabel: `${done}/${stages.length} etapas`,
+        workTemplateName: safeTemplateValue(service?.workTemplateName || ''),
+        workTemplateRowHtml: service?.workTemplateName
+            ? `<tr><td style="padding:6px 0;color:#64748b;">Pacote</td><td style="text-align:right;font-weight:600;">${safeTemplateValue(service.workTemplateName)}</td></tr>`
+            : '',
+        stagesHtml: buildServiceStagesHtml(service, { compact }),
+        shareUrl: safeTemplateValue(shareUrl),
+        shareLinkBlock: shareUrl
+            ? `<a href="${safeTemplateValue(shareUrl)}" style="color:#b45309;font-weight:700;text-decoration:none;">${safeTemplateValue(shareUrl)}</a>`
+            : '',
+        logoUrl,
+        storeName: safeTemplateValue(storeName),
+        issuedAt: formatDateBr(new Date().toISOString().slice(0, 10)),
+        updatedAt: formatDateBr(service?.updatedAt || service?.createdAt || '')
+    };
+}
+
+function readServiceTemplate(filename, fallback = '') {
+    const templatePath = path.join(__dirname, 'templates', 'services', filename);
+    try {
+        return fs.readFileSync(templatePath, 'utf8');
+    } catch {
+        return fallback;
+    }
+}
+
+function renderServiceTemplateHtml(kind, service, req, options = {}) {
+    const compact = kind === 'pdf';
+    const data = {
+        ...serviceTemplateData(service, req, options),
+        reportCardHtml: renderTemplateString(
+            readServiceTemplate('report-card.html', '<div>{{stagesHtml}}</div>'),
+            serviceTemplateData(service, req, { compact, ...options })
+        )
+    };
+    const file = kind === 'image' ? 'image.html' : 'pdf.html';
+    const fallback = kind === 'image'
+        ? '<div id="serviceImageArea">{{reportCardHtml}}</div>'
+        : '<div id="servicePrintArea">{{reportCardHtml}}</div>';
+    return renderTemplateString(readServiceTemplate(file, fallback), data);
+}
+
+function renderServiceTemplateText(kind, service, req, options = {}) {
+    const file = kind === 'whatsapp' ? 'whatsapp.txt' : 'whatsapp.txt';
+    const fallback = `*Serviço {{code}}* — {{storeName}}\n\nOlá, {{customerName}}!\n\nSeu {{deviceType}} {{deviceBrandModel}} foi atendido.\nProgresso: {{progressPercent}}% ({{progressLabel}})\n\nAcompanhe cada etapa com fotos:\n{{shareUrl}}\n\n— Equipe {{storeName}}`;
+    return renderTemplateString(readServiceTemplate(file, fallback), serviceTemplateData(service, req, options));
+}
+
+async function generateServiceShareQrDataUrl(shareUrl) {
+    if (!shareUrl) return '';
+    return QRCode.toDataURL(shareUrl, {
+        width: 320,
+        margin: 2,
+        color: { dark: '#0f172a', light: '#ffffff' }
+    });
+}
+
+async function saveShareQrPng(shareToken, shareUrl) {
+    const dir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const filename = `os-share-${shareToken}.png`;
+    const filePath = path.join(dir, filename);
+    await QRCode.toFile(filePath, shareUrl, {
+        width: 400,
+        margin: 2,
+        color: { dark: '#0f172a', light: '#ffffff' }
+    });
+    return `/uploads/${filename}`;
+}
+
+async function fetchServiceByShareToken(token) {
+    const t = String(token || '').trim();
+    if (!t) return null;
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION)
+        .where('shareToken', '==', t)
+        .limit(1)
+        .get();
+    if (!snap.empty) {
+        const doc = snap.docs[0];
+        return normalizeServiceOrderRow({ id: doc.id, ...(doc.data() || {}) });
+    }
+    const byId = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(t).get();
+    if (!byId.exists) return null;
+    let row = normalizeServiceOrderRow({ id: byId.id, ...(byId.data() || {}) });
+    if (!row.shareToken) {
+        const shareToken = randomUUID().replace(/-/g, '').slice(0, 24);
+        const shareCreatedAt = new Date().toISOString();
+        await db.update(SERVICE_ORDERS_COLLECTION, byId.id, { shareToken, shareCreatedAt });
+        row = normalizeServiceOrderRow({ ...row, shareToken, shareCreatedAt });
+    }
+    return row;
+}
+
+async function sendServiceWhatsapp(service, req, options = {}) {
+    const to = sanitizePhone(service?.customerPhone || '');
+    if (!to) return { sent: false, skipped: true, reason: 'Sem telefone do cliente.' };
+    if (!whatsappClient.hasSavedSession()) {
+        return { sent: false, skipped: true, reason: 'WhatsApp não conectado. Vá em Configurações e escaneie o QR Code.' };
+    }
+
+    const share = await ensureServiceShareToken(service, req);
+    const svc = share.service;
+    const shareUrl = share.shareUrl;
+    const text = renderServiceTemplateText('whatsapp', svc, req, options);
+    const reportFiles = options.reportFiles || {};
+    const warnings = [];
+
+    if (options.includeImage && !reportFiles.imagePath) {
+        warnings.push('Marque a prévia do relatório antes de enviar ou aguarde o carregamento da imagem.');
+    }
+
+    let firstResult;
+    try {
+        if (options.includeQr && shareUrl && svc.shareToken) {
+            const qrRelPath = await saveShareQrPng(svc.shareToken, shareUrl);
+            const qrAbs = path.join(__dirname, qrRelPath.replace(/^\//, ''));
+            firstResult = await whatsappClient.sendImage(to, qrAbs, text);
+        } else {
+            firstResult = await whatsappClient.sendText(to, text);
+        }
+    } catch (e) {
+        console.error('[WhatsApp] envio texto OS:', e.message);
+        return { sent: false, error: true, reason: e.message || 'Falha ao enviar mensagem.' };
+    }
+
+    let pdfSent = false;
+    if (options.includePdf && reportFiles.pdfPath) {
+        try {
+            await whatsappClient.sendDocument(to, reportFiles.pdfPath, {
+                fileName: reportFiles.pdfFileName || `OS-${svc.code || 'relatorio'}.pdf`,
+                mimetype: 'application/pdf',
+                caption: `Relatório em PDF — ${svc.code || 'OS'}`
+            });
+            pdfSent = true;
+        } catch (e) {
+            warnings.push(`PDF: ${e.message || 'falha no envio'}`);
+            console.error('[WhatsApp] PDF:', e.message);
+        }
+    } else if (options.includePdf) {
+        warnings.push('PDF não foi gerado.');
+    }
+
+    let imageSent = false;
+    if (options.includeImage && reportFiles.imagePath) {
+        try {
+            await whatsappClient.sendImage(to, reportFiles.imagePath, `Relatório visual — ${svc.code || 'OS'}`);
+            imageSent = true;
+        } catch (e) {
+            warnings.push(`Imagem: ${e.message || 'falha no envio'}`);
+            console.error('[WhatsApp] imagem relatório:', e.message);
+        }
+    }
+
+    return {
+        sent: true,
+        shareUrl,
+        to: firstResult?.to || to,
+        messageId: firstResult?.messageId || '',
+        qrSent: Boolean(options.includeQr && shareUrl),
+        pdfSent,
+        imageSent,
+        ...(warnings.length ? { warning: warnings.join(' ') } : {})
+    };
+}
+
+async function dispatchServiceShare(service, req, body = {}) {
+    const report = { whatsapp: null, share: null };
+    const options = {
+        includeLink: body.includeLink !== false,
+        includeQr: Boolean(body.includeQr),
+        includePdf: Boolean(body.includePdf),
+        includeImage: Boolean(body.includeImage)
+    };
+    try {
+        report.share = await ensureServiceShareToken(service, req);
+        service = report.share.service;
+    } catch (e) {
+        report.share = { error: true, reason: e.message || 'Falha ao gerar link.' };
+    }
+    if (body.sendWhatsapp) {
+        try {
+            const configs = await getConfigsSafe();
+            let reportFiles = {};
+            const svcForFiles = report.share?.service || service;
+            if (options.includePdf || (options.includeImage && body.reportImageBase64)) {
+                reportFiles = await buildServiceReportFiles(svcForFiles, __dirname, {
+                    includePdf: options.includePdf,
+                    includeImage: options.includeImage,
+                    imageBase64: body.reportImageBase64,
+                    storeName: configs?.storeName || configs?.name || 'InfoCore',
+                    shareUrl: report.share?.shareUrl || ''
+                });
+            }
+            report.whatsapp = await sendServiceWhatsapp(svcForFiles, req, {
+                ...options,
+                configs,
+                reportFiles
+            });
+        } catch (e) {
+            report.whatsapp = { sent: false, error: true, reason: e.message || 'Falha no envio por WhatsApp.' };
+        }
+    }
+    let qrDataUrl = '';
+    if (report.share?.shareUrl) {
+        try {
+            qrDataUrl = await generateServiceShareQrDataUrl(report.share.shareUrl);
+        } catch (e) {
+            console.error('QR generation', e);
+        }
+    }
+    return {
+        ...report,
+        shareUrl: report.share?.shareUrl || '',
+        qrDataUrl,
+        service: report.share?.service || service
+    };
+}
+
+function applyWorkTemplateToChecklist(existingChecklist, template, deviceType) {
+    const tpl = normalizeServiceWorkTemplateRow(template);
+    if (!tpl.id || !tpl.stages.length) return existingChecklist;
+    if (tpl.deviceTypes.length && !tpl.deviceTypes.includes(deviceType)) {
+        return existingChecklist;
+    }
+    const list = Array.isArray(existingChecklist) ? [...existingChecklist] : [];
+    const existingKeys = new Set(list.map((i) => String(i.key)));
+    for (const stage of tpl.stages) {
+        const key = `tpl-${tpl.id}-${stage.key}`;
+        if (existingKeys.has(key)) continue;
+        list.push(normalizeServiceChecklistItem({
+            key,
+            label: stage.label,
+            icon: stage.icon,
+            defective: true,
+            customerNote: stage.defaultNote,
+            estimatedPrice: null,
+            photos: [],
+            done: false,
+            techNote: '',
+            techPhotos: [],
+            beforePhotos: [],
+            afterPhotos: [],
+            fromTemplate: true
+        }));
+        existingKeys.add(key);
+    }
+    return list;
 }
 
 function buildServiceBudgetNotes(serviceRow, budgetRawNotes) {
@@ -493,14 +929,55 @@ async function createLinkedBudgetForService(serviceDraft, sessionUser) {
 }
 
 async function loadServiceOrdersNormalized() {
-    const rows = await db.findAll({ colecao: SERVICE_ORDERS_COLLECTION }).catch(() => []);
-    const list = Array.isArray(rows) ? rows.map(normalizeServiceOrderRow) : [];
+    const rows = await db.findAll({ colecao: SERVICE_ORDERS_COLLECTION }).catch((err) => {
+        console.error('[OS] Erro ao listar ordens:', err);
+        return [];
+    });
+    const list = Array.isArray(rows) ? rows.map((row) => {
+        const id = row?.id != null ? String(row.id) : '';
+        return normalizeServiceOrderRow({ ...row, id });
+    }).filter((row) => row.id && row.customerName) : [];
     list.sort((a, b) => {
         const ta = new Date(a.updatedAt || a.createdAt || 0).getTime();
         const tb = new Date(b.updatedAt || b.createdAt || 0).getTime();
         return tb - ta;
     });
     return list;
+}
+
+function serviceOrderFirestorePayload(row) {
+    const n = normalizeServiceOrderRow(row);
+    return {
+        id: n.id,
+        code: n.code,
+        budgetId: n.budgetId,
+        customerId: n.customerId,
+        customerName: n.customerName,
+        customerPhone: n.customerPhone,
+        customerEmail: n.customerEmail,
+        deviceType: n.deviceType,
+        deviceBrandModel: n.deviceBrandModel,
+        accessories: n.accessories,
+        issueReport: n.issueReport,
+        budgetRawNotes: n.budgetRawNotes,
+        estimateValue: n.estimateValue,
+        checklist: n.checklist,
+        progressNotes: n.progressNotes,
+        status: n.status,
+        priority: n.priority,
+        createdAt: n.createdAt,
+        updatedAt: n.updatedAt,
+        createdBy: n.createdBy,
+        workTemplateId: n.workTemplateId,
+        workTemplateName: n.workTemplateName,
+        shareToken: n.shareToken || '',
+        shareCreatedAt: n.shareCreatedAt || null
+    };
+}
+
+function isValidServicePhone(raw) {
+    const digits = sanitizePhone(raw);
+    return digits.length >= 10 && digits.length <= 15;
 }
 
 function currentMonthKey() {
@@ -1032,14 +1509,17 @@ async function sendBudgetEmail(budget) {
 async function sendBudgetWhatsapp(budget) {
     const to = sanitizePhone(budget?.customerPhone || '');
     if (!to) return { sent: false, skipped: true, reason: 'Sem telefone do cliente.' };
-    const apiUrl = String(process.env.WHATSAPP_API_URL || '').trim();
-    if (!apiUrl) return { sent: false, skipped: true, reason: 'WHATSAPP_API_URL não configurada.' };
-    const token = String(process.env.WHATSAPP_API_TOKEN || '').trim();
+    if (!whatsappClient.hasSavedSession()) {
+        return { sent: false, skipped: true, reason: 'WhatsApp não conectado. Vá em Configurações e escaneie o QR Code.' };
+    }
     const text = renderBudgetTemplateText('whatsapp', budget);
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    await axios.post(apiUrl, { to, message: text }, { headers, timeout: 12000 });
-    return { sent: true };
+    try {
+        await whatsappClient.sendText(to, text);
+        return { sent: true };
+    } catch (e) {
+        console.error('[WhatsApp] envio orçamento:', e.message);
+        return { sent: false, error: true, reason: e.message || 'Falha ao enviar.' };
+    }
 }
 
 async function dispatchBudgetNotifications(budget) {
@@ -1442,7 +1922,66 @@ app.use('/public', express.static(path.join(__dirname, 'public'), staticOpts));
 
 app.set('views', path.join(__dirname, '/views'))
 app.set('view engine', 'ejs');
+app.set('trust proxy', 1);
 
+app.get('/p/os/:token', async (req, res) => {
+    const token = String(req.params.token || '').trim();
+    const service = await fetchServiceByShareToken(token);
+    if (!service) {
+        return res.status(404).send('<!DOCTYPE html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px;"><h1>Link inválido ou expirado</h1></body></html>');
+    }
+    const configs = await getConfigsSafe();
+    return res.render('service-share-public', {
+        service,
+        configs,
+        shareUrl: serviceShareUrl(service.shareToken, req),
+        layout: false
+    });
+});
+
+app.get('/api/public/os/:token', async (req, res) => {
+    const service = await fetchServiceByShareToken(String(req.params.token || '').trim());
+    if (!service) {
+        return res.status(404).json({ error: true, message: 'Relatório não encontrado.' });
+    }
+    const shareUrl = serviceShareUrl(service.shareToken, req);
+    let qrDataUrl = '';
+    try {
+        qrDataUrl = await generateServiceShareQrDataUrl(shareUrl);
+    } catch (e) {
+        console.error(e);
+    }
+    return res.json({
+        error: false,
+        service: {
+            code: service.code,
+            customerName: service.customerName,
+            deviceType: service.deviceType,
+            deviceBrandModel: service.deviceBrandModel,
+            status: service.status,
+            checklist: serviceShareableStages(service),
+            progressPercent: (() => {
+                const s = serviceShareableStages(service);
+                const done = s.filter((i) => i.done).length;
+                return s.length ? Math.round((done / s.length) * 100) : 0;
+            })()
+        },
+        shareUrl,
+        qrDataUrl
+    });
+});
+
+app.get('/api/public/os/:token/report', async (req, res) => {
+    const service = await fetchServiceByShareToken(String(req.params.token || '').trim());
+    if (!service) {
+        return res.status(404).send('Não encontrado');
+    }
+    const configs = await getConfigsSafe();
+    const html = renderServiceTemplateHtml('pdf', service, req, { configs });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>OS ${service.code}</title>
+<style>@media print{@page{size:A4;margin:8mm}body{margin:0}}</style></head><body>${html}</body></html>`);
+});
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -1671,7 +2210,8 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
                 serviceChecklistTemplates: {
                     base: SERVICE_CHECKLIST_BASE,
                     byDevice: SERVICE_CHECKLIST_BY_DEVICE
-                }
+                },
+                serviceWorkTemplates: await loadServiceWorkTemplatesNormalized().then((t) => t.filter((x) => x.active))
             });
         }
 
@@ -1700,17 +2240,22 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'services') {
-            const [services, budgetRows] = await Promise.all([
+            const [services, budgetRows, serviceWorkTemplates] = await Promise.all([
                 loadServiceOrdersNormalized(),
-                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
+                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+                loadServiceWorkTemplatesNormalized()
             ]);
             const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-            return res.json({ configs, services, budgets });
+            return res.json({ configs, services, budgets, serviceWorkTemplates });
         }
 
         if (scope === 'cashflow') {
             const cashFlowEntries = await loadCashFlowNormalized();
             return res.json({ configs, cashFlowEntries });
+        }
+
+        if (scope === 'config') {
+            return res.json({ configs, whatsapp: whatsappClient.getStatus() });
         }
 
         return res.status(404).json({ error: true, message: 'Página não suportada.' });
@@ -1776,13 +2321,13 @@ app.get('/services', verifyAdmin, (req, res) => {
 app.get('/services/:id', verifyAdmin, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.redirect('/services');
-    const configsRaw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    const configs = configsRaw && configsRaw.error !== true ? configsRaw : {};
-    const services = await loadServiceOrdersNormalized();
-    const service = services.find((s) => String(s.id) === id);
-    if (!service) return res.redirect('/services');
+    const configs = await getConfigsSafe();
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
+    if (!snap.exists) return res.redirect('/services');
+    const service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
     res.render('layout', {
         body: 'service-work',
+        bootstrap: '',
         appData: { configs, user: req.session.user, service }
     });
 });
@@ -3619,6 +4164,182 @@ app.get('/api/services/templates', verifyLogin, (req, res) => {
     });
 });
 
+app.get('/api/service-work-templates', verifyLogin, async (req, res) => {
+    const templates = await loadServiceWorkTemplatesNormalized();
+    const activeOnly = String(req.query.active || '') === '1';
+    return res.json({
+        error: false,
+        templates: activeOnly ? templates.filter((t) => t.active) : templates
+    });
+});
+
+app.get('/api/service-work-templates/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    const snap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Template não encontrado.' });
+    }
+    return res.json({
+        error: false,
+        template: normalizeServiceWorkTemplateRow({ id, ...(snap.data() || {}) })
+    });
+});
+
+app.post('/api/service-work-templates', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const body = req.body || {};
+    const name = String(body.name || '').trim();
+    if (!name) {
+        return res.status(400).json({ error: true, message: 'Informe o nome do template.' });
+    }
+    const stages = Array.isArray(body.stages) ? body.stages : [];
+    if (!stages.length) {
+        return res.status(400).json({ error: true, message: 'Adicione ao menos uma etapa padrão.' });
+    }
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const payload = normalizeServiceWorkTemplateRow({
+        id,
+        name,
+        description: body.description,
+        icon: body.icon,
+        deviceTypes: body.deviceTypes,
+        stages,
+        active: body.active !== false,
+        createdAt: now,
+        updatedAt: now
+    });
+    try {
+        await db.create(SERVICE_WORK_TEMPLATES_COLLECTION, id, payload);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao criar template.' });
+    }
+    return res.json({ error: false, template: payload });
+});
+
+app.patch('/api/service-work-templates/:id', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const id = String(req.params.id || '').trim();
+    const snap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Template não encontrado.' });
+    }
+    const prev = normalizeServiceWorkTemplateRow({ id, ...(snap.data() || {}) });
+    const body = req.body || {};
+    const merged = normalizeServiceWorkTemplateRow({
+        ...prev,
+        name: body.name != null ? body.name : prev.name,
+        description: body.description != null ? body.description : prev.description,
+        icon: body.icon != null ? body.icon : prev.icon,
+        deviceTypes: body.deviceTypes != null ? body.deviceTypes : prev.deviceTypes,
+        stages: body.stages != null ? body.stages : prev.stages,
+        active: body.active != null ? body.active !== false : prev.active,
+        updatedAt: new Date().toISOString()
+    });
+    if (!merged.name) {
+        return res.status(400).json({ error: true, message: 'Nome inválido.' });
+    }
+    try {
+        await db.update(SERVICE_WORK_TEMPLATES_COLLECTION, id, merged);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar template.' });
+    }
+    return res.json({ error: false, template: merged });
+});
+
+app.delete('/api/service-work-templates/:id', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const id = String(req.params.id || '').trim();
+    try {
+        await db.delete(SERVICE_WORK_TEMPLATES_COLLECTION, id);
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao excluir template.' });
+    }
+    return res.json({ error: false });
+});
+
+app.post('/api/services/template', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const kind = String(req.body?.kind || 'image').trim();
+    let service = normalizeServiceOrderRow(req.body?.service || {});
+    if (!service.id && !service.code) {
+        return res.status(400).json({ error: true, message: 'OS inválida.' });
+    }
+    if (service.id) {
+        const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(service.id).get();
+        if (snap.exists) {
+            service = normalizeServiceOrderRow({ id: service.id, ...(snap.data() || {}) });
+        }
+    }
+    const configs = await getConfigsSafe();
+    if (!service.shareToken) {
+        const share = await ensureServiceShareToken(service, req);
+        service = share.service;
+    }
+    const allowed = new Set(['image', 'pdf', 'whatsapp', 'report']);
+    const k = allowed.has(kind) ? kind : 'image';
+    if (k === 'whatsapp') {
+        return res.json({ error: false, text: renderServiceTemplateText('whatsapp', service, req, { configs }) });
+    }
+    const html = renderServiceTemplateHtml(k === 'report' ? 'image' : k, service, req, { configs });
+    return res.json({ error: false, html });
+});
+
+app.post('/api/services/:id/share', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    const id = String(req.params.id || '').trim();
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
+    if (!snap.exists) {
+        return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
+    }
+    let service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
+    const body = req.body || {};
+    const report = await dispatchServiceShare(service, req, {
+        sendWhatsapp: Boolean(body.sendWhatsapp),
+        includeLink: body.includeLink !== false,
+        includeQr: Boolean(body.includeQr),
+        includePdf: Boolean(body.includePdf),
+        includeImage: Boolean(body.includeImage),
+        reportImageBase64: body.reportImageBase64 ? String(body.reportImageBase64) : ''
+    });
+    if (body.markDelivered && report.share?.service) {
+        try {
+            await db.update(SERVICE_ORDERS_COLLECTION, id, {
+                status: 'delivered',
+                updatedAt: new Date().toISOString()
+            });
+            report.service = normalizeServiceOrderRow({
+                ...report.service,
+                status: 'delivered'
+            });
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    const ok = !body.sendWhatsapp || (report.whatsapp && report.whatsapp.sent);
+    return res.json({
+        error: false,
+        success: ok,
+        shareUrl: report.shareUrl,
+        qrDataUrl: report.qrDataUrl,
+        whatsapp: report.whatsapp,
+        service: report.service
+    });
+});
+
 app.get('/api/services', verifyLogin, async (req, res) => {
     if (req.session.user?.type !== 'admin') {
         return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
@@ -3655,14 +4376,39 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         ? null
         : Math.max(0, Number(estimateValueRaw) || 0);
 
-    const incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
-    const checklist = incomingChecklist.length
+    let incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
+    let checklist = incomingChecklist.length
         ? incomingChecklist.map(normalizeServiceChecklistItem).filter((item) => item.label)
         : defaultServiceChecklistState(deviceType);
 
+    const workTemplateId = String(body.workTemplateId || '').trim();
+    let workTemplateName = String(body.workTemplateName || '').trim();
+    if (workTemplateId) {
+        const tplSnap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(workTemplateId).get();
+        if (tplSnap.exists) {
+            const tpl = normalizeServiceWorkTemplateRow({ id: workTemplateId, ...(tplSnap.data() || {}) });
+            workTemplateName = tpl.name;
+            checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
+        }
+    }
+    if (Array.isArray(body.applyTemplateIds) && body.applyTemplateIds.length) {
+        for (const tid of body.applyTemplateIds) {
+            const tplSnap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(String(tid).trim()).get();
+            if (tplSnap.exists) {
+                const tpl = normalizeServiceWorkTemplateRow({ id: tplSnap.id, ...(tplSnap.data() || {}) });
+                checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
+                if (!workTemplateName && tpl.name) workTemplateName = tpl.name;
+            }
+        }
+    }
+
     const defectiveItems = checklist.filter((item) => item.defective);
+    const customerPhone = String(body.customerPhone || '').trim();
     if (!customerName) {
         return res.status(400).json({ error: true, message: 'Informe o nome do cliente.' });
+    }
+    if (!isValidServicePhone(customerPhone)) {
+        return res.status(400).json({ error: true, message: 'Informe o WhatsApp/telefone do cliente (mín. 10 dígitos).' });
     }
     if (!deviceBrandModel) {
         return res.status(400).json({ error: true, message: 'Informe marca/modelo do aparelho.' });
@@ -3670,7 +4416,7 @@ app.post('/api/services', verifyLogin, async (req, res) => {
     if (!defectiveItems.length && !issueReport) {
         return res.status(400).json({
             error: true,
-            message: 'Marque ao menos um item com defeito ou preencha o relato geral.'
+            message: 'Marque ao menos um serviço/defeito ou preencha o relato do problema.'
         });
     }
 
@@ -3683,7 +4429,7 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         budgetId: '',
         customerId: String(body.customerId || '').trim(),
         customerName,
-        customerPhone: String(body.customerPhone || '').trim(),
+        customerPhone,
         customerEmail: String(body.customerEmail || '').trim(),
         deviceType,
         deviceBrandModel,
@@ -3700,7 +4446,9 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         createdBy: {
             name: req.session.user?.name || '',
             email: req.session.user?.email || ''
-        }
+        },
+        workTemplateId: workTemplateId || '',
+        workTemplateName
     });
 
     let budgetLink;
@@ -3723,10 +4471,12 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         customerEmail: budgetLink.budget?.customerEmail || serviceDraft.customerEmail
     });
 
+    const firestorePayload = serviceOrderFirestorePayload(payload);
+
     try {
-        await db.create(SERVICE_ORDERS_COLLECTION, id, payload);
+        await db.create(SERVICE_ORDERS_COLLECTION, id, firestorePayload);
     } catch (e) {
-        console.error(e);
+        console.error('[OS] Erro ao gravar ordem:', e);
         try {
             await firestore.collection(BUDGETS_COLLECTION).doc(budgetLink.budgetId).delete();
         } catch (cleanupErr) {
@@ -3788,6 +4538,10 @@ app.patch('/api/services/:id', verifyLogin, async (req, res) => {
             progressNotes: merged.progressNotes,
             deviceBrandModel: merged.deviceBrandModel,
             accessories: merged.accessories,
+            workTemplateId: merged.workTemplateId,
+            workTemplateName: merged.workTemplateName,
+            shareToken: merged.shareToken,
+            shareCreatedAt: merged.shareCreatedAt,
             updatedAt: merged.updatedAt
         });
     } catch (e) {
@@ -3835,10 +4589,19 @@ app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, 
         createdAt: new Date().toISOString()
     }));
 
+    const photoKind = String(req.query.kind || 'general').toLowerCase();
     const checklist = (prev.checklist || []).map((item) => {
         if (String(item.key) !== itemKey) return item;
-        const target = phase === 'tech' ? 'techPhotos' : 'photos';
-        return { ...item, [target]: [...(item[target] || []), ...newPhotos] };
+        if (phase === 'intake') {
+            return { ...item, photos: [...(item.photos || []), ...newPhotos] };
+        }
+        if (photoKind === 'before') {
+            return { ...item, beforePhotos: [...(item.beforePhotos || []), ...newPhotos.map((p) => ({ ...p, kind: 'before' }))] };
+        }
+        if (photoKind === 'after') {
+            return { ...item, afterPhotos: [...(item.afterPhotos || []), ...newPhotos.map((p) => ({ ...p, kind: 'after' }))] };
+        }
+        return { ...item, techPhotos: [...(item.techPhotos || []), ...newPhotos] };
     });
 
     const updatedAt = new Date().toISOString();
@@ -3937,8 +4700,49 @@ app.get('/analytics', verifyLogin, (req, res) => {
     renderAppShell(res, 'analytics', req.session.user);
 });
 
-app.get('/config', verifyLogin, (req, res) => {
-    renderAppShell(res, 'config', req.session.user);
+app.get('/config', verifyAdmin, async (req, res) => {
+    const configs = await getConfigsSafe();
+    res.render('layout', {
+        body: 'config',
+        appData: {
+            user: req.session.user,
+            configs,
+            whatsapp: whatsappClient.getStatus()
+        }
+    });
+});
+
+app.get('/api/whatsapp/status', verifyLogin, (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    return res.json({ error: false, ...whatsappClient.getStatus() });
+});
+
+app.post('/api/whatsapp/connect', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    try {
+        const data = await whatsappClient.start();
+        return res.json({ error: false, ...data });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: e.message || 'Falha ao conectar WhatsApp.' });
+    }
+});
+
+app.post('/api/whatsapp/disconnect', verifyLogin, async (req, res) => {
+    if (req.session.user?.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
+    }
+    try {
+        const data = await whatsappClient.logout();
+        return res.json({ error: false, ...data });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: e.message || 'Falha ao desconectar.' });
+    }
 });
 
 app.use((err, req, res, next) => {
@@ -3952,6 +4756,11 @@ app.use((err, req, res, next) => {
 
 let port = process.env.PORT || 3131;
 app.listen(port, () => {
+    whatsappClient.startIfSessionExists().then((st) => {
+        if (st.sessionExists) {
+            console.log(`[WhatsApp] Sessão salva — status: ${st.status}`);
+        }
+    }).catch((e) => console.error('[WhatsApp] auto-start', e));
     const dataHora = new Date();
     const formatado = d => ('0' + d).slice(-2);
     const dataHoraFormatada = `${formatado(dataHora.getDate())}/${formatado(dataHora.getMonth() + 1)}/${dataHora.getFullYear()} ${formatado(dataHora.getHours())}:${formatado(dataHora.getMinutes())}:${formatado(dataHora.getSeconds())}`;

@@ -4,6 +4,11 @@
       <h2>Oficina — Ordens de Serviço</h2>
       <p>Selecione uma ordem para abrir o fluxo de reparo item a item (descrição e fotos em cada etapa).</p>
     </div>
+    <div class="svc-admin-hero-actions">
+      <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshServices" title="Atualizar lista">↻ Atualizar</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnOpenWorkTemplates">📋 Templates de serviço</button>
+      <a href="/config" class="btn btn-ghost btn-sm" id="btnOpenWhatsappConfig">💬 WhatsApp</a>
+    </div>
     <div class="svc-admin-hero-stats" id="svcAdminStats"></div>
   </header>
 
@@ -16,5 +21,52 @@
       <div class="svc-filter-chips" id="svcStatusFilters"></div>
       <div class="svc-order-list svc-order-list--grid" id="servicesList"></div>
     </section>
+  </div>
+</div>
+
+<div class="svc-tpl-overlay" id="svcTplModal" hidden>
+  <div class="svc-tpl-card">
+    <header class="svc-tpl-head">
+      <div>
+        <h3>Templates de serviço</h3>
+        <p>Cadastre pacotes com etapas padrão (ex.: limpeza completa). O atendente aplica no PDV.</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="svcTplCloseBtn">✕</button>
+    </header>
+    <div class="svc-tpl-body">
+      <div class="svc-tpl-list-wrap">
+        <button type="button" class="btn btn-primary btn-sm" id="svcTplNewBtn">+ Novo template</button>
+        <div class="svc-tpl-list" id="svcTplList"></div>
+      </div>
+      <form class="svc-tpl-form" id="svcTplForm" hidden>
+        <input type="hidden" id="svcTplId" value="">
+        <div class="form-group">
+          <label class="form-label">Nome *</label>
+          <input class="form-input" id="svcTplName" placeholder="Ex.: Limpeza completa" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Ícone</label>
+          <input class="form-input" id="svcTplIcon" placeholder="🧼" maxlength="4">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Descrição</label>
+          <textarea class="form-input" id="svcTplDesc" rows="2" placeholder="Resumo para o atendente"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tipos de aparelho (vazio = todos)</label>
+          <div class="svc-tpl-device-chips" id="svcTplDevices"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Etapas padrão *</label>
+          <div id="svcTplStages"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="svcTplAddStageBtn">+ Etapa</button>
+        </div>
+        <label class="svc-share-opt"><input type="checkbox" id="svcTplActive" checked> Ativo</label>
+        <div class="svc-tpl-form-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="svcTplCancelFormBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary btn-sm">Salvar template</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>

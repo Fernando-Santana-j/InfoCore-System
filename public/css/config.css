@@ -28,6 +28,97 @@
     color: var(--text2);
 }
 
+.wa-config-card .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.wa-config-desc {
+    font-size: 0.85rem;
+    color: var(--text2);
+    line-height: 1.5;
+    margin: 0 0 16px;
+}
+
+.wa-status-pill {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text2);
+}
+
+.wa-status-pill.is-connected {
+    background: rgba(61, 220, 132, 0.2);
+    color: #6ee7a8;
+}
+
+.wa-status-pill.is-qr,
+.wa-status-pill.is-connecting {
+    background: rgba(242, 201, 76, 0.2);
+    color: #f2c94c;
+}
+
+.wa-qr-panel {
+    text-align: center;
+    padding: 16px;
+    border-radius: 16px;
+    background: #fff;
+    margin-bottom: 14px;
+}
+
+.wa-qr-hint {
+    font-size: 0.78rem;
+    color: #64748b;
+    margin: 0 0 12px;
+}
+
+.wa-qr-panel img {
+    display: block;
+    margin: 0 auto;
+    border-radius: 12px;
+}
+
+.wa-connected-panel {
+    text-align: center;
+    padding: 20px;
+    border-radius: 16px;
+    border: 1px solid rgba(61, 220, 132, 0.35);
+    background: rgba(61, 220, 132, 0.08);
+    margin-bottom: 14px;
+}
+
+.wa-connected-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 10px;
+    border-radius: 50%;
+    background: rgba(61, 220, 132, 0.25);
+    color: #6ee7a8;
+    font-size: 1.4rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wa-error {
+    font-size: 0.82rem;
+    color: #ff9a9a;
+    margin: 0 0 12px;
+}
+
+.wa-config-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .config-info-box .font-bold {
     color: var(--text);
     margin-bottom: 6px;

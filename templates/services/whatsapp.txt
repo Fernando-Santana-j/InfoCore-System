@@ -1,0 +1,17 @@
+✨ *{{storeName}}* — Serviço concluído
+
+Olá, *{{customerName}}*! 👋
+
+Seu equipamento foi atendido com sucesso.
+
+📋 *Ordem:* {{code}}
+📱 *Aparelho:* {{deviceType}} {{deviceBrandModel}}
+📊 *Progresso:* {{progressPercent}}% ({{progressLabel}})
+📌 *Status:* {{statusLabel}}
+
+🔗 *Acompanhe cada etapa com fotos (antes/depois):*
+{{shareUrl}}
+
+_Toque no link acima para ver o relatório completo com imagens e descrição de cada serviço realizado._
+
+— Equipe {{storeName}}

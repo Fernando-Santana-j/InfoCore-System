@@ -1,0 +1,5 @@
+{
+  "watch": ["index.js", "lib", "firebase", "templates", "public/js", "views"],
+  "ignore": ["data/**", "uploads/**", "node_modules/**", "config/**"],
+  "ext": "js,ejs"
+}

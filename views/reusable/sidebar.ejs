@@ -49,6 +49,13 @@
       <span class="nav-icon" aria-hidden="true">📒</span>
       <span class="nav-label">Fluxo de caixa</span>
     </a>
+    <% if (appData.user.type === 'admin') { %>
+    <div class="nav-section-label">Sistema</div>
+    <a href="/config" class="nav-item<%= navActive('/config') ? ' active' : '' %>">
+      <span class="nav-icon" aria-hidden="true">⚙️</span>
+      <span class="nav-label">Configurações</span>
+    </a>
+    <% } %>
   </nav>
   <div class="sidebar-bottom">
     <div class="user-card">

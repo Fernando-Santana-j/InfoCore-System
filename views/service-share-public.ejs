@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= service.code %> — Relatório de serviço</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/service-share-public.css?v=1">
+</head>
+<body>
+  <div class="os-public">
+    <header class="os-public-hero">
+      <div class="os-public-hero-glow"></div>
+      <div class="os-public-hero-inner">
+        <p class="os-public-badge">Relatório de serviço</p>
+        <h1><%= service.code %></h1>
+        <p class="os-public-customer"><%= service.customerName %></p>
+        <div class="os-public-meta">
+          <span><%= service.deviceType %> · <%= service.deviceBrandModel %></span>
+        </div>
+        <% const stages = (service.checklist || []).filter(i => i.defective); const done = stages.filter(s => s.done).length; const pct = stages.length ? Math.round((done / stages.length) * 100) : 0; %>
+        <div class="os-public-progress" role="progressbar" aria-valuenow="<%= pct %>">
+          <div class="os-public-progress-bar" style="width:<%= pct %>%"></div>
+          <span><%= pct %>% concluído · <%= done %>/<%= stages.length %> etapas</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="os-public-main">
+      <% stages.forEach(function(item, index) { %>
+        <article class="os-stage-card <%= item.done ? 'is-done' : '' %>">
+          <div class="os-stage-head">
+            <span class="os-stage-icon"><%= item.icon || '🔧' %></span>
+            <div>
+              <span class="os-stage-num">Etapa <%= index + 1 %></span>
+              <h2><%= item.label %></h2>
+            </div>
+            <span class="os-stage-status"><%= item.done ? 'Concluído' : 'Em andamento' %></span>
+          </div>
+
+          <% if (item.customerNote) { %>
+            <p class="os-stage-note"><strong>Relato:</strong> <%= item.customerNote %></p>
+          <% } %>
+          <% if (item.techNote) { %>
+            <div class="os-stage-tech">
+              <strong>Serviço realizado</strong>
+              <p><%= item.techNote %></p>
+            </div>
+          <% } %>
+
+          <% const intake = item.photos || []; if (intake.length) { %>
+            <div class="os-photo-block">
+              <h3>Recebimento</h3>
+              <div class="os-photo-grid">
+                <% intake.forEach(function(p) { %>
+                  <a href="<%= p.url %>" target="_blank" rel="noopener" class="os-photo">
+                    <img src="<%= p.url %>" alt="" loading="lazy">
+                    <% if (p.caption) { %><span><%= p.caption %></span><% } %>
+                  </a>
+                <% }); %>
+              </div>
+            </div>
+          <% } %>
+
+          <% const before = item.beforePhotos || []; const after = item.afterPhotos || [];
+             const techBefore = (item.techPhotos || []).filter(p => p.kind === 'before');
+             const techAfter = (item.techPhotos || []).filter(p => p.kind === 'after');
+             const allBefore = before.length ? before : techBefore;
+             const allAfter = after.length ? after : techAfter;
+          %>
+          <% if (allBefore.length || allAfter.length) { %>
+            <div class="os-ba-grid">
+              <% if (allBefore.length) { %>
+                <div class="os-ba-col os-ba-col--before">
+                  <h3>Antes</h3>
+                  <div class="os-photo-grid">
+                    <% allBefore.forEach(function(p) { %>
+                      <a href="<%= p.url %>" target="_blank" rel="noopener" class="os-photo">
+                        <img src="<%= p.url %>" alt="" loading="lazy">
+                      </a>
+                    <% }); %>
+                  </div>
+                </div>
+              <% } %>
+              <% if (allAfter.length) { %>
+                <div class="os-ba-col os-ba-col--after">
+                  <h3>Depois</h3>
+                  <div class="os-photo-grid">
+                    <% allAfter.forEach(function(p) { %>
+                      <a href="<%= p.url %>" target="_blank" rel="noopener" class="os-photo">
+                        <img src="<%= p.url %>" alt="" loading="lazy">
+                      </a>
+                    <% }); %>
+                  </div>
+                </div>
+              <% } %>
+            </div>
+          <% } %>
+
+          <% const general = (item.techPhotos || []).filter(p => !p.kind || p.kind === 'general');
+             if (general.length) { %>
+            <div class="os-photo-block">
+              <h3>Registro do reparo</h3>
+              <div class="os-photo-grid">
+                <% general.forEach(function(p) { %>
+                  <a href="<%= p.url %>" target="_blank" rel="noopener" class="os-photo">
+                    <img src="<%= p.url %>" alt="" loading="lazy">
+                  </a>
+                <% }); %>
+              </div>
+            </div>
+          <% } %>
+        </article>
+      <% }); %>
+
+      <% if (!stages.length) { %>
+        <p class="os-public-empty">Nenhuma etapa registrada nesta ordem.</p>
+      <% } %>
+    </main>
+
+    <footer class="os-public-footer">
+      <p>Relatório gerado por <%= (configs && configs.storeName) || 'InfoCore' %></p>
+      <p class="os-public-date"><%= new Date(service.updatedAt || service.createdAt || Date.now()).toLocaleDateString('pt-BR') %></p>
+    </footer>
+  </div>
+</body>
+</html>

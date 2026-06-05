@@ -4,3 +4,42 @@
   <main class="svc-work-main" id="svcWorkMain"></main>
   <footer class="svc-work-footer" id="svcWorkFooter"></footer>
 </div>
+
+<div class="svc-share-overlay" id="svcShareModal" hidden>
+  <div class="svc-share-card" role="dialog" aria-labelledby="svcShareTitle">
+    <header class="svc-share-head">
+      <div>
+        <h3 id="svcShareTitle">Enviar relatório ao cliente</h3>
+        <p>Escolha o que enviar. O WhatsApp usa o número conectado em Configurações (Baileys).</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="svcShareCloseBtn" aria-label="Fechar">✕</button>
+    </header>
+    <div class="svc-share-preview" id="svcSharePreview">
+      <div class="svc-share-preview-loading">Preparando visualização...</div>
+    </div>
+    <div class="svc-share-options">
+      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptWhatsapp" checked> Enviar WhatsApp</label>
+      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptLink" checked> Link do relatório</label>
+      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptQr" checked> QR Code no envio</label>
+      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptPdf"> Anexar PDF (URL)</label>
+      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptImage"> Anexar imagem (URL)</label>
+      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptDelivered"> Marcar como entregue</label>
+    </div>
+    <div class="svc-share-link-box" id="svcShareLinkBox" hidden>
+      <label class="form-label">Link público</label>
+      <div class="svc-share-link-row">
+        <input class="form-input" id="svcShareLinkInput" readonly>
+        <button type="button" class="btn btn-ghost btn-sm" id="svcShareCopyLinkBtn">Copiar</button>
+      </div>
+      <div class="svc-share-qr-wrap" id="svcShareQrWrap" hidden>
+        <img id="svcShareQrImg" alt="QR Code do relatório" width="160" height="160">
+      </div>
+    </div>
+    <div class="svc-share-result" id="svcShareResult" hidden></div>
+    <footer class="svc-share-foot">
+      <button type="button" class="btn btn-ghost btn-sm" id="svcShareDownloadImgBtn">Baixar imagem</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="svcShareDownloadPdfBtn">Gerar PDF</button>
+      <button type="button" class="btn btn-primary btn-sm" id="svcShareSendBtn">Enviar ao cliente</button>
+    </footer>
+  </div>
+</div>

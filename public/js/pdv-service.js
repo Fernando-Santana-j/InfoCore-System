@@ -6,6 +6,7 @@ let svcChecklistState = [];
 let svcCustomerAcIndex = -1;
 let svcSelectedCustomerId = '';
 const svcPendingPhotos = new Map();
+const svcAppliedTemplateIds = new Set();
 
 function svcEsc(s) {
     return String(s || '')
@@ -103,6 +104,78 @@ function svcClearCustomer() {
     document.getElementById('svcCustomerSelected')?.setAttribute('hidden', '');
 }
 
+function svcWorkTemplates() {
+    const list = window.appData?.serviceWorkTemplates;
+    return Array.isArray(list) ? list.filter((t) => t.active !== false) : [];
+}
+
+function svcTemplateMatchesDevice(tpl, deviceType) {
+    const types = tpl.deviceTypes || [];
+    if (!types.length) return true;
+    return types.includes(deviceType);
+}
+
+function svcApplyWorkTemplate(tpl) {
+    if (!tpl?.id || !tpl.stages?.length) return;
+    const deviceType = String(document.getElementById('svcDeviceType')?.value || 'Celular');
+    if (!svcTemplateMatchesDevice(tpl, deviceType)) {
+        showToast('Template não disponível para este tipo de aparelho.', 'error');
+        return;
+    }
+    for (const stage of tpl.stages) {
+        const key = `tpl-${tpl.id}-${stage.key}`;
+        const existing = svcChecklistState.find((i) => String(i.key) === key);
+        if (existing) {
+            existing.defective = true;
+            if (stage.defaultNote && !existing.customerNote) existing.customerNote = stage.defaultNote;
+            continue;
+        }
+        svcChecklistState.push({
+            key,
+            label: stage.label,
+            icon: stage.icon || '🔧',
+            defective: true,
+            customerNote: stage.defaultNote || '',
+            estimatedPrice: '',
+            photos: []
+        });
+    }
+    svcAppliedTemplateIds.add(String(tpl.id));
+    svcRenderChecklist();
+    svcRenderWorkTemplatesPicker();
+    showToast(`"${tpl.name}" aplicado — ${tpl.stages.length} etapa(s).`, 'success');
+}
+
+function svcRenderWorkTemplatesPicker() {
+    const grid = document.getElementById('svcWorkTemplatesGrid');
+    const wrap = document.getElementById('svcWorkTemplatesPicker');
+    if (!grid || !wrap) return;
+    const deviceType = String(document.getElementById('svcDeviceType')?.value || 'Celular');
+    const templates = svcWorkTemplates().filter((t) => svcTemplateMatchesDevice(t, deviceType));
+    if (!templates.length) {
+        wrap.hidden = true;
+        return;
+    }
+    wrap.hidden = false;
+    grid.innerHTML = templates.map((t) => {
+        const applied = svcAppliedTemplateIds.has(String(t.id));
+        return `
+            <button type="button" class="pdv-svc-tpl-card ${applied ? 'is-applied' : ''}" data-tpl-id="${svcEsc(t.id)}">
+                <span class="pdv-svc-tpl-icon">${svcEsc(t.icon || '🔧')}</span>
+                <span class="pdv-svc-tpl-name">${svcEsc(t.name)}</span>
+                <span class="pdv-svc-tpl-meta">${(t.stages || []).length} etapas</span>
+            </button>
+        `;
+    }).join('');
+    grid.querySelectorAll('.pdv-svc-tpl-card').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-tpl-id');
+            const tpl = svcWorkTemplates().find((t) => String(t.id) === String(id));
+            if (tpl) svcApplyWorkTemplate(tpl);
+        });
+    });
+}
+
 function svcUpdateDefectCount() {
     const count = svcChecklistState.filter((i) => i.defective).length;
     const badge = document.getElementById('svcDefectCount');
@@ -178,10 +251,55 @@ function svcRenderChecklist() {
     });
 }
 
-const SVC_STEP_LABELS = ['Cliente', 'Aparelho', 'Defeitos', 'Orçamento'];
+const SVC_STEP_LABELS = ['Dados', 'Serviços', 'Finalizar'];
+const SVC_TOTAL_STEPS = 3;
+
+function svcPhoneDigits(raw) {
+    return String(raw || '').replace(/\D/g, '');
+}
+
+function svcIsValidPhone(raw) {
+    const d = svcPhoneDigits(raw);
+    return d.length >= 10 && d.length <= 15;
+}
+
+function svcRenderReview() {
+    const el = document.getElementById('svcReviewSummary');
+    if (!el) return;
+    const name = String(document.getElementById('svcCustomerName')?.value || '').trim();
+    const phone = String(document.getElementById('svcCustomerPhone')?.value || '').trim();
+    const email = String(document.getElementById('svcCustomerEmail')?.value || '').trim();
+    const deviceType = String(document.getElementById('svcDeviceType')?.value || '');
+    const model = String(document.getElementById('svcDeviceBrandModel')?.value || '').trim();
+    const accessories = String(document.getElementById('svcAccessories')?.value || '').trim();
+    const issue = String(document.getElementById('svcIssueReport')?.value || '').trim();
+    const priority = String(document.getElementById('svcPriority')?.value || 'normal');
+    const defects = svcChecklistState.filter((i) => i.defective);
+    const priLabels = { normal: 'Normal', high: 'Alta', urgent: 'Urgente' };
+
+    el.innerHTML = `
+        <div class="pdv-svc-review-block">
+            <h5>Cliente</h5>
+            <p><strong>${svcEsc(name || '—')}</strong></p>
+            <p>${svcEsc(phone || '—')}${email ? ` · ${svcEsc(email)}` : ''}</p>
+        </div>
+        <div class="pdv-svc-review-block">
+            <h5>Aparelho</h5>
+            <p>${svcEsc(deviceType)} · ${svcEsc(model || '—')}</p>
+            <p class="pdv-svc-review-meta">Prioridade: ${svcEsc(priLabels[priority] || priority)}${accessories ? ` · Acessórios: ${svcEsc(accessories)}` : ''}</p>
+        </div>
+        <div class="pdv-svc-review-block">
+            <h5>Serviços (${defects.length})</h5>
+            ${defects.length
+        ? `<ul class="pdv-svc-review-list">${defects.map((d) => `<li>${svcEsc(d.icon || '🔧')} ${svcEsc(d.label)}</li>`).join('')}</ul>`
+        : '<p class="pdv-svc-review-meta">Nenhum item marcado — usando relato do problema.</p>'}
+            ${issue ? `<p class="pdv-svc-review-note">${svcEsc(issue)}</p>` : ''}
+        </div>
+    `;
+}
 
 function svcSetStep(step) {
-    svcIntakeStep = Math.max(1, Math.min(4, step));
+    svcIntakeStep = Math.max(1, Math.min(SVC_TOTAL_STEPS, step));
     document.querySelectorAll('.pdv-service-step').forEach((el) => {
         const n = Number(el.getAttribute('data-step'));
         el.classList.toggle('is-active', n === svcIntakeStep);
@@ -193,13 +311,20 @@ function svcSetStep(step) {
     const prev = document.getElementById('svcPrevStepBtn');
     const next = document.getElementById('svcNextStepBtn');
     const submit = document.getElementById('svcSubmitBtn');
+    const cancel = document.getElementById('cancelServiceIntakeBtn');
     const hint = document.getElementById('svcStepHint');
+    const isFinal = svcIntakeStep >= SVC_TOTAL_STEPS;
+
     if (prev) prev.style.visibility = svcIntakeStep === 1 ? 'hidden' : 'visible';
-    if (next) next.hidden = svcIntakeStep >= 4;
-    if (submit) submit.hidden = svcIntakeStep < 4;
+    if (next) next.hidden = isFinal;
+    if (submit) submit.hidden = !isFinal;
+    if (cancel) cancel.hidden = isFinal;
     if (hint) {
-        hint.textContent = `Etapa ${svcIntakeStep} de 4 — ${SVC_STEP_LABELS[svcIntakeStep - 1]}`;
+        hint.textContent = isFinal
+            ? 'Revise e clique em Finalizar'
+            : `Etapa ${svcIntakeStep} de ${SVC_TOTAL_STEPS} — ${SVC_STEP_LABELS[svcIntakeStep - 1]}`;
     }
+    if (isFinal) svcRenderReview();
 }
 
 function svcOpenModal() {
@@ -215,8 +340,10 @@ function svcOpenModal() {
     document.getElementById('svcEstimateValue').value = '';
     document.getElementById('svcBudgetRawNotes').value = '';
     document.getElementById('svcPriority').value = 'normal';
+    svcAppliedTemplateIds.clear();
     svcResetChecklist('Celular');
     svcRenderChecklist();
+    svcRenderWorkTemplatesPicker();
     svcSetStep(1);
     document.getElementById('serviceIntakeModal')?.classList.add('open');
     document.body.style.overflow = 'hidden';
@@ -230,23 +357,29 @@ function svcCloseModal() {
 function svcValidateStep(step) {
     if (step === 1) {
         const name = String(document.getElementById('svcCustomerName')?.value || '').trim();
+        const phone = String(document.getElementById('svcCustomerPhone')?.value || '').trim();
+        const model = String(document.getElementById('svcDeviceBrandModel')?.value || '').trim();
         if (!name) {
             showToast('Informe o nome do cliente.', 'error');
+            document.getElementById('svcCustomerName')?.focus();
+            return false;
+        }
+        if (!svcIsValidPhone(phone)) {
+            showToast('Informe o WhatsApp/telefone (mín. 10 dígitos).', 'error');
+            document.getElementById('svcCustomerPhone')?.focus();
+            return false;
+        }
+        if (!model) {
+            showToast('Informe marca/modelo do aparelho.', 'error');
+            document.getElementById('svcDeviceBrandModel')?.focus();
             return false;
         }
     }
     if (step === 2) {
-        const model = String(document.getElementById('svcDeviceBrandModel')?.value || '').trim();
-        if (!model) {
-            showToast('Informe marca/modelo do aparelho.', 'error');
-            return false;
-        }
-    }
-    if (step === 3) {
         const defects = svcChecklistState.filter((i) => i.defective);
         const issue = String(document.getElementById('svcIssueReport')?.value || '').trim();
         if (!defects.length && !issue) {
-            showToast('Marque ao menos um defeito ou preencha o relato geral.', 'error');
+            showToast('Marque ao menos um serviço ou preencha o relato do problema.', 'error');
             return false;
         }
     }
@@ -266,14 +399,15 @@ async function svcUploadPendingPhotos(serviceId) {
 }
 
 async function svcSubmit() {
-    if (!svcValidateStep(3)) {
-        svcSetStep(3);
+    if (!svcValidateStep(1) || !svcValidateStep(2)) {
+        if (!svcValidateStep(1)) svcSetStep(1);
+        else svcSetStep(2);
         return;
     }
     const submitBtn = document.getElementById('svcSubmitBtn');
     if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Salvando...';
+        submitBtn.textContent = 'Finalizando...';
     }
     const estimateRaw = document.getElementById('svcEstimateValue')?.value;
     const payload = {
@@ -295,7 +429,8 @@ async function svcSubmit() {
             defective: item.defective,
             customerNote: item.customerNote,
             estimatedPrice: item.estimatedPrice === '' ? null : item.estimatedPrice
-        }))
+        })),
+        applyTemplateIds: [...svcAppliedTemplateIds]
     };
     try {
         const res = await fetch('/api/services', {
@@ -311,14 +446,22 @@ async function svcSubmit() {
         }
         await svcUploadPendingPhotos(data.service.id);
         svcCloseModal();
+        const isAdmin = String(window.appData?.user?.type || '') === 'admin';
         showToast(`OS ${data.service.code} criada · Orçamento ${data.budget?.code || ''} em rascunho.`, 'success');
+        if (isAdmin && data.service?.id) {
+            setTimeout(() => {
+                if (confirm(`OS ${data.service.code} criada. Abrir na Oficina agora?`)) {
+                    window.location.href = `/services?highlight=${encodeURIComponent(data.service.id)}`;
+                }
+            }, 400);
+        }
     } catch (e) {
         console.error(e);
         showToast('Erro de conexão.', 'error');
     } finally {
         if (submitBtn) {
             submitBtn.disabled = false;
-            submitBtn.textContent = 'Registrar OS + orçamento';
+            submitBtn.textContent = '✓ Finalizar ordem de serviço';
         }
     }
 }
@@ -334,8 +477,10 @@ function bindServiceIntakeModal() {
     });
     document.getElementById('svcSubmitBtn')?.addEventListener('click', svcSubmit);
     document.getElementById('svcDeviceType')?.addEventListener('change', (e) => {
+        svcAppliedTemplateIds.clear();
         svcResetChecklist(e.target.value);
         svcRenderChecklist();
+        svcRenderWorkTemplatesPicker();
     });
     document.getElementById('svcCustomerSearch')?.addEventListener('input', (e) => svcRenderCustomerAc(e.target.value));
     document.getElementById('svcCustomerSearch')?.addEventListener('focus', (e) => svcRenderCustomerAc(e.target.value));

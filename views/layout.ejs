@@ -50,12 +50,12 @@
   <%- include('reusable/instructions-modal') %>
   <%- include('reusable/notes-modal') %>
 
-  <script id="appData" type="application/json"><%- JSON.stringify(appData || {}) %></script>
+  <script id="appData" type="application/json"><%- JSON.stringify(appData || {}).replace(/</g, '\\u003c').replace(/>/g, '\\u003e') %></script>
   <script>
     window.appData = JSON.parse(document.getElementById('appData').textContent || '{}');
     window.__page = '<%= body %>';
     window.__bootstrap = '<%= typeof bootstrap !== "undefined" ? bootstrap : "" %>';
-    window.__needsHtml2canvas = <%= (body === 'budgets' || body === 'pdv') ? 'true' : 'false' %>;
+    window.__needsHtml2canvas = <%= (body === 'budgets' || body === 'pdv' || body === 'service-work') ? 'true' : 'false' %>;
     window.__needsXlsx = <%= body === 'stock' ? 'true' : 'false' %>;
     window.__dataReady = (async () => {
       if (!window.__bootstrap) return window.appData;
@@ -74,6 +74,9 @@
   <script src="/js/shared.js?v=3"></script>
   <% if (body === 'budgets' || body === 'pdv') { %>
   <script src="/js/budget-templates.js?v=3"></script>
+  <% } %>
+  <% if (body === 'service-work') { %>
+  <script src="/js/service-templates.js?v=1"></script>
   <% } %>
   <script src="/js/<%= body %>.js?v=3"></script>
   <% if (body === 'pdv') { %>

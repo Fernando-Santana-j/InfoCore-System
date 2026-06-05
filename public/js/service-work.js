@@ -3,6 +3,10 @@ let defectItems = [];
 let currentStep = 0;
 let phase = 'items';
 const pendingPhotos = [];
+const pendingBeforePhotos = [];
+const pendingAfterPhotos = [];
+/** @type {'done'|'archive'} */
+let itemOutcome = 'done';
 
 function esc(v) {
     return String(v || '')
@@ -28,9 +32,13 @@ function syncDefectItems() {
     defectItems = (service?.checklist || []).filter((i) => i.defective);
 }
 
+function itemIsFinished(item) {
+    return Boolean(item?.done || item?.archived);
+}
+
 function repairProgress() {
     if (!defectItems.length) return 0;
-    const done = defectItems.filter((i) => i.done).length;
+    const done = defectItems.filter((i) => itemIsFinished(i)).length;
     return Math.round((done / defectItems.length) * 100);
 }
 
@@ -38,7 +46,7 @@ function initialStepIndex() {
     const params = new URLSearchParams(window.location.search);
     const q = Number(params.get('step'));
     if (Number.isFinite(q) && q >= 0 && q < defectItems.length) return q;
-    const firstPending = defectItems.findIndex((i) => !i.done);
+    const firstPending = defectItems.findIndex((i) => !itemIsFinished(i));
     return firstPending >= 0 ? firstPending : 0;
 }
 
@@ -72,7 +80,7 @@ function renderTop() {
         </div>
         <div class="svc-work-top-progress">
             <div class="svc-detail-progress-ring" style="background: conic-gradient(var(--gold) ${prog}%, var(--bg3) 0)"><span>${prog}%</span></div>
-            <span class="svc-work-progress-label">${defectItems.filter((i) => i.done).length}/${defectItems.length} itens</span>
+            <span class="svc-work-progress-label">${defectItems.filter((i) => itemIsFinished(i)).length}/${defectItems.length} itens</span>
         </div>
     `;
 }
@@ -89,7 +97,7 @@ function renderStepper() {
     el.innerHTML = defectItems.map((item, i) => {
         let cls = 'svc-work-step-pill';
         if (i === currentStep) cls += ' is-active';
-        if (item.done) cls += ' is-done';
+        if (itemIsFinished(item)) cls += ' is-done';
         else if (i < currentStep) cls += ' is-past';
         return `
             <button type="button" class="${cls}" data-step="${i}" title="${esc(item.label)}">
@@ -134,28 +142,43 @@ function renderSummary() {
             <p>Você revisou todos os ${defectItems.length} itens. Ajuste o status da OS se necessário.</p>
             <div class="svc-work-summary-stats">
                 <div class="svc-stat-pill"><strong>${defectItems.filter((i) => i.done).length}</strong><span>Concluídos</span></div>
-                <div class="svc-stat-pill"><strong>${defectItems.filter((i) => !i.done).length}</strong><span>Pendentes</span></div>
+                <div class="svc-stat-pill"><strong>${defectItems.filter((i) => i.archived).length}</strong><span>Arquivados</span></div>
+                <div class="svc-stat-pill"><strong>${defectItems.filter((i) => !itemIsFinished(i)).length}</strong><span>Pendentes</span></div>
             </div>
             <div class="svc-work-summary-actions">
-                <label class="form-label">Status da OS</label>
-                <select class="form-input" id="svcWorkStatusSelect">
-                    ${['open', 'in_progress', 'waiting_parts', 'done', 'delivered'].map((st) =>
-                        `<option value="${st}" ${service.status === st ? 'selected' : ''}>${statusLabel(st)}</option>`
-                    ).join('')}
-                </select>
+                <p class="form-label">Finalizar ordem de serviço</p>
+                <div class="svc-work-final-btns">
+                    <button type="button" class="btn btn-primary btn-sm" id="svcWorkMarkDoneBtn">✓ OS concluída</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="svcWorkArchiveBtn">📦 Arquivar OS</button>
+                </div>
                 ${budgetBtn}
                 <button type="button" class="btn btn-ghost btn-sm" id="svcWorkReviewBtn">Revisar itens</button>
+                <button type="button" class="btn btn-primary btn-sm svc-work-share-btn" id="svcWorkShareBtn">✨ Enviar relatório ao cliente</button>
             </div>
         </div>
     `;
     document.getElementById('svcWorkFooter').innerHTML = `
-        <a href="/services" class="btn btn-primary btn-sm">Voltar à oficina</a>
+        <a href="/services" class="btn btn-ghost btn-sm">Voltar à oficina</a>
+        <button type="button" class="btn btn-primary btn-sm" id="svcWorkShareBtnFooter">Enviar ao cliente</button>
     `;
-    document.getElementById('svcWorkStatusSelect')?.addEventListener('change', async (e) => {
-        await persistPatch({ status: e.target.value });
-        service.status = e.target.value;
-        renderTop();
-        showToast('Status atualizado.', 'success');
+    document.getElementById('svcWorkShareBtn')?.addEventListener('click', openShareModal);
+    document.getElementById('svcWorkShareBtnFooter')?.addEventListener('click', openShareModal);
+    document.getElementById('svcWorkMarkDoneBtn')?.addEventListener('click', async () => {
+        const updated = await persistPatch({ status: 'done' });
+        if (updated) {
+            service = updated;
+            renderTop();
+            showToast('OS marcada como concluída.', 'success');
+        }
+    });
+    document.getElementById('svcWorkArchiveBtn')?.addEventListener('click', async () => {
+        if (!confirm('Arquivar esta OS? Ela ficará como entregue na lista.')) return;
+        const updated = await persistPatch({ status: 'delivered' });
+        if (updated) {
+            service = updated;
+            renderTop();
+            showToast('OS arquivada.', 'success');
+        }
     });
     document.getElementById('svcWorkReviewBtn')?.addEventListener('click', () => {
         phase = 'items';
@@ -174,6 +197,9 @@ function renderItemStep() {
     if (!main || !item) return;
 
     pendingPhotos.length = 0;
+    pendingBeforePhotos.length = 0;
+    pendingAfterPhotos.length = 0;
+    itemOutcome = item.archived ? 'archive' : 'done';
 
     main.innerHTML = `
         <article class="svc-work-card">
@@ -183,7 +209,7 @@ function renderItemStep() {
                     <p class="svc-work-card-step">Item ${currentStep + 1} de ${defectItems.length}</p>
                     <h3 class="svc-work-card-title">${esc(item.label)}</h3>
                 </div>
-                <span class="svc-defect-badge ${item.done ? 'is-done' : ''}">${item.done ? 'Concluído' : 'Em reparo'}</span>
+                <span class="svc-defect-badge ${item.archived ? 'is-archived' : ''} ${item.done ? 'is-done' : ''}">${item.archived ? 'Arquivado' : (item.done ? 'Concluído' : 'Em reparo')}</span>
             </header>
 
             ${item.customerNote || (item.photos || []).length ? `
@@ -200,8 +226,29 @@ function renderItemStep() {
             </section>
 
             <section class="svc-work-section">
-                <h4 class="svc-work-section-title">📷 Fotos do reparo</h4>
-                ${renderPhotos(item.techPhotos, 'svc-work-existing-photos')}
+                <h4 class="svc-work-section-title">📷 Antes e depois</h4>
+                <div class="svc-work-ba-grid">
+                    <div class="svc-work-ba-col svc-work-ba-col--before">
+                        <span class="svc-work-ba-label">Antes</span>
+                        ${renderPhotos(item.beforePhotos?.length ? item.beforePhotos : (item.techPhotos || []).filter((p) => p.kind === 'before'))}
+                        <label class="btn btn-ghost btn-sm svc-work-photo-label">
+                            + Antes
+                            <input type="file" id="svcWorkPhotoBefore" accept="image/*" capture="environment" multiple hidden>
+                        </label>
+                    </div>
+                    <div class="svc-work-ba-col svc-work-ba-col--after">
+                        <span class="svc-work-ba-label">Depois</span>
+                        ${renderPhotos(item.afterPhotos?.length ? item.afterPhotos : (item.techPhotos || []).filter((p) => p.kind === 'after'))}
+                        <label class="btn btn-ghost btn-sm svc-work-photo-label">
+                            + Depois
+                            <input type="file" id="svcWorkPhotoAfter" accept="image/*" capture="environment" multiple hidden>
+                        </label>
+                    </div>
+                </div>
+            </section>
+            <section class="svc-work-section">
+                <h4 class="svc-work-section-title">📷 Outras fotos do reparo</h4>
+                ${renderPhotos((item.techPhotos || []).filter((p) => !p.kind || p.kind === 'general'), 'svc-work-existing-photos')}
                 <div class="svc-work-upload-zone">
                     <label class="btn btn-ghost btn-sm svc-work-photo-label">
                         Adicionar fotos
@@ -211,10 +258,13 @@ function renderItemStep() {
                 </div>
             </section>
 
-            <label class="svc-work-done-check">
-                <input type="checkbox" id="svcWorkDoneCheck" ${item.done ? 'checked' : ''}>
-                <span>Marcar este item como concluído</span>
-            </label>
+            <div class="svc-work-outcome">
+                <span class="form-label">Situação desta etapa</span>
+                <div class="svc-work-outcome-btns" role="group" aria-label="Situação da etapa">
+                    <button type="button" class="svc-work-outcome-btn is-active" data-outcome="done" id="svcWorkOutcomeDone">✓ Concluído</button>
+                    <button type="button" class="svc-work-outcome-btn" data-outcome="archive" id="svcWorkOutcomeArchive">📦 Arquivar</button>
+                </div>
+            </div>
         </article>
     `;
 
@@ -223,22 +273,49 @@ function renderItemStep() {
         <div class="svc-work-footer-hint">Etapa ${currentStep + 1} de ${defectItems.length}</div>
         <div class="svc-work-footer-actions">
             <button type="button" class="btn btn-ghost btn-sm" id="svcWorkPrevBtn" ${currentStep === 0 ? 'disabled' : ''}>← Anterior</button>
-            <button type="button" class="btn btn-primary btn-sm" id="svcWorkSaveBtn">${isLast ? 'Salvar e finalizar' : 'Salvar e continuar →'}</button>
+            <button type="button" class="btn btn-primary btn-sm" id="svcWorkSaveBtn">${isLast ? 'Salvar e finalizar checklist' : 'Salvar e continuar →'}</button>
         </div>
     `;
 
-    document.getElementById('svcWorkPhotoInput')?.addEventListener('change', (e) => {
-        pendingPhotos.length = 0;
-        pendingPhotos.push(...Array.from(e.target.files || []));
+    document.querySelectorAll('.svc-work-outcome-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            itemOutcome = btn.getAttribute('data-outcome') === 'archive' ? 'archive' : 'done';
+            document.querySelectorAll('.svc-work-outcome-btn').forEach((b) => {
+                b.classList.toggle('is-active', b.getAttribute('data-outcome') === itemOutcome);
+            });
+        });
+    });
+    if (itemOutcome === 'archive') {
+        document.getElementById('svcWorkOutcomeArchive')?.classList.add('is-active');
+        document.getElementById('svcWorkOutcomeDone')?.classList.remove('is-active');
+    }
+
+    const syncPendingHint = () => {
         const pendingEl = document.getElementById('svcWorkPending');
+        const total = pendingPhotos.length + pendingBeforePhotos.length + pendingAfterPhotos.length;
         if (pendingEl) {
-            if (pendingPhotos.length) {
+            if (total) {
                 pendingEl.hidden = false;
-                pendingEl.textContent = `${pendingPhotos.length} foto(s) pronta(s) para enviar`;
+                pendingEl.textContent = `${total} foto(s) pronta(s) para enviar`;
             } else {
                 pendingEl.hidden = true;
             }
         }
+    };
+    document.getElementById('svcWorkPhotoInput')?.addEventListener('change', (e) => {
+        pendingPhotos.length = 0;
+        pendingPhotos.push(...Array.from(e.target.files || []));
+        syncPendingHint();
+    });
+    document.getElementById('svcWorkPhotoBefore')?.addEventListener('change', (e) => {
+        pendingBeforePhotos.length = 0;
+        pendingBeforePhotos.push(...Array.from(e.target.files || []));
+        syncPendingHint();
+    });
+    document.getElementById('svcWorkPhotoAfter')?.addEventListener('change', (e) => {
+        pendingAfterPhotos.length = 0;
+        pendingAfterPhotos.push(...Array.from(e.target.files || []));
+        syncPendingHint();
     });
 
     document.getElementById('svcWorkPrevBtn')?.addEventListener('click', () => goToStep(currentStep - 1, false));
@@ -295,20 +372,32 @@ async function persistPatch(patch) {
     return data.service;
 }
 
-async function uploadPendingPhotos(itemKey) {
-    if (!pendingPhotos.length) return true;
+async function uploadPhotoBatch(itemKey, files, phase, kind) {
+    if (!files?.length) return true;
     const form = new FormData();
-    pendingPhotos.forEach((f) => form.append('photos', f));
-    const res = await fetch(
-        `/api/services/${encodeURIComponent(service.id)}/checklist/${encodeURIComponent(itemKey)}/photos?phase=tech`,
-        { method: 'POST', body: form }
-    );
+    files.forEach((f) => form.append('photos', f));
+    let url = `/api/services/${encodeURIComponent(service.id)}/checklist/${encodeURIComponent(itemKey)}/photos?phase=${phase}`;
+    if (kind) url += `&kind=${encodeURIComponent(kind)}`;
+    const res = await fetch(url, { method: 'POST', body: form });
     const data = await res.json();
     if (data.error) {
         showToast(data.message || 'Erro no upload de fotos.', 'error');
         return false;
     }
-    pendingPhotos.length = 0;
+    return true;
+}
+
+async function uploadPendingPhotos(itemKey) {
+    const batches = [
+        [pendingBeforePhotos, 'tech', 'before'],
+        [pendingAfterPhotos, 'tech', 'after'],
+        [pendingPhotos, 'tech', 'general']
+    ];
+    for (const [files, phase, kind] of batches) {
+        const ok = await uploadPhotoBatch(itemKey, files, phase, kind === 'general' ? '' : kind);
+        if (!ok) return false;
+        files.length = 0;
+    }
     return true;
 }
 
@@ -317,10 +406,11 @@ async function saveCurrentStep(isLast) {
     if (!item) return;
 
     const techNote = String(document.getElementById('svcWorkTechNote')?.value || '').trim();
-    const done = Boolean(document.getElementById('svcWorkDoneCheck')?.checked);
+    const done = itemOutcome === 'done';
+    const archived = itemOutcome === 'archive';
     const checklist = (service.checklist || []).map((row) =>
         String(row.key) === String(item.key)
-            ? { ...row, techNote, done }
+            ? { ...row, techNote, done, archived }
             : row
     );
 
@@ -352,10 +442,10 @@ async function saveCurrentStep(isLast) {
 
     await reloadService();
 
-    if (!done && techNote) {
-        showToast('Registro salvo.', 'success');
+    if (archived) {
+        showToast('Etapa arquivada.', 'success');
     } else if (done) {
-        showToast('Item concluído.', 'success');
+        showToast('Etapa concluída.', 'success');
     } else {
         showToast('Salvo.', 'success');
     }
@@ -377,12 +467,13 @@ async function saveCurrentStep(isLast) {
 function goToStep(index, skipConfirm) {
     if (!skipConfirm && index !== currentStep) {
         const noteEl = document.getElementById('svcWorkTechNote');
-        const doneEl = document.getElementById('svcWorkDoneCheck');
         const item = currentItem();
         if (item && noteEl) {
             const dirty = noteEl.value.trim() !== String(item.techNote || '').trim()
-                || Boolean(doneEl?.checked) !== Boolean(item.done)
-                || pendingPhotos.length > 0;
+                || itemOutcome !== (item.archived ? 'archive' : (item.done ? 'done' : 'done'))
+                || pendingPhotos.length > 0
+                || pendingBeforePhotos.length > 0
+                || pendingAfterPhotos.length > 0;
             if (dirty && !confirm('Há alterações não salvas neste item. Deseja sair mesmo assim?')) {
                 return;
             }
@@ -397,21 +488,158 @@ function goToStep(index, skipConfirm) {
     renderItemStep();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    if (!service?.id) {
-        window.location.href = '/services';
-        return;
+let sharePreviewLoaded = false;
+
+async function loadSharePreview() {
+    const el = document.getElementById('svcSharePreview');
+    if (!el) return;
+    el.innerHTML = '<div class="svc-share-preview-loading">Carregando visualização...</div>';
+    try {
+        const html = await fetchServiceTemplateHtml('image', service);
+        el.innerHTML = `<div class="svc-share-preview-inner">${html}</div>`;
+        sharePreviewLoaded = true;
+    } catch (e) {
+        el.innerHTML = '<div class="svc-share-preview-loading" style="color:#f87171;">Não foi possível carregar a prévia.</div>';
     }
-    updateTopbarTitle(`Oficina — ${service.code || 'OS'}`);
-    markNavActive('/services');
-    syncDefectItems();
-    if (defectItems.length) {
-        currentStep = initialStepIndex();
-        const allDone = defectItems.every((i) => i.done);
-        const params = new URLSearchParams(window.location.search);
-        if (allDone && params.get('view') !== 'items') {
-            phase = 'summary';
+}
+
+function closeShareModal() {
+    document.getElementById('svcShareModal')?.setAttribute('hidden', '');
+    document.body.style.overflow = '';
+}
+
+async function openShareModal() {
+    const modal = document.getElementById('svcShareModal');
+    if (!modal) return;
+    document.getElementById('svcShareResult')?.setAttribute('hidden', '');
+    document.getElementById('svcShareLinkBox')?.setAttribute('hidden', '');
+    modal.removeAttribute('hidden');
+    document.body.style.overflow = 'hidden';
+    if (!sharePreviewLoaded) await loadSharePreview();
+}
+
+async function runServiceShareSend() {
+    const sendBtn = document.getElementById('svcShareSendBtn');
+    const resultEl = document.getElementById('svcShareResult');
+    if (sendBtn) {
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Enviando...';
+    }
+    try {
+        const includeImage = Boolean(document.getElementById('svcShareOptImage')?.checked);
+        let reportImageBase64 = '';
+        if (includeImage) {
+            if (sendBtn) sendBtn.textContent = 'Gerando imagem...';
+            try {
+                reportImageBase64 = await captureServiceReportImageBase64(service);
+            } catch (e) {
+                console.error(e);
+                showToast('Não foi possível gerar a imagem do relatório.', 'warning');
+            }
+        }
+        if (sendBtn) sendBtn.textContent = 'Enviando...';
+        const data = await dispatchServiceShareToCustomer(service.id, {
+            sendWhatsapp: Boolean(document.getElementById('svcShareOptWhatsapp')?.checked),
+            includeLink: Boolean(document.getElementById('svcShareOptLink')?.checked),
+            includeQr: Boolean(document.getElementById('svcShareOptQr')?.checked),
+            includePdf: Boolean(document.getElementById('svcShareOptPdf')?.checked),
+            includeImage,
+            reportImageBase64,
+            markDelivered: Boolean(document.getElementById('svcShareOptDelivered')?.checked)
+        });
+        if (data.service) {
+            service = data.service;
+            window.appData.service = service;
+            renderTop();
+        }
+        const linkBox = document.getElementById('svcShareLinkBox');
+        const linkInput = document.getElementById('svcShareLinkInput');
+        if (data.shareUrl && linkBox && linkInput) {
+            linkBox.hidden = false;
+            linkInput.value = data.shareUrl;
+        }
+        const qrWrap = document.getElementById('svcShareQrWrap');
+        const qrImg = document.getElementById('svcShareQrImg');
+        if (data.qrDataUrl && qrWrap && qrImg) {
+            qrWrap.hidden = false;
+            qrImg.src = data.qrDataUrl;
+        }
+        if (resultEl) {
+            resultEl.hidden = false;
+            const wa = data.whatsapp;
+            let msg = '';
+            if (wa?.sent && wa?.warning) msg = `⚠ WhatsApp: ${wa.warning}`;
+            else if (wa?.sent) msg = '✓ WhatsApp enviado com sucesso.';
+            else if (wa?.skipped) msg = `WhatsApp: ${wa.reason || 'não enviado'}.`;
+            else if (wa?.error) msg = `✗ WhatsApp: ${wa.reason || 'falha no envio'}.`;
+            else if (document.getElementById('svcShareOptWhatsapp')?.checked) msg = 'Link gerado. Conecte o WhatsApp em Configurações (menu lateral → Sistema).';
+            else msg = '✓ Link de compartilhamento gerado.';
+            const waOk = wa?.sent && !wa?.warning;
+            resultEl.className = `svc-share-result ${waOk || !document.getElementById('svcShareOptWhatsapp')?.checked ? 'is-ok' : wa?.sent ? 'is-warn' : 'is-warn'}`;
+            resultEl.textContent = msg;
+        }
+        if (data.whatsapp?.sent && data.whatsapp?.warning) showToast(data.whatsapp.warning, 'warning');
+        else if (data.whatsapp?.sent) showToast('Relatório enviado ao cliente.', 'success');
+        else if (data.shareUrl) showToast('Link do relatório pronto.', 'success');
+    } catch (e) {
+        console.error(e);
+        if (resultEl) {
+            resultEl.hidden = false;
+            resultEl.className = 'svc-share-result is-error';
+            resultEl.textContent = e.message || 'Erro ao enviar.';
+        }
+        showToast(e.message || 'Erro ao enviar.', 'error');
+    } finally {
+        if (sendBtn) {
+            sendBtn.disabled = false;
+            sendBtn.textContent = 'Enviar ao cliente';
         }
     }
-    renderAll();
-});
+}
+
+function bindShareModal() {
+    document.getElementById('svcShareCloseBtn')?.addEventListener('click', closeShareModal);
+    document.getElementById('svcShareModal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'svcShareModal') closeShareModal();
+    });
+    document.getElementById('svcShareSendBtn')?.addEventListener('click', runServiceShareSend);
+    document.getElementById('svcShareDownloadImgBtn')?.addEventListener('click', () => downloadServiceTemplateImage(service));
+    document.getElementById('svcShareDownloadPdfBtn')?.addEventListener('click', () => printServiceTemplatePdf(service));
+    document.getElementById('svcShareCopyLinkBtn')?.addEventListener('click', async () => {
+        const v = document.getElementById('svcShareLinkInput')?.value;
+        if (!v) {
+            showToast('Envie primeiro para gerar o link.', 'info');
+            return;
+        }
+        await navigator.clipboard.writeText(v);
+        showToast('Link copiado.', 'success');
+    });
+}
+
+function bootServiceWork() {
+    whenAppReady(() => {
+        if (!service?.id) {
+            window.location.href = '/services';
+            return;
+        }
+        updateTopbarTitle(`Oficina — ${service.code || 'OS'}`);
+        markNavActive('/services');
+        syncDefectItems();
+        if (defectItems.length) {
+            currentStep = initialStepIndex();
+            const allDone = defectItems.every((i) => i.done || i.archived);
+            const params = new URLSearchParams(window.location.search);
+            if (allDone && params.get('view') !== 'items') {
+                phase = 'summary';
+            }
+        }
+        bindShareModal();
+        renderAll();
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootServiceWork);
+} else {
+    bootServiceWork();
+}

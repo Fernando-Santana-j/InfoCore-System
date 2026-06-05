@@ -1,5 +1,28 @@
 <div class="page" id="page-configuracoes">
   <div class="grid-2 gap-20">
+    <div class="card wa-config-card" id="waConfigCard">
+      <div class="card-header">
+        <div class="card-title">💬 WhatsApp da Loja</div>
+        <span class="wa-status-pill" id="waStatusPill">Verificando...</span>
+      </div>
+      <p class="wa-config-desc">Conecte o WhatsApp da loja escaneando o QR Code (Baileys). Orçamentos e relatórios de OS serão enviados por este número.</p>
+      <div class="wa-config-body">
+        <div class="wa-qr-panel" id="waQrPanel" hidden>
+          <p class="wa-qr-hint">Abra o WhatsApp no celular → Aparelhos conectados → Conectar aparelho</p>
+          <img id="waQrImg" alt="QR Code WhatsApp" width="280" height="280">
+        </div>
+        <div class="wa-connected-panel" id="waConnectedPanel" hidden>
+          <div class="wa-connected-icon">✓</div>
+          <p>Conectado como <strong id="waConnectedPhone">—</strong></p>
+        </div>
+        <p class="wa-error" id="waErrorMsg" hidden></p>
+        <div class="wa-config-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="waConnectBtn">Conectar / Gerar QR</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="waDisconnectBtn" hidden>Desconectar</button>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header"><div class="card-title">🏪 Dados da Loja</div></div>
       <div class="flex-col gap-14">
