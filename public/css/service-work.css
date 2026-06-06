@@ -700,6 +700,109 @@
     border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.svc-diag-panel {
+    margin-top: 18px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background:
+        radial-gradient(ellipse 80% 120% at 0% 0%, rgba(242, 201, 76, 0.08), transparent 55%),
+        rgba(255, 255, 255, 0.03);
+    text-align: left;
+}
+
+.svc-diag-panel--received {
+    border-color: rgba(61, 220, 132, 0.28);
+    background:
+        radial-gradient(ellipse 80% 120% at 0% 0%, rgba(61, 220, 132, 0.1), transparent 55%),
+        rgba(255, 255, 255, 0.03);
+}
+
+.svc-diag-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.svc-diag-kicker {
+    margin: 0 0 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--gold);
+}
+
+.svc-diag-panel h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.svc-diag-meta {
+    margin: 6px 0 0;
+    font-size: 0.8rem;
+    color: var(--text2);
+}
+
+.svc-diag-status {
+    flex-shrink: 0;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text2);
+}
+
+.svc-diag-status.is-ok {
+    background: rgba(61, 220, 132, 0.15);
+    color: #6ee7a8;
+}
+
+.svc-diag-mini {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.svc-diag-chip {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.svc-diag-note {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    color: var(--text2);
+    line-height: 1.45;
+}
+
+.svc-diag-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.svc-diag-url {
+    display: block;
+    font-size: 0.72rem;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.25);
+    color: #c8c8dc;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
 @media (max-width: 560px) {
     .svc-work-ba-grid {
         grid-template-columns: 1fr;

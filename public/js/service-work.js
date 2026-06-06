@@ -17,6 +17,88 @@ function esc(v) {
         .replace(/'/g, '&#39;');
 }
 
+function diagnosticEndpointUrl() {
+    const code = encodeURIComponent(service?.code || '');
+    return `${window.location.origin}/api/diagnostico?os=${code}`;
+}
+
+function formatDiagTimestamp(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return String(ts);
+    return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function renderDiagnosticWorkCard() {
+    const diag = service?.pcDiagnostic;
+    const endpoint = diagnosticEndpointUrl();
+    if (diag) {
+        const battery = diag.battery?.detected && diag.battery.healthPct != null
+            ? `<span class="svc-diag-chip">Bateria ${esc(diag.battery.healthPct)}%</span>`
+            : '';
+        return `
+            <section class="svc-diag-panel svc-diag-panel--received">
+                <header class="svc-diag-panel-head">
+                    <div>
+                        <p class="svc-diag-kicker">Diagnóstico de hardware</p>
+                        <h3>${esc(diag.computerName)}</h3>
+                        <p class="svc-diag-meta">Recebido em ${esc(formatDiagTimestamp(diag.timestamp))}</p>
+                    </div>
+                    <span class="svc-diag-status is-ok">Recebido</span>
+                </header>
+                <div class="svc-diag-mini">
+                    <span class="svc-diag-chip">${esc(diag.cpu?.cores || 0)}c / ${esc(diag.cpu?.threads || 0)}t</span>
+                    <span class="svc-diag-chip">${esc(diag.ram?.totalGb || 0)} GB RAM</span>
+                    <span class="svc-diag-chip">${esc((diag.storage || []).length)} disco(s)</span>
+                    ${battery}
+                </div>
+                <p class="svc-diag-note">O diagnóstico aparece automaticamente no final do relatório enviado ao cliente.</p>
+                <div class="svc-diag-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="svcDiagRefreshBtn">Atualizar status</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="svcDiagCopyUrlBtn">Copiar URL do script</button>
+                </div>
+            </section>
+        `;
+    }
+    return `
+        <section class="svc-diag-panel">
+            <header class="svc-diag-panel-head">
+                <div>
+                    <p class="svc-diag-kicker">Diagnóstico de hardware</p>
+                    <h3>Aguardando coleta no PC do cliente</h3>
+                    <p class="svc-diag-meta">Execute o script PowerShell na manutenção com o código <strong>${esc(service?.code || '')}</strong></p>
+                </div>
+                <span class="svc-diag-status">Pendente</span>
+            </header>
+            <p class="svc-diag-note">O script envia CPU, RAM, discos, GPU e saúde da bateria para esta OS. Depois, tudo aparece no relatório do cliente.</p>
+            <div class="svc-diag-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="svcDiagCopyUrlBtn">Copiar URL do script</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="svcDiagRefreshBtn">Verificar recebimento</button>
+            </div>
+            <code class="svc-diag-url">${esc(endpoint)}</code>
+        </section>
+    `;
+}
+
+function bindDiagnosticPanel() {
+    document.getElementById('svcDiagCopyUrlBtn')?.addEventListener('click', async () => {
+        const url = diagnosticEndpointUrl();
+        try {
+            await navigator.clipboard.writeText(url);
+            showToast('URL copiada. Cole no script PowerShell (variável BaseUrl + ?os=).', 'success');
+        } catch {
+            showToast(url, 'info');
+        }
+    });
+    document.getElementById('svcDiagRefreshBtn')?.addEventListener('click', async () => {
+        const ok = await reloadService();
+        if (ok) {
+            renderAll();
+            showToast(service?.pcDiagnostic ? 'Diagnóstico recebido!' : 'Ainda aguardando diagnóstico.', service?.pcDiagnostic ? 'success' : 'info');
+        }
+    });
+}
+
 function statusLabel(st) {
     const m = {
         open: 'Aberta',
@@ -145,6 +227,7 @@ function renderSummary() {
                 <div class="svc-stat-pill"><strong>${defectItems.filter((i) => i.archived).length}</strong><span>Arquivados</span></div>
                 <div class="svc-stat-pill"><strong>${defectItems.filter((i) => !itemIsFinished(i)).length}</strong><span>Pendentes</span></div>
             </div>
+            ${renderDiagnosticWorkCard()}
             <div class="svc-work-summary-actions">
                 <p class="form-label">Finalizar ordem de serviço</p>
                 <div class="svc-work-final-btns">
@@ -161,6 +244,7 @@ function renderSummary() {
         <a href="/services" class="btn btn-ghost btn-sm">Voltar à oficina</a>
         <button type="button" class="btn btn-primary btn-sm" id="svcWorkShareBtnFooter">Enviar ao cliente</button>
     `;
+    bindDiagnosticPanel();
     document.getElementById('svcWorkShareBtn')?.addEventListener('click', openShareModal);
     document.getElementById('svcWorkShareBtnFooter')?.addEventListener('click', openShareModal);
     document.getElementById('svcWorkMarkDoneBtn')?.addEventListener('click', async () => {
@@ -266,6 +350,7 @@ function renderItemStep() {
                 </div>
             </div>
         </article>
+        ${renderDiagnosticWorkCard()}
     `;
 
     const isLast = currentStep >= defectItems.length - 1;
@@ -320,6 +405,7 @@ function renderItemStep() {
 
     document.getElementById('svcWorkPrevBtn')?.addEventListener('click', () => goToStep(currentStep - 1, false));
     document.getElementById('svcWorkSaveBtn')?.addEventListener('click', () => saveCurrentStep(isLast));
+    bindDiagnosticPanel();
 }
 
 function renderAll() {

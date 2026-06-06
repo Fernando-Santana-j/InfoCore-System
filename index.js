@@ -18,6 +18,11 @@ const nodemailer = require('nodemailer');
 const compression = require('compression');
 const whatsappClient = require('./lib/whatsapp');
 const { buildServiceReportFiles } = require('./lib/service-report-export');
+const {
+    normalizePcDiagnostic,
+    buildPcDiagnosticHtml,
+    formatDiagnosticTimestamp
+} = require('./lib/pc-diagnostic');
 require('dotenv').config();
 // const config = require('./config/config.json');
 
@@ -28,6 +33,7 @@ const CUSTOMERS_COLLECTION = 'customers';
 const CASH_FLOW_COLLECTION = 'cash_flow';
 const SERVICE_ORDERS_COLLECTION = 'service_orders';
 const SERVICE_WORK_TEMPLATES_COLLECTION = 'service_work_templates';
+const PC_DIAGNOSTICS_COLLECTION = 'pc_diagnostics';
 const INFOCORE_COLLECTION = 'infocore';
 const SHARED_NOTES_DOC = 'shared_notes';
 const { FieldValue } = require('firebase-admin/firestore');
@@ -427,7 +433,8 @@ function normalizeServiceOrderRow(row) {
         workTemplateId: r.workTemplateId != null ? String(r.workTemplateId).trim() : '',
         workTemplateName: r.workTemplateName != null ? String(r.workTemplateName).trim() : '',
         shareToken: r.shareToken != null ? String(r.shareToken).trim() : '',
-        shareCreatedAt: r.shareCreatedAt || null
+        shareCreatedAt: r.shareCreatedAt || null,
+        pcDiagnostic: normalizePcDiagnostic(r.pcDiagnostic)
     };
 }
 
@@ -614,7 +621,8 @@ function serviceTemplateData(service, req, options = {}) {
         logoUrl,
         storeName: safeTemplateValue(storeName),
         issuedAt: formatDateBr(new Date().toISOString().slice(0, 10)),
-        updatedAt: formatDateBr(service?.updatedAt || service?.createdAt || '')
+        updatedAt: formatDateBr(service?.updatedAt || service?.createdAt || ''),
+        diagnosticHtml: buildPcDiagnosticHtml(service?.pcDiagnostic, { compact })
     };
 }
 
@@ -669,6 +677,32 @@ async function saveShareQrPng(shareToken, shareUrl) {
         color: { dark: '#0f172a', light: '#ffffff' }
     });
     return `/uploads/${filename}`;
+}
+
+async function findServiceByCode(code) {
+    const c = String(code || '').trim();
+    if (!c) return null;
+    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION)
+        .where('code', '==', c)
+        .limit(1)
+        .get();
+    if (snap.empty) return null;
+    const doc = snap.docs[0];
+    return normalizeServiceOrderRow({ id: doc.id, ...(doc.data() || {}) });
+}
+
+function verifyDiagnosticApiKey(req) {
+    const expected = process.env.DIAGNOSTIC_API_KEY
+        ? String(process.env.DIAGNOSTIC_API_KEY).trim()
+        : '';
+    if (!expected) return true;
+    const provided = String(
+        req.get('x-diagnostic-key')
+        || req.query.key
+        || req.body?.api_key
+        || ''
+    ).trim();
+    return provided === expected;
 }
 
 async function fetchServiceByShareToken(token) {
@@ -971,7 +1005,8 @@ function serviceOrderFirestorePayload(row) {
         workTemplateId: n.workTemplateId,
         workTemplateName: n.workTemplateName,
         shareToken: n.shareToken || '',
-        shareCreatedAt: n.shareCreatedAt || null
+        shareCreatedAt: n.shareCreatedAt || null,
+        pcDiagnostic: n.pcDiagnostic || null
     };
 }
 
@@ -1934,8 +1969,80 @@ app.get('/p/os/:token', async (req, res) => {
     return res.render('service-share-public', {
         service,
         configs,
+        diagnostic: service.pcDiagnostic,
+        formatDiagnosticTimestamp,
         shareUrl: serviceShareUrl(service.shareToken, req),
         layout: false
+    });
+});
+
+app.post('/api/diagnostico', async (req, res) => {
+    if (!verifyDiagnosticApiKey(req)) {
+        return res.status(401).json({ error: true, message: 'Chave de API inválida.' });
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const serviceCode = String(
+        req.query.os
+        || req.query.service_code
+        || body.service_code
+        || body.os_code
+        || ''
+    ).trim();
+    const diagnostic = normalizePcDiagnostic(body);
+    if (!diagnostic) {
+        return res.status(400).json({
+            error: true,
+            message: 'Payload inválido. Envie computer_name e os dados de hardware.'
+        });
+    }
+
+    const now = new Date().toISOString();
+    let linked = false;
+    let serviceId = '';
+
+    if (serviceCode) {
+        const service = await findServiceByCode(serviceCode);
+        if (service?.id) {
+            serviceId = service.id;
+            linked = true;
+            try {
+                await db.update(SERVICE_ORDERS_COLLECTION, service.id, {
+                    pcDiagnostic: diagnostic,
+                    updatedAt: now
+                });
+            } catch (e) {
+                console.error('[Diagnóstico] Erro ao vincular à OS:', e);
+                return res.status(500).json({ error: true, message: 'Erro ao salvar diagnóstico na ordem de serviço.' });
+            }
+        }
+    }
+
+    const logId = randomUUID();
+    try {
+        await db.create(PC_DIAGNOSTICS_COLLECTION, logId, {
+            id: logId,
+            ...diagnostic,
+            computerName: diagnostic.computerName,
+            serviceId: serviceId || null,
+            serviceCode: serviceCode || null,
+            linked,
+            receivedAt: now
+        });
+    } catch (e) {
+        console.error('[Diagnóstico] Erro ao registrar log:', e);
+    }
+
+    return res.json({
+        error: false,
+        message: linked
+            ? 'Diagnóstico recebido e vinculado à ordem de serviço.'
+            : 'Diagnóstico recebido.',
+        linked,
+        serviceCode: serviceCode || null,
+        serviceId: serviceId || null,
+        computerName: diagnostic.computerName,
+        timestamp: diagnostic.timestamp
     });
 });
 

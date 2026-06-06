@@ -7,7 +7,7 @@
   <title>InfoCore - Relatório de serviço - <%= service.code %></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/service-share-public.css?v=1">
+  <link rel="stylesheet" href="/css/service-share-public.css?v=2">
 </head>
 <body>
   <div class="os-public">
@@ -118,6 +118,8 @@
       <% if (!stages.length) { %>
         <p class="os-public-empty">Nenhuma etapa registrada nesta ordem.</p>
       <% } %>
+
+      <%- include('partials/pc-diagnostic-report') %>
     </main>
 
     <footer class="os-public-footer">

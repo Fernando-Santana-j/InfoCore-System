@@ -1,0 +1,98 @@
+<% if (typeof diagnostic !== 'undefined' && diagnostic) { %>
+<section class="os-diag-section" aria-labelledby="osDiagTitle">
+  <header class="os-diag-head">
+    <div class="os-diag-head-icon" aria-hidden="true">🖥️</div>
+    <div>
+      <p class="os-diag-kicker">Diagnóstico de hardware</p>
+      <h2 id="osDiagTitle"><%= diagnostic.computerName %></h2>
+      <p class="os-diag-meta">Coletado em <%= typeof formatDiagnosticTimestamp === 'function' ? formatDiagnosticTimestamp(diagnostic.timestamp) : diagnostic.timestamp %></p>
+    </div>
+  </header>
+
+  <div class="os-diag-grid">
+    <article class="os-diag-card">
+      <span class="os-diag-card-label">Sistema</span>
+      <strong class="os-diag-card-value"><%= diagnostic.os.caption %></strong>
+      <span class="os-diag-card-sub"><%= diagnostic.os.arch %> · v<%= diagnostic.os.version %></span>
+    </article>
+
+    <article class="os-diag-card">
+      <span class="os-diag-card-label">Processador</span>
+      <strong class="os-diag-card-value os-diag-card-value--sm"><%= diagnostic.cpu.name %></strong>
+      <span class="os-diag-card-sub"><%= diagnostic.cpu.cores %> núcleos · <%= diagnostic.cpu.threads %> threads</span>
+    </article>
+
+    <article class="os-diag-card os-diag-card--wide">
+      <span class="os-diag-card-label">Placa-mãe / BIOS</span>
+      <strong class="os-diag-card-value os-diag-card-value--sm"><%= diagnostic.motherboard.manufacturer %> <%= diagnostic.motherboard.model %></strong>
+      <span class="os-diag-card-sub">BIOS <%= diagnostic.motherboard.biosVersion %></span>
+      <span class="os-diag-card-sub">Serial placa: <%= diagnostic.motherboard.serialMobo %> · Serial BIOS: <%= diagnostic.motherboard.serialBios %></span>
+    </article>
+
+    <article class="os-diag-card os-diag-card--wide">
+      <div class="os-diag-card-row">
+        <span class="os-diag-card-label">Memória RAM</span>
+        <strong class="os-diag-pill"><%= diagnostic.ram.totalGb %> GB total</strong>
+      </div>
+      <% if (diagnostic.ram.slots && diagnostic.ram.slots.length) { %>
+        <ul class="os-diag-list">
+          <% diagnostic.ram.slots.forEach(function(slot) { %>
+            <li>
+              <span><%= slot.slot %></span>
+              <span><%= slot.sizeGb %> GB · <%= slot.speedMhz %> MHz · <%= slot.manufacturer %></span>
+            </li>
+          <% }); %>
+        </ul>
+      <% } else { %>
+        <p class="os-diag-empty">Nenhum módulo detectado.</p>
+      <% } %>
+    </article>
+
+    <% if (diagnostic.storage && diagnostic.storage.length) { %>
+      <article class="os-diag-card os-diag-card--wide">
+        <span class="os-diag-card-label">Armazenamento</span>
+        <ul class="os-diag-list">
+          <% diagnostic.storage.forEach(function(disk) { %>
+            <li>
+              <span><%= disk.model %></span>
+              <span><%= disk.sizeGb %> GB · <%= disk.status %></span>
+            </li>
+          <% }); %>
+        </ul>
+      </article>
+    <% } %>
+
+    <% if (diagnostic.gpu && diagnostic.gpu.length) { %>
+      <article class="os-diag-card os-diag-card--wide">
+        <span class="os-diag-card-label">Placa de vídeo</span>
+        <ul class="os-diag-list">
+          <% diagnostic.gpu.forEach(function(gpu) { %>
+            <li>
+              <span><%= gpu.name %></span>
+              <span>Driver <%= gpu.driver %></span>
+            </li>
+          <% }); %>
+        </ul>
+      </article>
+    <% } %>
+
+    <% if (diagnostic.battery && diagnostic.battery.detected) {
+         const health = diagnostic.battery.healthPct;
+         const tone = health == null ? 'neutral' : (health >= 80 ? 'good' : (health >= 60 ? 'warn' : 'bad'));
+    %>
+      <article class="os-diag-card os-diag-card--wide os-diag-battery os-diag-battery--<%= tone %>">
+        <div class="os-diag-card-row">
+          <span class="os-diag-card-label">Bateria</span>
+          <strong class="os-diag-pill"><%= health != null ? health + '% saúde' : 'N/A' %></strong>
+        </div>
+        <% if (health != null) { %>
+          <div class="os-diag-battery-bar" role="progressbar" aria-valuenow="<%= health %>">
+            <div class="os-diag-battery-fill" style="width:<%= Math.min(100, Math.max(0, health)) %>%"></div>
+          </div>
+        <% } %>
+        <p class="os-diag-battery-name"><%= diagnostic.battery.name %><% if (diagnostic.battery.wearPct != null) { %> · desgaste <%= diagnostic.battery.wearPct %>%<% } %></p>
+      </article>
+    <% } %>
+  </div>
+</section>
+<% } %>
