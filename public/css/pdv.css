@@ -1486,6 +1486,7 @@
 }
 
 .pdv-svc-tpl-card {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1497,6 +1498,84 @@
     color: inherit;
     cursor: pointer;
     transition: border-color 0.2s, transform 0.15s;
+}
+
+.pdv-svc-tpl-order {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(61, 220, 132, 0.9);
+    color: #041208;
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 20px;
+    text-align: center;
+}
+
+.pdv-svc-templates-seq-wrap {
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(61, 220, 132, 0.25);
+    background: rgba(61, 220, 132, 0.06);
+}
+
+.pdv-svc-templates-seq-label {
+    margin: 0 0 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--green, #3ddc84);
+}
+
+.pdv-svc-templates-seq {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pdv-svc-seq-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(61, 220, 132, 0.35);
+    background: rgba(0, 0, 0, 0.25);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.pdv-svc-seq-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(61, 220, 132, 0.85);
+    color: #041208;
+    font-size: 0.65rem;
+    font-weight: 800;
+}
+
+.pdv-svc-seq-rm {
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+.pdv-svc-seq-rm:hover {
+    color: #ff6b6b;
 }
 
 .pdv-svc-tpl-card:hover {

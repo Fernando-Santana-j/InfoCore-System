@@ -282,14 +282,15 @@
           <span class="pdv-service-pane-icon">🔧</span>
           <div>
             <h4 class="pdv-service-pane-title">Serviços e defeitos</h4>
-            <p class="pdv-service-pane-desc">Aplique um template ou marque os itens. Obrigatório: ao menos 1 item ou relato abaixo.</p>
+            <p class="pdv-service-pane-desc">Selecione um ou mais templates (na ordem desejada) ou marque os itens manualmente.</p>
           </div>
           <span class="pdv-service-defect-badge" id="svcDefectCount">0 marcados</span>
         </header>
         <div class="pdv-svc-templates" id="svcWorkTemplatesPicker">
-          <p class="pdv-svc-templates-label">Serviços padrão da oficina</p>
+          <p class="pdv-svc-templates-label">Serviços padrão da oficina — clique para adicionar na sequência</p>
           <div class="pdv-svc-templates-grid" id="svcWorkTemplatesGrid"></div>
         </div>
+        <div class="pdv-svc-templates-seq-wrap" id="svcAppliedTemplatesSequence" hidden></div>
         <div class="pdv-service-field pdv-service-field--relato">
           <label class="form-label" for="svcIssueReport">Relato do problema</label>
           <textarea class="form-input" id="svcIssueReport" rows="2" placeholder="Descreva o que o cliente relatou (obrigatório se nenhum item estiver marcado)"></textarea>
@@ -327,7 +328,6 @@
         <button type="button" class="btn btn-ghost btn-sm" id="svcPrevStepBtn">← Voltar</button>
         <button type="button" class="btn btn-ghost btn-sm" id="cancelServiceIntakeBtn">Cancelar</button>
         <button type="button" class="btn btn-primary btn-sm" id="svcNextStepBtn">Próximo →</button>
-        <button type="button" class="btn btn-primary btn-sm pdv-service-submit-btn" id="svcSubmitBtn" hidden>✓ Finalizar ordem de serviço</button>
       </div>
     </div>
   </div>

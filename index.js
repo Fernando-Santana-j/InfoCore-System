@@ -431,6 +431,9 @@ function normalizeServiceOrderRow(row) {
             email: r.createdBy.email != null ? String(r.createdBy.email) : ''
         } : null,
         workTemplateId: r.workTemplateId != null ? String(r.workTemplateId).trim() : '',
+        workTemplateIds: Array.isArray(r.workTemplateIds)
+            ? r.workTemplateIds.map((id) => String(id).trim()).filter(Boolean)
+            : (r.workTemplateId ? [String(r.workTemplateId).trim()] : []),
         workTemplateName: r.workTemplateName != null ? String(r.workTemplateName).trim() : '',
         shareToken: r.shareToken != null ? String(r.shareToken).trim() : '',
         shareCreatedAt: r.shareCreatedAt || null,
@@ -851,6 +854,29 @@ async function dispatchServiceShare(service, req, body = {}) {
         qrDataUrl,
         service: report.share?.service || service
     };
+}
+
+function reorderChecklistByTemplateSequence(checklist, templateIds) {
+    const list = Array.isArray(checklist) ? [...checklist] : [];
+    const ids = Array.isArray(templateIds) ? templateIds.map((id) => String(id).trim()).filter(Boolean) : [];
+    if (!ids.length) return list;
+    const ordered = [];
+    const used = new Set();
+    for (const tplId of ids) {
+        const prefix = `tpl-${tplId}-`;
+        for (const item of list) {
+            const key = String(item.key || '');
+            if (key.startsWith(prefix) && !used.has(key)) {
+                ordered.push(item);
+                used.add(key);
+            }
+        }
+    }
+    for (const item of list) {
+        const key = String(item.key || '');
+        if (!used.has(key)) ordered.push(item);
+    }
+    return ordered;
 }
 
 function applyWorkTemplateToChecklist(existingChecklist, template, deviceType) {
@@ -4490,22 +4516,33 @@ app.post('/api/services', verifyLogin, async (req, res) => {
 
     const workTemplateId = String(body.workTemplateId || '').trim();
     let workTemplateName = String(body.workTemplateName || '').trim();
+    const applyTemplateIds = Array.isArray(body.applyTemplateIds)
+        ? body.applyTemplateIds.map((id) => String(id).trim()).filter(Boolean)
+        : [];
+    const appliedTemplateNames = [];
+
     if (workTemplateId) {
         const tplSnap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(workTemplateId).get();
         if (tplSnap.exists) {
             const tpl = normalizeServiceWorkTemplateRow({ id: workTemplateId, ...(tplSnap.data() || {}) });
             workTemplateName = tpl.name;
+            appliedTemplateNames.push(tpl.name);
             checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
         }
     }
-    if (Array.isArray(body.applyTemplateIds) && body.applyTemplateIds.length) {
-        for (const tid of body.applyTemplateIds) {
+    if (applyTemplateIds.length) {
+        for (const tid of applyTemplateIds) {
+            if (workTemplateId && String(tid) === workTemplateId) continue;
             const tplSnap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(String(tid).trim()).get();
             if (tplSnap.exists) {
                 const tpl = normalizeServiceWorkTemplateRow({ id: tplSnap.id, ...(tplSnap.data() || {}) });
                 checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
-                if (!workTemplateName && tpl.name) workTemplateName = tpl.name;
+                if (tpl.name) appliedTemplateNames.push(tpl.name);
             }
+        }
+        checklist = reorderChecklistByTemplateSequence(checklist, applyTemplateIds);
+        if (appliedTemplateNames.length) {
+            workTemplateName = appliedTemplateNames.join(' → ');
         }
     }
 
@@ -4554,7 +4591,8 @@ app.post('/api/services', verifyLogin, async (req, res) => {
             name: req.session.user?.name || '',
             email: req.session.user?.email || ''
         },
-        workTemplateId: workTemplateId || '',
+        workTemplateId: applyTemplateIds[0] || workTemplateId || '',
+        workTemplateIds: applyTemplateIds.length ? applyTemplateIds : (workTemplateId ? [workTemplateId] : []),
         workTemplateName
     });
 

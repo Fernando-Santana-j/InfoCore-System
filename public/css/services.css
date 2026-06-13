@@ -765,6 +765,20 @@
     color: var(--text2);
 }
 
+.svc-tpl-item-devices {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.72rem !important;
+    color: var(--gold) !important;
+}
+
+.svc-tpl-hint {
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    color: var(--text2);
+    line-height: 1.4;
+}
+
 .svc-tpl-stage-row {
     display: grid;
     grid-template-columns: 52px 1fr 1fr auto;

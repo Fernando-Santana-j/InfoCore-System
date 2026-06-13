@@ -6,7 +6,11 @@ let svcChecklistState = [];
 let svcCustomerAcIndex = -1;
 let svcSelectedCustomerId = '';
 const svcPendingPhotos = new Map();
-const svcAppliedTemplateIds = new Set();
+/** IDs dos templates aplicados, na ordem em que foram clicados. */
+const svcAppliedTemplateOrder = [];
+
+const SVC_NEXT_LABEL = 'Próximo →';
+const SVC_SUBMIT_LABEL = '✓ Finalizar ordem de serviço';
 
 function svcEsc(s) {
     return String(s || '')
@@ -127,15 +131,68 @@ function svcTemplateMatchesDevice(tpl, deviceType) {
     return types.includes(deviceType);
 }
 
+function svcTemplateItemKey(tplId, stageKey) {
+    return `tpl-${tplId}-${stageKey}`;
+}
+
+function svcIsTemplateItemKey(key) {
+    return String(key || '').startsWith('tpl-');
+}
+
+function svcRemoveWorkTemplate(tplId) {
+    const id = String(tplId);
+    const idx = svcAppliedTemplateOrder.indexOf(id);
+    if (idx < 0) return;
+    svcAppliedTemplateOrder.splice(idx, 1);
+    svcChecklistState = svcChecklistState.filter((item) => !String(item.key).startsWith(`tpl-${id}-`));
+    svcRebuildChecklistOrder();
+}
+
+function svcRebuildChecklistOrder() {
+    const byKey = new Map(svcChecklistState.map((item) => [String(item.key), item]));
+    const deviceType = String(document.getElementById('svcDeviceType')?.value || 'Celular');
+    const baseKeys = svcBuildTemplate(deviceType).map((b) => b.key);
+    const ordered = [];
+
+    for (const tplId of svcAppliedTemplateOrder) {
+        const tpl = svcWorkTemplates().find((t) => String(t.id) === String(tplId));
+        if (!tpl?.stages?.length) continue;
+        for (const stage of tpl.stages) {
+            const item = byKey.get(svcTemplateItemKey(tplId, stage.key));
+            if (item) ordered.push(item);
+        }
+    }
+
+    for (const key of baseKeys) {
+        const item = byKey.get(key);
+        if (item && !svcIsTemplateItemKey(item.key)) ordered.push(item);
+    }
+
+    const placed = new Set(ordered.map((i) => String(i.key)));
+    for (const item of svcChecklistState) {
+        if (!placed.has(String(item.key))) ordered.push(item);
+    }
+    svcChecklistState = ordered;
+}
+
 function svcApplyWorkTemplate(tpl) {
     if (!tpl?.id || !tpl.stages?.length) return;
+    const id = String(tpl.id);
     const deviceType = String(document.getElementById('svcDeviceType')?.value || 'Celular');
     if (!svcTemplateMatchesDevice(tpl, deviceType)) {
         showToast('Template não disponível para este tipo de aparelho.', 'error');
         return;
     }
+    if (svcAppliedTemplateOrder.includes(id)) {
+        svcRemoveWorkTemplate(id);
+        svcRenderChecklist();
+        svcRenderWorkTemplatesPicker();
+        svcRenderAppliedTemplatesSequence();
+        showToast(`"${tpl.name}" removido da sequência.`, 'info');
+        return;
+    }
     for (const stage of tpl.stages) {
-        const key = `tpl-${tpl.id}-${stage.key}`;
+        const key = svcTemplateItemKey(id, stage.key);
         const existing = svcChecklistState.find((i) => String(i.key) === key);
         if (existing) {
             existing.defective = true;
@@ -149,13 +206,52 @@ function svcApplyWorkTemplate(tpl) {
             defective: true,
             customerNote: stage.defaultNote || '',
             estimatedPrice: '',
-            photos: []
+            photos: [],
+            templateId: id,
+            templateName: tpl.name
         });
     }
-    svcAppliedTemplateIds.add(String(tpl.id));
+    svcAppliedTemplateOrder.push(id);
+    svcRebuildChecklistOrder();
     svcRenderChecklist();
     svcRenderWorkTemplatesPicker();
-    showToast(`"${tpl.name}" aplicado — ${tpl.stages.length} etapa(s).`, 'success');
+    svcRenderAppliedTemplatesSequence();
+    const orderNum = svcAppliedTemplateOrder.length;
+    showToast(`"${tpl.name}" adicionado (${orderNum}º na sequência).`, 'success');
+}
+
+function svcRenderAppliedTemplatesSequence() {
+    const el = document.getElementById('svcAppliedTemplatesSequence');
+    if (!el) return;
+    if (!svcAppliedTemplateOrder.length) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+    }
+    el.hidden = false;
+    el.innerHTML = `
+        <p class="pdv-svc-templates-seq-label">Sequência de templates (ordem de execução)</p>
+        <div class="pdv-svc-templates-seq">
+            ${svcAppliedTemplateOrder.map((tplId, i) => {
+                const tpl = svcWorkTemplates().find((t) => String(t.id) === String(tplId));
+                if (!tpl) return '';
+                return `
+                    <span class="pdv-svc-seq-chip">
+                        <span class="pdv-svc-seq-num">${i + 1}</span>
+                        <span>${svcEsc(tpl.icon || '🔧')} ${svcEsc(tpl.name)}</span>
+                        <button type="button" class="pdv-svc-seq-rm" data-tpl-id="${svcEsc(tplId)}" title="Remover">✕</button>
+                    </span>
+                `;
+            }).join('')}
+        </div>
+    `;
+    el.querySelectorAll('.pdv-svc-seq-rm').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const tplId = btn.getAttribute('data-tpl-id');
+            const tpl = svcWorkTemplates().find((t) => String(t.id) === String(tplId));
+            if (tpl) svcApplyWorkTemplate(tpl);
+        });
+    });
 }
 
 function svcRenderWorkTemplatesPicker() {
@@ -170,9 +266,11 @@ function svcRenderWorkTemplatesPicker() {
     }
     wrap.hidden = false;
     grid.innerHTML = templates.map((t) => {
-        const applied = svcAppliedTemplateIds.has(String(t.id));
+        const orderIdx = svcAppliedTemplateOrder.indexOf(String(t.id));
+        const applied = orderIdx >= 0;
         return `
-            <button type="button" class="pdv-svc-tpl-card ${applied ? 'is-applied' : ''}" data-tpl-id="${svcEsc(t.id)}">
+            <button type="button" class="pdv-svc-tpl-card ${applied ? 'is-applied' : ''}" data-tpl-id="${svcEsc(t.id)}" title="${applied ? 'Clique para remover da sequência' : 'Clique para adicionar à sequência'}">
+                ${applied ? `<span class="pdv-svc-tpl-order">${orderIdx + 1}</span>` : ''}
                 <span class="pdv-svc-tpl-icon">${svcEsc(t.icon || '🔧')}</span>
                 <span class="pdv-svc-tpl-name">${svcEsc(t.name)}</span>
                 <span class="pdv-svc-tpl-meta">${(t.stages || []).length} etapas</span>
@@ -288,6 +386,9 @@ function svcRenderReview() {
     const priority = String(document.getElementById('svcPriority')?.value || 'normal');
     const defects = svcChecklistState.filter((i) => i.defective);
     const priLabels = { normal: 'Normal', high: 'Alta', urgent: 'Urgente' };
+    const appliedTemplates = svcAppliedTemplateOrder
+        .map((id) => svcWorkTemplates().find((t) => String(t.id) === String(id)))
+        .filter(Boolean);
 
     el.innerHTML = `
         <div class="pdv-svc-review-block">
@@ -302,6 +403,9 @@ function svcRenderReview() {
         </div>
         <div class="pdv-svc-review-block">
             <h5>Serviços (${defects.length})</h5>
+            ${appliedTemplates.length
+        ? `<p class="pdv-svc-review-meta">Templates: ${appliedTemplates.map((t, i) => `${i + 1}. ${svcEsc(t.name)}`).join(' → ')}</p>`
+        : ''}
             ${defects.length
         ? `<ul class="pdv-svc-review-list">${defects.map((d) => `<li>${svcEsc(d.icon || '🔧')} ${svcEsc(d.label)}</li>`).join('')}</ul>`
         : '<p class="pdv-svc-review-meta">Nenhum item marcado — usando relato do problema.</p>'}
@@ -322,14 +426,16 @@ function svcSetStep(step) {
     });
     const prev = document.getElementById('svcPrevStepBtn');
     const next = document.getElementById('svcNextStepBtn');
-    const submit = document.getElementById('svcSubmitBtn');
     const cancel = document.getElementById('cancelServiceIntakeBtn');
     const hint = document.getElementById('svcStepHint');
     const isFinal = svcIntakeStep >= SVC_TOTAL_STEPS;
 
     if (prev) prev.style.visibility = svcIntakeStep === 1 ? 'hidden' : 'visible';
-    if (next) next.hidden = isFinal;
-    if (submit) submit.hidden = !isFinal;
+    if (next) {
+        next.textContent = isFinal ? SVC_SUBMIT_LABEL : SVC_NEXT_LABEL;
+        next.classList.toggle('pdv-service-submit-btn', isFinal);
+        next.disabled = false;
+    }
     if (cancel) cancel.hidden = isFinal;
     if (hint) {
         hint.textContent = isFinal
@@ -352,13 +458,14 @@ async function svcOpenModal() {
     document.getElementById('svcEstimateValue').value = '';
     document.getElementById('svcBudgetRawNotes').value = '';
     document.getElementById('svcPriority').value = 'normal';
-    svcAppliedTemplateIds.clear();
+    svcAppliedTemplateOrder.length = 0;
     svcResetChecklist('Celular');
     svcRenderChecklist();
     document.getElementById('serviceIntakeModal')?.classList.add('open');
     document.body.style.overflow = 'hidden';
     await svcRefreshWorkTemplates();
     svcRenderWorkTemplatesPicker();
+    svcRenderAppliedTemplatesSequence();
     svcSetStep(1);
 }
 
@@ -417,11 +524,12 @@ async function svcSubmit() {
         else svcSetStep(2);
         return;
     }
-    const submitBtn = document.getElementById('svcSubmitBtn');
+    const submitBtn = document.getElementById('svcNextStepBtn');
     if (submitBtn) {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Finalizando...';
     }
+    svcRebuildChecklistOrder();
     const estimateRaw = document.getElementById('svcEstimateValue')?.value;
     const payload = {
         customerId: svcSelectedCustomerId,
@@ -443,7 +551,7 @@ async function svcSubmit() {
             customerNote: item.customerNote,
             estimatedPrice: item.estimatedPrice === '' ? null : item.estimatedPrice
         })),
-        applyTemplateIds: [...svcAppliedTemplateIds]
+        applyTemplateIds: svcAppliedTemplateOrder.slice()
     };
     try {
         const res = await fetch('/api/services', {
@@ -474,7 +582,7 @@ async function svcSubmit() {
     } finally {
         if (submitBtn) {
             submitBtn.disabled = false;
-            submitBtn.textContent = '✓ Finalizar ordem de serviço';
+            submitBtn.textContent = SVC_SUBMIT_LABEL;
         }
     }
 }
@@ -485,15 +593,19 @@ function bindServiceIntakeModal() {
     document.getElementById('cancelServiceIntakeBtn')?.addEventListener('click', svcCloseModal);
     document.getElementById('svcPrevStepBtn')?.addEventListener('click', () => svcSetStep(svcIntakeStep - 1));
     document.getElementById('svcNextStepBtn')?.addEventListener('click', () => {
+        if (svcIntakeStep >= SVC_TOTAL_STEPS) {
+            svcSubmit();
+            return;
+        }
         if (!svcValidateStep(svcIntakeStep)) return;
         svcSetStep(svcIntakeStep + 1);
     });
-    document.getElementById('svcSubmitBtn')?.addEventListener('click', svcSubmit);
     document.getElementById('svcDeviceType')?.addEventListener('change', (e) => {
-        svcAppliedTemplateIds.clear();
+        svcAppliedTemplateOrder.length = 0;
         svcResetChecklist(e.target.value);
         svcRenderChecklist();
         svcRenderWorkTemplatesPicker();
+        svcRenderAppliedTemplatesSequence();
     });
     document.getElementById('svcCustomerSearch')?.addEventListener('input', (e) => svcRenderCustomerAc(e.target.value));
     document.getElementById('svcCustomerSearch')?.addEventListener('focus', (e) => svcRenderCustomerAc(e.target.value));

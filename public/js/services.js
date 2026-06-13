@@ -171,6 +171,12 @@ async function reloadServicesFromApi(showSuccessToast = true) {
     }
 }
 
+function formatTplDeviceTypes(t) {
+    const types = Array.isArray(t?.deviceTypes) ? t.deviceTypes.filter(Boolean) : [];
+    if (!types.length) return 'Todos os aparelhos';
+    return types.join(' · ');
+}
+
 function renderTplList() {
     const el = document.getElementById('svcTplList');
     if (!el) return;
@@ -184,6 +190,7 @@ function renderTplList() {
             <span class="svc-tpl-item-body">
                 <strong>${esc(t.name)}</strong>
                 <span>${(t.stages || []).length} etapa(s) · ${t.active ? 'Ativo' : 'Inativo'}</span>
+                <span class="svc-tpl-item-devices">${esc(formatTplDeviceTypes(t))}</span>
             </span>
         </button>
     `).join('');
