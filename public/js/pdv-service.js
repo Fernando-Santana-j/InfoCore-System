@@ -104,6 +104,18 @@ function svcClearCustomer() {
     document.getElementById('svcCustomerSelected')?.setAttribute('hidden', '');
 }
 
+async function svcRefreshWorkTemplates() {
+    try {
+        const res = await fetch('/api/service-work-templates?active=1', { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && !data.error && Array.isArray(data.templates)) {
+            window.appData.serviceWorkTemplates = data.templates;
+        }
+    } catch (e) {
+        console.warn('svcRefreshWorkTemplates', e);
+    }
+}
+
 function svcWorkTemplates() {
     const list = window.appData?.serviceWorkTemplates;
     return Array.isArray(list) ? list.filter((t) => t.active !== false) : [];
@@ -327,7 +339,7 @@ function svcSetStep(step) {
     if (isFinal) svcRenderReview();
 }
 
-function svcOpenModal() {
+async function svcOpenModal() {
     svcIntakeStep = 1;
     svcClearCustomer();
     document.getElementById('svcCustomerName').value = '';
@@ -343,10 +355,11 @@ function svcOpenModal() {
     svcAppliedTemplateIds.clear();
     svcResetChecklist('Celular');
     svcRenderChecklist();
-    svcRenderWorkTemplatesPicker();
-    svcSetStep(1);
     document.getElementById('serviceIntakeModal')?.classList.add('open');
     document.body.style.overflow = 'hidden';
+    await svcRefreshWorkTemplates();
+    svcRenderWorkTemplatesPicker();
+    svcSetStep(1);
 }
 
 function svcCloseModal() {
@@ -489,8 +502,12 @@ function bindServiceIntakeModal() {
     modal?.addEventListener('click', (e) => { if (e.target === modal) svcCloseModal(); });
 }
 
+function bootServiceIntake() {
+    whenAppReady(() => bindServiceIntakeModal());
+}
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bindServiceIntakeModal);
+    document.addEventListener('DOMContentLoaded', bootServiceIntake);
 } else {
-    bindServiceIntakeModal();
+    bootServiceIntake();
 }

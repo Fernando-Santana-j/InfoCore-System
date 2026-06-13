@@ -1,5 +1,11 @@
-let servicesData = Array.isArray(window.appData?.services) ? window.appData.services : [];
-let workTemplates = Array.isArray(window.appData?.serviceWorkTemplates) ? window.appData.serviceWorkTemplates : [];
+let servicesData = [];
+let workTemplates = [];
+
+function syncWorkTemplatesFromAppData() {
+    workTemplates = Array.isArray(window.appData?.serviceWorkTemplates)
+        ? window.appData.serviceWorkTemplates.slice()
+        : [];
+}
 let statusFilter = 'all';
 const SVC_DEVICE_TYPES = ['Celular', 'Notebook', 'Computador', 'Tablet', 'Outro'];
 
@@ -115,6 +121,23 @@ function renderServicesList() {
     if (highlightId) {
         const card = list.querySelector(`[data-service-id="${CSS.escape(highlightId)}"]`);
         card?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+async function reloadWorkTemplatesFromApi() {
+    try {
+        const res = await fetch('/api/service-work-templates', { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            throw new Error(data.message || 'Erro ao carregar templates.');
+        }
+        workTemplates = Array.isArray(data.templates) ? data.templates : [];
+        window.appData.serviceWorkTemplates = workTemplates;
+        return true;
+    } catch (e) {
+        console.error(e);
+        syncWorkTemplatesFromAppData();
+        return false;
     }
 }
 
@@ -271,8 +294,12 @@ async function saveTplForm(e) {
 }
 
 function bindTemplatesModal() {
-    document.getElementById('btnOpenWorkTemplates')?.addEventListener('click', () => {
-        document.getElementById('svcTplModal')?.removeAttribute('hidden');
+    document.getElementById('btnOpenWorkTemplates')?.addEventListener('click', async () => {
+        const modal = document.getElementById('svcTplModal');
+        const list = document.getElementById('svcTplList');
+        modal?.removeAttribute('hidden');
+        if (list) list.innerHTML = '<p class="svc-tpl-empty">Carregando templates…</p>';
+        await reloadWorkTemplatesFromApi();
         renderTplList();
     });
     document.getElementById('svcTplCloseBtn')?.addEventListener('click', () => {
@@ -293,6 +320,8 @@ function bindTemplatesModal() {
 
 function bootServices() {
     whenAppReady(async () => {
+        servicesData = Array.isArray(window.appData?.services) ? window.appData.services : [];
+        syncWorkTemplatesFromAppData();
         updateTopbarTitle('Oficina — Serviços');
         markNavActive('/services');
         renderAdminStats();

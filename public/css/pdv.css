@@ -1458,6 +1458,10 @@
     padding: 24px;
 }
 
+.pdv-svc-templates[hidden] {
+    display: none !important;
+}
+
 .pdv-svc-templates {
     margin-bottom: 16px;
     padding: 14px;
