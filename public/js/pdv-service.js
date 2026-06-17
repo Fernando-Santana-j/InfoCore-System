@@ -8,6 +8,10 @@ let svcSelectedCustomerId = '';
 const svcPendingPhotos = new Map();
 /** IDs dos templates aplicados, na ordem em que foram clicados. */
 const svcAppliedTemplateOrder = [];
+let svcBudgetItemsDraft = [];
+let svcBudgetSeeded = false;
+let svcSelectedBudgetProductId = '';
+let svcBudgetProductAcIndex = -1;
 
 const SVC_NEXT_LABEL = 'Próximo →';
 const SVC_SUBMIT_LABEL = '✓ Finalizar ordem de serviço';
@@ -361,8 +365,269 @@ function svcRenderChecklist() {
     });
 }
 
-const SVC_STEP_LABELS = ['Dados', 'Serviços', 'Finalizar'];
+const SVC_STEP_LABELS = ['Dados', 'Serviços', 'Orçamento'];
 const SVC_TOTAL_STEPS = 3;
+
+function svcAsNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function svcActiveProducts() {
+    const list = window.appData?.products;
+    const rows = Array.isArray(list) ? list : (list && typeof list === 'object' ? Object.values(list) : []);
+    return rows.filter((p) => p.active !== false);
+}
+
+function svcBudgetTotals(items = svcBudgetItemsDraft) {
+    const subtotal = items.reduce((sum, item) => sum + (svcAsNumber(item.qty) * svcAsNumber(item.unitPrice)), 0);
+    const discount = svcAsNumber(document.getElementById('svcBudgetDiscountInput')?.value);
+    const extra = svcAsNumber(document.getElementById('svcBudgetExtraInput')?.value);
+    const total = Math.max(0, subtotal - discount + extra);
+    return { subtotal, discount, extra, total };
+}
+
+function svcFilterBudgetProducts(term) {
+    const q = String(term || '').trim().toLowerCase();
+    let list = svcActiveProducts();
+    if (!q) return list.slice(0, 24);
+    return list.filter((p) => {
+        const name = String(p.name || '').toLowerCase();
+        const sku = String(p.sku || '').toLowerCase();
+        const cat = String(p.category || '').toLowerCase();
+        return name.includes(q) || sku.includes(q) || sku === q || cat.includes(q);
+    }).slice(0, 24);
+}
+
+function svcHideBudgetProductAc() {
+    const listEl = document.getElementById('svcBudgetProductResults');
+    if (listEl) listEl.hidden = true;
+}
+
+function svcRenderBudgetProductAc(term) {
+    const listEl = document.getElementById('svcBudgetProductResults');
+    if (!listEl) return;
+    const matches = svcFilterBudgetProducts(term);
+    svcBudgetProductAcIndex = matches.length ? 0 : -1;
+    if (!matches.length) {
+        listEl.innerHTML = '<div class="budget-ac-empty">Nenhum produto encontrado.</div>';
+        listEl.hidden = false;
+        svcSelectedBudgetProductId = '';
+        return;
+    }
+    listEl.innerHTML = matches.map((p, i) => `
+        <button type="button" class="budget-ac-item${i === svcBudgetProductAcIndex ? ' is-active' : ''}" data-product-id="${svcEsc(p.id)}">
+            <span class="budget-ac-item-title">${svcEsc(p.name)}</span>
+            <span class="budget-ac-item-meta">SKU ${svcEsc(p.sku || '—')} · ${formatCurrency(svcAsNumber(p.price))} · Est. ${svcAsNumber(p.qty)}</span>
+        </button>
+    `).join('');
+    listEl.hidden = false;
+    listEl.querySelectorAll('.budget-ac-item').forEach((btn, i) => {
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            svcSelectBudgetProduct(btn.getAttribute('data-product-id'));
+        });
+        btn.addEventListener('mouseenter', () => {
+            svcBudgetProductAcIndex = i;
+            listEl.querySelectorAll('.budget-ac-item').forEach((el, j) => {
+                el.classList.toggle('is-active', j === i);
+            });
+        });
+    });
+    svcSelectedBudgetProductId = String(matches[0]?.id || '');
+}
+
+function svcSelectBudgetProduct(productId) {
+    const id = String(productId || '').trim();
+    if (!id) return;
+    const p = svcActiveProducts().find((row) => String(row.id) === id);
+    if (!p) return;
+    const existing = svcBudgetItemsDraft.find((item) => item.kind === 'product' && String(item.productId) === id);
+    if (existing) {
+        existing.qty = svcAsNumber(existing.qty) + 1;
+    } else {
+        svcBudgetItemsDraft.push({
+            kind: 'product',
+            productId: String(p.id),
+            sku: String(p.sku || ''),
+            name: String(p.name || 'Produto'),
+            qty: 1,
+            unitPrice: svcAsNumber(p.price)
+        });
+    }
+    const search = document.getElementById('svcBudgetProductSearch');
+    if (search) search.value = '';
+    svcSelectedBudgetProductId = '';
+    svcBudgetProductAcIndex = -1;
+    svcHideBudgetProductAc();
+    svcRenderBudgetItems();
+    showToast(`${p.name} adicionado ao orçamento.`, 'success');
+}
+
+function svcRenderBudgetItems() {
+    const list = document.getElementById('svcBudgetItemsList');
+    if (!list) return;
+    if (!svcBudgetItemsDraft.length) {
+        list.innerHTML = '<div class="empty-state" style="padding:20px;"><div class="empty-icon">🧾</div><p>Nenhum item no orçamento.</p></div>';
+    } else {
+        list.innerHTML = svcBudgetItemsDraft.map((item, index) => `
+            <div class="budget-items-row" data-budget-index="${index}">
+                <input class="form-input" data-budget-field="name" value="${svcEsc(item.name)}">
+                <input class="form-input" type="number" min="1" step="1" data-budget-field="qty" value="${svcAsNumber(item.qty)}">
+                <input class="form-input" type="number" min="0" step="0.01" data-budget-field="unitPrice" value="${svcAsNumber(item.unitPrice)}">
+                <span class="budget-items-total">${formatCurrency(svcAsNumber(item.qty) * svcAsNumber(item.unitPrice))}</span>
+                <button class="btn btn-ghost btn-sm" type="button" data-budget-remove="${index}">✕</button>
+            </div>
+        `).join('');
+        list.querySelectorAll('[data-budget-field]').forEach((el) => {
+            el.addEventListener('input', () => {
+                const row = el.closest('[data-budget-index]');
+                const idx = Number(row?.getAttribute('data-budget-index'));
+                const item = svcBudgetItemsDraft[idx];
+                if (!item) return;
+                const field = el.getAttribute('data-budget-field');
+                if (field === 'qty' || field === 'unitPrice') item[field] = Math.max(0, svcAsNumber(el.value));
+                else item[field] = el.value;
+                svcRenderBudgetItems();
+            });
+        });
+        list.querySelectorAll('[data-budget-remove]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = Number(btn.getAttribute('data-budget-remove'));
+                svcBudgetItemsDraft.splice(idx, 1);
+                svcRenderBudgetItems();
+            });
+        });
+    }
+    svcRenderBudgetTotals();
+}
+
+function svcRenderBudgetTotals() {
+    const totalsEl = document.getElementById('svcBudgetTotalsBox');
+    if (!totalsEl) return;
+    const totals = svcBudgetTotals();
+    totalsEl.innerHTML = `
+        <div class="cart-total-row"><span>Subtotal</span><span class="mono">${formatCurrency(totals.subtotal)}</span></div>
+        <div class="cart-total-row"><span>Desconto</span><span class="mono">- ${formatCurrency(totals.discount)}</span></div>
+        <div class="cart-total-row"><span>Acréscimo</span><span class="mono">+ ${formatCurrency(totals.extra)}</span></div>
+        <div class="divider"></div>
+        <div class="cart-total-row grand"><span>Total</span><span class="val">${formatCurrency(totals.total)}</span></div>
+    `;
+}
+
+function svcSeedBudgetFromChecklist() {
+    if (svcBudgetItemsDraft.length) return;
+    const defects = svcChecklistState.filter((i) => i.defective);
+    for (const d of defects) {
+        const price = d.estimatedPrice !== '' && d.estimatedPrice != null ? svcAsNumber(d.estimatedPrice) : 0;
+        svcBudgetItemsDraft.push({
+            kind: 'custom',
+            productId: '',
+            sku: '',
+            name: String(d.label || 'Serviço'),
+            qty: 1,
+            unitPrice: price
+        });
+    }
+    if (!svcBudgetItemsDraft.length) {
+        const deviceType = String(document.getElementById('svcDeviceType')?.value || 'Aparelho');
+        const model = String(document.getElementById('svcDeviceBrandModel')?.value || '').trim();
+        svcBudgetItemsDraft.push({
+            kind: 'custom',
+            productId: '',
+            sku: '',
+            name: `Serviço — ${deviceType}${model ? ` ${model}` : ''}`.trim(),
+            qty: 1,
+            unitPrice: 0
+        });
+    }
+}
+
+function svcPrepareBudgetStep() {
+    if (!svcBudgetSeeded) {
+        svcSeedBudgetFromChecklist();
+        svcBudgetSeeded = true;
+    }
+    svcRenderBudgetItems();
+}
+
+function svcResetBudgetDraft() {
+    svcBudgetItemsDraft = [];
+    svcBudgetSeeded = false;
+    svcSelectedBudgetProductId = '';
+    svcBudgetProductAcIndex = -1;
+    const notes = document.getElementById('svcBudgetNotes');
+    const validUntil = document.getElementById('svcBudgetValidUntil');
+    const discount = document.getElementById('svcBudgetDiscountInput');
+    const extra = document.getElementById('svcBudgetExtraInput');
+    const productSearch = document.getElementById('svcBudgetProductSearch');
+    if (notes) notes.value = '';
+    if (validUntil) validUntil.value = '';
+    if (discount) discount.value = '0';
+    if (extra) extra.value = '0';
+    if (productSearch) productSearch.value = '';
+    svcHideBudgetProductAc();
+    svcRenderBudgetItems();
+}
+
+function svcAddCustomBudgetItem() {
+    svcBudgetItemsDraft.push({
+        kind: 'custom',
+        productId: '',
+        sku: '',
+        name: 'Serviço personalizado',
+        qty: 1,
+        unitPrice: 0
+    });
+    svcRenderBudgetItems();
+}
+
+function svcAddProductBudgetItem() {
+    const search = document.getElementById('svcBudgetProductSearch');
+    const term = search?.value?.trim() || '';
+    if (svcSelectedBudgetProductId) {
+        svcSelectBudgetProduct(svcSelectedBudgetProductId);
+        return;
+    }
+    const lower = term.toLowerCase();
+    const byCode = svcActiveProducts().find((p) => String(p.sku || '').trim().toLowerCase() === lower);
+    if (byCode) {
+        svcSelectBudgetProduct(byCode.id);
+        return;
+    }
+    const matches = svcFilterBudgetProducts(term);
+    if (matches.length === 1) {
+        svcSelectBudgetProduct(matches[0].id);
+        return;
+    }
+    if (matches.length > 1) {
+        svcRenderBudgetProductAc(term);
+        showToast('Selecione o produto na lista.', 'info');
+        return;
+    }
+    showToast('Busque e selecione um produto.', 'info');
+}
+
+function svcBuildBudgetPayload() {
+    const totals = svcBudgetTotals();
+    const items = svcBudgetItemsDraft
+        .filter((item) => String(item.name || '').trim() && svcAsNumber(item.qty) > 0)
+        .map((item) => ({
+            kind: item.kind === 'product' ? 'product' : 'custom',
+            productId: String(item.productId || ''),
+            sku: String(item.sku || ''),
+            name: String(item.name || '').trim(),
+            qty: svcAsNumber(item.qty),
+            unitPrice: svcAsNumber(item.unitPrice)
+        }));
+    return {
+        notes: String(document.getElementById('svcBudgetNotes')?.value || '').trim(),
+        validUntil: String(document.getElementById('svcBudgetValidUntil')?.value || '').trim(),
+        items,
+        discount: totals.discount,
+        extra: totals.extra
+    };
+}
 
 function svcPhoneDigits(raw) {
     return String(raw || '').replace(/\D/g, '');
@@ -439,10 +704,13 @@ function svcSetStep(step) {
     if (cancel) cancel.hidden = isFinal;
     if (hint) {
         hint.textContent = isFinal
-            ? 'Revise e clique em Finalizar'
+            ? 'Revise o orçamento e clique em Finalizar'
             : `Etapa ${svcIntakeStep} de ${SVC_TOTAL_STEPS} — ${SVC_STEP_LABELS[svcIntakeStep - 1]}`;
     }
-    if (isFinal) svcRenderReview();
+    if (isFinal) {
+        svcRenderReview();
+        svcPrepareBudgetStep();
+    }
 }
 
 async function svcOpenModal() {
@@ -455,10 +723,9 @@ async function svcOpenModal() {
     document.getElementById('svcDeviceBrandModel').value = '';
     document.getElementById('svcAccessories').value = '';
     document.getElementById('svcIssueReport').value = '';
-    document.getElementById('svcEstimateValue').value = '';
-    document.getElementById('svcBudgetRawNotes').value = '';
     document.getElementById('svcPriority').value = 'normal';
     svcAppliedTemplateOrder.length = 0;
+    svcResetBudgetDraft();
     svcResetChecklist('Celular');
     svcRenderChecklist();
     document.getElementById('serviceIntakeModal')?.classList.add('open');
@@ -503,6 +770,13 @@ function svcValidateStep(step) {
             return false;
         }
     }
+    if (step === 3) {
+        const budget = svcBuildBudgetPayload();
+        if (!budget.items.length) {
+            showToast('Adicione ao menos um item ao orçamento.', 'error');
+            return false;
+        }
+    }
     return true;
 }
 
@@ -519,9 +793,10 @@ async function svcUploadPendingPhotos(serviceId) {
 }
 
 async function svcSubmit() {
-    if (!svcValidateStep(1) || !svcValidateStep(2)) {
+    if (!svcValidateStep(1) || !svcValidateStep(2) || !svcValidateStep(3)) {
         if (!svcValidateStep(1)) svcSetStep(1);
-        else svcSetStep(2);
+        else if (!svcValidateStep(2)) svcSetStep(2);
+        else svcSetStep(3);
         return;
     }
     const submitBtn = document.getElementById('svcNextStepBtn');
@@ -530,7 +805,8 @@ async function svcSubmit() {
         submitBtn.textContent = 'Finalizando...';
     }
     svcRebuildChecklistOrder();
-    const estimateRaw = document.getElementById('svcEstimateValue')?.value;
+    const budget = svcBuildBudgetPayload();
+    const totals = svcBudgetTotals();
     const payload = {
         customerId: svcSelectedCustomerId,
         customerName: String(document.getElementById('svcCustomerName')?.value || '').trim(),
@@ -541,8 +817,9 @@ async function svcSubmit() {
         accessories: String(document.getElementById('svcAccessories')?.value || '').trim(),
         issueReport: String(document.getElementById('svcIssueReport')?.value || '').trim(),
         priority: String(document.getElementById('svcPriority')?.value || 'normal'),
-        estimateValue: estimateRaw === '' ? null : estimateRaw,
-        budgetRawNotes: String(document.getElementById('svcBudgetRawNotes')?.value || '').trim(),
+        estimateValue: totals.total > 0 ? totals.total : null,
+        budgetRawNotes: budget.notes,
+        budget,
         checklist: svcChecklistState.map((item) => ({
             key: item.key,
             label: item.label,
@@ -566,6 +843,10 @@ async function svcSubmit() {
             return;
         }
         await svcUploadPendingPhotos(data.service.id);
+        if (data.budget?.id) {
+            const budgets = Array.isArray(window.appData?.budgets) ? window.appData.budgets : [];
+            window.appData.budgets = [data.budget, ...budgets.filter((b) => String(b.id) !== String(data.budget.id))];
+        }
         svcCloseModal();
         const isAdmin = String(window.appData?.user?.type || '') === 'admin';
         showToast(`OS ${data.service.code} criada · Orçamento ${data.budget?.code || ''} em rascunho.`, 'success');
@@ -602,11 +883,19 @@ function bindServiceIntakeModal() {
     });
     document.getElementById('svcDeviceType')?.addEventListener('change', (e) => {
         svcAppliedTemplateOrder.length = 0;
+        svcBudgetSeeded = false;
+        svcBudgetItemsDraft = [];
         svcResetChecklist(e.target.value);
         svcRenderChecklist();
         svcRenderWorkTemplatesPicker();
         svcRenderAppliedTemplatesSequence();
     });
+    document.getElementById('svcBudgetAddProductBtn')?.addEventListener('click', svcAddProductBudgetItem);
+    document.getElementById('svcBudgetAddCustomBtn')?.addEventListener('click', svcAddCustomBudgetItem);
+    document.getElementById('svcBudgetDiscountInput')?.addEventListener('input', svcRenderBudgetTotals);
+    document.getElementById('svcBudgetExtraInput')?.addEventListener('input', svcRenderBudgetTotals);
+    document.getElementById('svcBudgetProductSearch')?.addEventListener('input', (e) => svcRenderBudgetProductAc(e.target.value));
+    document.getElementById('svcBudgetProductSearch')?.addEventListener('focus', (e) => svcRenderBudgetProductAc(e.target.value));
     document.getElementById('svcCustomerSearch')?.addEventListener('input', (e) => svcRenderCustomerAc(e.target.value));
     document.getElementById('svcCustomerSearch')?.addEventListener('focus', (e) => svcRenderCustomerAc(e.target.value));
     document.getElementById('svcCustomerClearBtn')?.addEventListener('click', svcClearCustomer);

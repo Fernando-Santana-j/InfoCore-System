@@ -936,32 +936,57 @@ function buildServiceBudgetNotes(serviceRow, budgetRawNotes) {
     return lines.join('\n');
 }
 
-async function createLinkedBudgetForService(serviceDraft, sessionUser) {
+async function createLinkedBudgetForService(serviceDraft, sessionUser, budgetBody = null) {
     const serviceId = String(serviceDraft.id || '').trim();
     const budgetId = randomUUID();
     const osCode = String(serviceDraft.code || serviceDisplayCode());
-    const estimateValue = serviceDraft.estimateValue != null ? Math.max(0, Number(serviceDraft.estimateValue) || 0) : 0;
-    const defects = (serviceDraft.checklist || []).filter((item) => item.defective);
+    const budgetInput = budgetBody && typeof budgetBody === 'object' ? budgetBody : null;
+    let items = [];
+    let discount = 0;
+    let extra = 0;
+    let validUntil = '';
+    let userNotes = '';
 
-    const items = [{
-        kind: 'custom',
-        name: `Serviço ${osCode} — ${serviceDraft.deviceType || 'Aparelho'} ${serviceDraft.deviceBrandModel || ''}`.trim(),
-        qty: 1,
-        unitPrice: estimateValue
-    }];
-
-    for (const defect of defects) {
-        const price = defect.estimatedPrice != null ? Math.max(0, Number(defect.estimatedPrice) || 0) : 0;
-        if (price <= 0) continue;
-        items.push({
+    if (budgetInput && Array.isArray(budgetInput.items) && budgetInput.items.length) {
+        items = budgetInput.items.map((item) => ({
+            kind: item.kind === 'product' ? 'product' : 'custom',
+            productId: String(item.productId || ''),
+            sku: String(item.sku || ''),
+            name: String(item.name || '').trim(),
+            qty: Math.max(0, Number(item.qty) || 0),
+            unitPrice: Math.max(0, Number(item.unitPrice) || 0)
+        })).filter((row) => row.name && row.qty > 0);
+        discount = Math.max(0, Number(budgetInput.discount) || 0);
+        extra = Math.max(0, Number(budgetInput.extra) || 0);
+        validUntil = String(budgetInput.validUntil || '').trim();
+        userNotes = String(budgetInput.notes || '').trim();
+    } else {
+        const estimateValue = serviceDraft.estimateValue != null ? Math.max(0, Number(serviceDraft.estimateValue) || 0) : 0;
+        const defects = (serviceDraft.checklist || []).filter((item) => item.defective);
+        items = [{
             kind: 'custom',
-            name: `[OS] ${defect.label}`,
+            name: `Serviço ${osCode} — ${serviceDraft.deviceType || 'Aparelho'} ${serviceDraft.deviceBrandModel || ''}`.trim(),
             qty: 1,
-            unitPrice: price
-        });
+            unitPrice: estimateValue
+        }];
+        for (const defect of defects) {
+            const price = defect.estimatedPrice != null ? Math.max(0, Number(defect.estimatedPrice) || 0) : 0;
+            if (price <= 0) continue;
+            items.push({
+                kind: 'custom',
+                name: `[OS] ${defect.label}`,
+                qty: 1,
+                unitPrice: price
+            });
+        }
+        userNotes = String(serviceDraft.budgetRawNotes || '').trim();
     }
 
-    const notes = buildServiceBudgetNotes(serviceDraft, serviceDraft.budgetRawNotes);
+    if (!items.length) {
+        return { error: true, message: 'Adicione ao menos 1 item ao orçamento.' };
+    }
+
+    const notes = buildServiceBudgetNotes(serviceDraft, userNotes);
     const built = await buildBudgetRecordFromBody({
         customerId: serviceDraft.customerId,
         customerName: serviceDraft.customerName,
@@ -969,8 +994,9 @@ async function createLinkedBudgetForService(serviceDraft, sessionUser) {
         customerEmail: serviceDraft.customerEmail,
         notes,
         items,
-        discount: 0,
-        extra: 0,
+        discount,
+        extra,
+        validUntil,
         status: 'draft',
         serviceOrderId: serviceId
     }, {
@@ -4503,11 +4529,24 @@ app.post('/api/services', verifyLogin, async (req, res) => {
     const deviceType = String(body.deviceType || 'Celular').trim() || 'Celular';
     const deviceBrandModel = String(body.deviceBrandModel || '').trim();
     const issueReport = String(body.issueReport || '').trim();
-    const budgetRawNotes = String(body.budgetRawNotes || '').trim();
+    const budgetBody = body.budget && typeof body.budget === 'object' ? body.budget : null;
+    const budgetRawNotes = budgetBody
+        ? String(budgetBody.notes || '').trim()
+        : String(body.budgetRawNotes || '').trim();
     const estimateValueRaw = body.estimateValue;
-    const estimateValue = estimateValueRaw === '' || estimateValueRaw == null
+    let estimateValue = estimateValueRaw === '' || estimateValueRaw == null
         ? null
         : Math.max(0, Number(estimateValueRaw) || 0);
+    if (budgetBody && Array.isArray(budgetBody.items) && budgetBody.items.length) {
+        const subtotal = budgetBody.items.reduce((sum, item) => {
+            const qty = Math.max(0, Number(item.qty) || 0);
+            const unit = Math.max(0, Number(item.unitPrice) || 0);
+            return sum + (qty * unit);
+        }, 0);
+        const discount = Math.max(0, Number(budgetBody.discount) || 0);
+        const extra = Math.max(0, Number(budgetBody.extra) || 0);
+        estimateValue = Math.max(0, Math.round((subtotal - discount + extra) * 100) / 100);
+    }
 
     let incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
     let checklist = incomingChecklist.length
@@ -4598,7 +4637,7 @@ app.post('/api/services', verifyLogin, async (req, res) => {
 
     let budgetLink;
     try {
-        budgetLink = await createLinkedBudgetForService(serviceDraft, req.session.user);
+        budgetLink = await createLinkedBudgetForService(serviceDraft, req.session.user, budgetBody);
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao criar orçamento vinculado.' });

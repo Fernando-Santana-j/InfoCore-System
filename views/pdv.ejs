@@ -207,7 +207,7 @@
       <nav class="pdv-service-steps" aria-label="Etapas da OS">
         <span class="pdv-service-step is-active" data-step="1"><span class="pdv-service-step-num">1</span><span class="pdv-service-step-label">Dados</span></span>
         <span class="pdv-service-step" data-step="2"><span class="pdv-service-step-num">2</span><span class="pdv-service-step-label">Serviços</span></span>
-        <span class="pdv-service-step" data-step="3"><span class="pdv-service-step-num">3</span><span class="pdv-service-step-label">Finalizar</span></span>
+        <span class="pdv-service-step" data-step="3"><span class="pdv-service-step-num">3</span><span class="pdv-service-step-label">Orçamento</span></span>
       </nav>
 
       <section class="pdv-service-pane is-active" data-pane="1">
@@ -300,26 +300,50 @@
 
       <section class="pdv-service-pane" data-pane="3">
         <header class="pdv-service-pane-head">
-          <span class="pdv-service-pane-icon">✓</span>
+          <span class="pdv-service-pane-icon">🧾</span>
           <div>
-            <h4 class="pdv-service-pane-title">Revisão e orçamento</h4>
-            <p class="pdv-service-pane-desc">Confira os dados. O orçamento rascunho é gerado automaticamente.</p>
+            <h4 class="pdv-service-pane-title">Orçamento vinculado</h4>
+            <p class="pdv-service-pane-desc">Monte o orçamento rascunho como na central de orçamentos — itens, descontos e observações.</p>
           </div>
         </header>
-        <div class="pdv-svc-review" id="svcReviewSummary"></div>
-        <details class="pdv-svc-review-extra">
-          <summary>Valor estimado e observações (opcional)</summary>
-          <div class="pdv-service-field-stack">
-            <div class="pdv-service-field">
-              <label class="form-label" for="svcEstimateValue">Valor estimado total (R$)</label>
-              <input class="form-input" id="svcEstimateValue" type="number" min="0" step="0.01" placeholder="0,00">
+        <div class="pdv-svc-review pdv-svc-review--compact" id="svcReviewSummary"></div>
+        <div class="pdv-svc-budget-section">
+          <div class="pdv-service-field">
+            <label class="form-label" for="svcBudgetNotes">Observações do orçamento</label>
+            <textarea class="form-input" id="svcBudgetNotes" rows="2" placeholder="Prazo, garantia, condições, peças..."></textarea>
+          </div>
+          <div class="pdv-service-field">
+            <label class="form-label" for="svcBudgetValidUntil">Validade</label>
+            <input class="form-input" id="svcBudgetValidUntil" type="date">
+          </div>
+          <div class="budget-product-section">
+            <label class="form-label" for="svcBudgetProductSearch">Adicionar produto</label>
+            <div class="budget-ac-wrap" id="svcBudgetProductAcWrap">
+              <span class="budget-ac-icon" aria-hidden="true">🔍</span>
+              <input class="form-input budget-ac-input" id="svcBudgetProductSearch" type="search" placeholder="Nome, SKU, código de barras..." autocomplete="off">
+              <div class="budget-ac-list" id="svcBudgetProductResults" hidden></div>
             </div>
-            <div class="pdv-service-field">
-              <label class="form-label" for="svcBudgetRawNotes">Observações para o orçamento</label>
-              <textarea class="form-input" id="svcBudgetRawNotes" rows="3" placeholder="Peças, prazos, observações..."></textarea>
+            <div class="budget-add-actions">
+              <button class="btn btn-ghost btn-sm" type="button" id="svcBudgetAddProductBtn">+ Adicionar selecionado</button>
+              <button class="btn btn-ghost btn-sm" type="button" id="svcBudgetAddCustomBtn">+ Item personalizado</button>
             </div>
           </div>
-        </details>
+          <div class="budget-items-table-wrap pdv-svc-budget-table">
+            <div class="budget-items-table-head">
+              <span>Item</span>
+              <span>Qtd</span>
+              <span>Valor unit.</span>
+              <span>Total</span>
+              <span></span>
+            </div>
+            <div id="svcBudgetItemsList" class="budget-items-table-body"></div>
+          </div>
+          <div class="budget-adjustments-row">
+            <label>Desconto (R$)<input class="form-input" id="svcBudgetDiscountInput" type="number" min="0" step="0.01" value="0"></label>
+            <label>Acréscimo (R$)<input class="form-input" id="svcBudgetExtraInput" type="number" min="0" step="0.01" value="0"></label>
+          </div>
+          <div id="svcBudgetTotalsBox" class="pdv-svc-budget-totals"></div>
+        </div>
       </section>
     </div>
     <div class="pdv-modal-footer pdv-service-footer">

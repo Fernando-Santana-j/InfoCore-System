@@ -1670,3 +1670,184 @@
 .pdv-service-field--relato {
     margin-bottom: 12px;
 }
+
+.pdv-svc-review--compact {
+    margin-bottom: 16px;
+}
+
+.pdv-svc-review--compact .pdv-svc-review-block {
+    padding: 10px 12px;
+}
+
+.pdv-svc-budget-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.pdv-svc-budget-totals {
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.pdv-svc-budget-table .budget-items-table-body {
+    max-height: 220px;
+}
+
+.pdv-service-modal-body .budget-ac-wrap {
+    position: relative;
+}
+
+.pdv-service-modal-body .budget-ac-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.9rem;
+    opacity: 0.65;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.pdv-service-modal-body .budget-ac-input {
+    width: 100%;
+    padding-left: 36px !important;
+}
+
+.pdv-service-modal-body .budget-ac-list {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    max-height: 200px;
+    overflow-y: auto;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    z-index: 120;
+}
+
+.pdv-service-modal-body .budget-ac-list:not([hidden]) {
+    display: block;
+}
+
+.pdv-service-modal-body .budget-ac-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+}
+
+.pdv-service-modal-body .budget-ac-item:last-child {
+    border-bottom: none;
+}
+
+.pdv-service-modal-body .budget-ac-item:hover,
+.pdv-service-modal-body .budget-ac-item.is-active {
+    background: rgba(212, 168, 83, 0.12);
+}
+
+.pdv-service-modal-body .budget-ac-item-title {
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+
+.pdv-service-modal-body .budget-ac-item-meta {
+    font-size: 0.75rem;
+    color: var(--text2);
+}
+
+.pdv-service-modal-body .budget-ac-empty {
+    padding: 12px;
+    font-size: 0.82rem;
+    color: var(--text3);
+    text-align: center;
+}
+
+.pdv-service-modal-body .budget-product-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.pdv-service-modal-body .budget-add-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pdv-service-modal-body .budget-items-table-wrap {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.pdv-service-modal-body .budget-items-table-head,
+.pdv-service-modal-body .budget-items-row {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) 64px 96px 88px auto;
+    gap: 6px;
+    align-items: center;
+    padding: 8px;
+}
+
+.pdv-service-modal-body .budget-items-table-head {
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem;
+    color: var(--text2);
+    font-weight: 700;
+}
+
+.pdv-service-modal-body .budget-items-row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pdv-service-modal-body .budget-items-row:last-child {
+    border-bottom: none;
+}
+
+.pdv-service-modal-body .budget-items-total {
+    font-family: "Inter", sans-serif;
+    color: var(--gold);
+    text-align: right;
+    font-weight: 700;
+    font-size: 0.82rem;
+}
+
+.pdv-service-modal-body .budget-adjustments-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.pdv-service-modal-body .budget-adjustments-row label {
+    font-size: 0.78rem;
+    color: var(--text2);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+@media (max-width: 680px) {
+    .pdv-service-modal-body .budget-items-table-head,
+    .pdv-service-modal-body .budget-items-row {
+        grid-template-columns: 1fr 56px 80px;
+    }
+
+    .pdv-service-modal-body .budget-items-table-head span:nth-child(4),
+    .pdv-service-modal-body .budget-items-row .budget-items-total {
+        display: none;
+    }
+}
