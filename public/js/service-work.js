@@ -431,6 +431,7 @@ function renderAll() {
 }
 
 async function reloadService() {
+    console.log('[Reload] Iniciando recarregamento de serviço:', service.id);
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
@@ -440,14 +441,32 @@ async function reloadService() {
         });
         clearTimeout(timeout);
         
+        console.log('[Reload] Resposta - Status:', res.status);
+        
         if (!res.ok) {
-            const data = await res.json().catch(() => ({ error: true, message: 'Erro ao recarregar OS' }));
-            showToast(data.message || 'Erro ao recarregar OS.', 'error');
+            console.error('[Reload] Erro HTTP:', res.status, res.statusText);
+            let errorData = { error: true, message: 'Erro ao recarregar OS' };
+            try {
+                errorData = await res.json();
+                console.error('[Reload] Erro do servidor:', errorData);
+            } catch (parseErr) {
+                console.error('[Reload] Erro ao fazer parse:', parseErr);
+            }
+            showToast(errorData.message || 'Erro ao recarregar OS.', 'error');
             return false;
         }
         
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+        } catch (parseErr) {
+            console.error('[Reload] Erro ao fazer parse da resposta JSON:', parseErr);
+            showToast('Erro ao processar resposta do servidor.', 'error');
+            return false;
+        }
+        
         if (data.error || !data.service) {
+            console.error('[Reload] Resposta com erro:', data.message || 'sem serviço');
             showToast(data.message || 'Erro ao recarregar OS.', 'error');
             return false;
         }
@@ -455,8 +474,10 @@ async function reloadService() {
         window.appData.service = service;
         syncDefectItems();
         if (currentStep >= defectItems.length) currentStep = Math.max(0, defectItems.length - 1);
+        console.log('[Reload] OK');
         return true;
     } catch (error) {
+        console.error('[Reload] Exceção capturada:', error.name, error.message);
         if (error.name === 'AbortError') {
             showToast('Recarregamento demorou muito. Atualize a página manualmente.', 'error');
         } else {
@@ -467,6 +488,7 @@ async function reloadService() {
 }
 
 async function persistPatch(patch) {
+    console.log('[PATCH] Enviando:', Object.keys(patch));
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
@@ -479,19 +501,40 @@ async function persistPatch(patch) {
         });
         clearTimeout(timeout);
         
+        console.log('[PATCH] Resposta - Status:', res.status, 'OK:', res.ok);
+        
         if (!res.ok) {
-            const data = await res.json().catch(() => ({ error: true, message: 'Erro na resposta do servidor' }));
-            showToast(data.message || `Erro: ${res.status} - ${res.statusText}`, 'error');
+            console.error('[PATCH] Resposta HTTP erro:', res.status, res.statusText);
+            let errorData = { error: true, message: 'Erro na resposta do servidor' };
+            try {
+                errorData = await res.json();
+                console.error('[PATCH] Erro do servidor:', errorData);
+            } catch (parseErr) {
+                console.error('[PATCH] Erro ao fazer parse:', parseErr);
+            }
+            showToast(errorData.message || `Erro: ${res.status} - ${res.statusText}`, 'error');
             return null;
         }
         
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+        } catch (parseErr) {
+            console.error('[PATCH] Erro ao fazer parse da resposta JSON:', parseErr);
+            showToast('Erro ao processar resposta do servidor.', 'error');
+            return null;
+        }
+        
         if (data.error) {
+            console.error('[PATCH] Servidor retornou erro:', data.message);
             showToast(data.message || 'Erro ao salvar.', 'error');
             return null;
         }
+        
+        console.log('[PATCH] OK, retornando serviço');
         return data.service;
     } catch (error) {
+        console.error('[PATCH] Exceção capturada:', error.name, error.message);
         if (error.name === 'AbortError') {
             showToast('Requisição demorou muito. Verifique sua conexão.', 'error');
         } else {
@@ -502,16 +545,29 @@ async function persistPatch(patch) {
 }
 
 async function uploadPhotoBatch(itemKey, files, phase, kind) {
-    if (!files?.length) return true;
+    if (!files?.length) {
+        console.log('[Upload] Nenhum arquivo para esta fase:', phase, 'kind:', kind);
+        return true;
+    }
+    
+    console.log('[Upload] Iniciando upload -', phase, kind, '- Arquivos:', files.length);
+    
     const form = new FormData();
-    files.forEach((f) => form.append('photos', f));
+    files.forEach((f) => {
+        console.log('[Upload] Adicionando arquivo:', f.name, 'tipo:', f.type, 'tamanho:', f.size);
+        form.append('photos', f);
+    });
+    
     let url = `/api/services/${encodeURIComponent(service.id)}/checklist/${encodeURIComponent(itemKey)}/photos?phase=${phase}`;
     if (kind) url += `&kind=${encodeURIComponent(kind)}`;
+    
+    console.log('[Upload] URL:', url);
     
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
         
+        console.log('[Upload] Enviando FormData...');
         const res = await fetch(url, { 
             method: 'POST', 
             body: form,
@@ -519,19 +575,41 @@ async function uploadPhotoBatch(itemKey, files, phase, kind) {
         });
         clearTimeout(timeout);
         
+        console.log('[Upload] Resposta recebida - Status:', res.status, 'OK:', res.ok);
+        
         if (!res.ok) {
-            const data = await res.json().catch(() => ({ error: true, message: 'Erro na resposta do servidor' }));
-            showToast(data.message || `Erro: ${res.status} - ${res.statusText}`, 'error');
+            console.error('[Upload] Resposta HTTP erro:', res.status, res.statusText);
+            let errorData = { error: true, message: 'Erro na resposta do servidor' };
+            try {
+                errorData = await res.json();
+                console.error('[Upload] Erro do servidor:', errorData);
+            } catch (parseErr) {
+                console.error('[Upload] Não foi possível fazer parse da resposta de erro:', parseErr);
+            }
+            showToast(errorData.message || `Erro: ${res.status} - ${res.statusText}`, 'error');
             return false;
         }
         
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+            console.log('[Upload] JSON recebido:', data.error ? 'COM ERRO' : 'OK');
+        } catch (parseErr) {
+            console.error('[Upload] Erro ao fazer parse da resposta JSON:', parseErr);
+            showToast('Erro ao processar resposta do servidor.', 'error');
+            return false;
+        }
+        
         if (data.error) {
+            console.error('[Upload] Servidor retornou erro:', data.message);
             showToast(data.message || 'Erro no upload de fotos.', 'error');
             return false;
         }
+        
+        console.log('[Upload] Upload bem-sucedido para', phase, kind);
         return true;
     } catch (error) {
+        console.error('[Upload] Exceção capturada:', error.name, error.message);
         if (error.name === 'AbortError') {
             showToast('Upload demorou muito. Verifique sua conexão e tente novamente.', 'error');
         } else {
@@ -542,6 +620,9 @@ async function uploadPhotoBatch(itemKey, files, phase, kind) {
 }
 
 async function uploadPendingPhotos(itemKey) {
+    console.log('[UploadPending] Iniciando para item:', itemKey);
+    console.log('[UploadPending] Before:', pendingBeforePhotos.length, 'After:', pendingAfterPhotos.length, 'General:', pendingPhotos.length);
+    
     const batches = [
         [pendingBeforePhotos, 'tech', 'before'],
         [pendingAfterPhotos, 'tech', 'after'],
@@ -550,15 +631,24 @@ async function uploadPendingPhotos(itemKey) {
     
     try {
         for (const [files, phase, kind] of batches) {
-            if (!files?.length) continue;
+            if (!files?.length) {
+                console.log('[UploadPending] Pulando', kind, '- sem arquivos');
+                continue;
+            }
             
+            console.log('[UploadPending] Iniciando upload de', kind, 'com', files.length, 'arquivo(s)');
             const ok = await uploadPhotoBatch(itemKey, files, phase, kind === 'general' ? '' : kind);
-            if (!ok) return false;
+            if (!ok) {
+                console.error('[UploadPending] Falhou em', kind);
+                return false;
+            }
             files.length = 0;
+            console.log('[UploadPending] OK -', kind);
         }
+        console.log('[UploadPending] Todos os uploads concluídos com sucesso');
         return true;
     } catch (error) {
-        console.error('Erro ao fazer upload de fotos:', error);
+        console.error('[UploadPending] Erro ao fazer upload de fotos:', error);
         showToast(error.message || 'Erro ao fazer upload de fotos.', 'error');
         return false;
     }
@@ -566,7 +656,12 @@ async function uploadPendingPhotos(itemKey) {
 
 async function saveCurrentStep(isLast) {
     const item = currentItem();
-    if (!item) return;
+    if (!item) {
+        console.error('[Salvar] Nenhum item atual');
+        return;
+    }
+
+    console.log('[Salvar] Iniciando - Item:', item.key, 'isLast:', isLast);
 
     const techNote = String(document.getElementById('svcWorkTechNote')?.value || '').trim();
     const done = itemOutcome === 'done';
@@ -583,8 +678,10 @@ async function saveCurrentStep(isLast) {
         saveBtn.textContent = 'Salvando...';
     }
 
+    console.log('[Salvar] Salvando checklist via PATCH...');
     const saved = await persistPatch({ checklist });
     if (!saved) {
+        console.error('[Salvar] PATCH falhou');
         if (saveBtn) {
             saveBtn.disabled = false;
             saveBtn.textContent = isLast ? 'Salvar e finalizar' : 'Salvar e continuar →';
@@ -593,9 +690,24 @@ async function saveCurrentStep(isLast) {
     }
     service = saved;
     syncDefectItems();
+    
+    console.log('[Salvar] PATCH OK, fazendo upload de fotos...');
 
     const photosOk = await uploadPendingPhotos(item.key);
     if (!photosOk) {
+        console.error('[Salvar] Upload de fotos falhou');
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = isLast ? 'Salvar e finalizar' : 'Salvar e continuar →';
+        }
+        return;
+    }
+    
+    console.log('[Salvar] Upload OK, recarregando serviço...');
+
+    const reloaded = await reloadService();
+    if (!reloaded) {
+        console.error('[Salvar] Recarregamento falhou');
         if (saveBtn) {
             saveBtn.disabled = false;
             saveBtn.textContent = isLast ? 'Salvar e finalizar' : 'Salvar e continuar →';
@@ -603,14 +715,7 @@ async function saveCurrentStep(isLast) {
         return;
     }
 
-    const reloaded = await reloadService();
-    if (!reloaded) {
-        if (saveBtn) {
-            saveBtn.disabled = false;
-            saveBtn.textContent = isLast ? 'Salvar e finalizar' : 'Salvar e continuar →';
-        }
-        return;
-    }
+    console.log('[Salvar] Tudo OK!');
 
     if (archived) {
         showToast('Etapa arquivada.', 'success');
@@ -621,6 +726,7 @@ async function saveCurrentStep(isLast) {
     }
 
     if (isLast) {
+        console.log('[Salvar] Finalizando checklist...');
         phase = 'summary';
         if (service.status === 'open') {
             const updated = await persistPatch({ status: 'in_progress' });

@@ -4736,76 +4736,96 @@ app.patch('/api/services/:id', verifyLogin, async (req, res) => {
 app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, next) => {
     upload.array('photos', 6)(req, res, (err) => {
         if (err) {
+            console.error('[Upload Foto] Erro no multer:', err.message);
             return res.status(400).json({ error: true, message: err.message || 'Upload inválido.' });
         }
         next();
     });
 }, async (req, res) => {
-    const id = String(req.params.id || '').trim();
-    const itemKey = String(req.params.itemKey || '').trim();
-    const phase = String(req.query.phase || 'intake').trim() === 'tech' ? 'tech' : 'intake';
-    
-    if (!id || !itemKey) {
-        return res.status(400).json({ error: true, message: 'Parâmetros inválidos.' });
-    }
-
-    const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
-    if (!snap.exists) {
-        return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
-    }
-
-    const prev = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
-    const files = Array.isArray(req.files) ? req.files : [];
-    if (!files.length) {
-        return res.status(400).json({ error: true, message: 'Selecione pelo menos uma foto.' });
-    }
-
-    const caption = String(req.body?.caption || '').trim();
-    const newPhotos = files.map((file) => normalizeServicePhotoItem({
-        id: randomUUID(),
-        url: `/uploads/${file.filename}`,
-        caption,
-        createdAt: new Date().toISOString()
-    }));
-
-    const photoKind = String(req.query.kind || 'general').toLowerCase();
-    let found = false;
-    const checklist = (prev.checklist || []).map((item) => {
-        const itemKeyStr = String(item.key || '').trim();
-        const paramKeyStr = String(itemKey).trim();
-        
-        if (itemKeyStr !== paramKeyStr) return item;
-        found = true;
-        
-        if (phase === 'intake') {
-            return { ...item, photos: [...(item.photos || []), ...newPhotos] };
-        }
-        if (photoKind === 'before') {
-            return { ...item, beforePhotos: [...(item.beforePhotos || []), ...newPhotos.map((p) => ({ ...p, kind: 'before' }))] };
-        }
-        if (photoKind === 'after') {
-            return { ...item, afterPhotos: [...(item.afterPhotos || []), ...newPhotos.map((p) => ({ ...p, kind: 'after' }))] };
-        }
-        return { ...item, techPhotos: [...(item.techPhotos || []), ...newPhotos] };
-    });
-
-    if (!found) {
-        console.error(`[Upload Foto] Item não encontrado - ID: ${id}, ItemKey procurado: "${itemKey}", Chaves disponíveis:`, (prev.checklist || []).map(i => String(i.key)));
-        return res.status(404).json({ error: true, message: `Item "${itemKey}" não encontrado no checklist.` });
-    }
-
-    const updatedAt = new Date().toISOString();
     try {
-        await db.update(SERVICE_ORDERS_COLLECTION, id, { checklist, updatedAt });
-    } catch (e) {
-        console.error('[Upload Foto] Erro ao salvar:', e);
-        return res.status(500).json({ error: true, message: 'Erro ao salvar fotos: ' + (e.message || 'desconhecido') });
-    }
+        const id = String(req.params.id || '').trim();
+        const itemKey = String(req.params.itemKey || '').trim();
+        const phase = String(req.query.phase || 'intake').trim() === 'tech' ? 'tech' : 'intake';
+        
+        console.log('[Upload Foto] Iniciando - ID:', id, 'ItemKey:', itemKey, 'Phase:', phase);
+        
+        if (!id || !itemKey) {
+            console.error('[Upload Foto] Parâmetros inválidos - ID:', id, 'ItemKey:', itemKey);
+            return res.status(400).json({ error: true, message: 'Parâmetros inválidos.' });
+        }
 
-    return res.json({
-        error: false,
-        service: normalizeServiceOrderRow({ ...prev, checklist, updatedAt })
-    });
+        const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
+        if (!snap.exists) {
+            console.error('[Upload Foto] OS não encontrada:', id);
+            return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
+        }
+
+        const prev = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
+        const files = Array.isArray(req.files) ? req.files : [];
+        
+        console.log('[Upload Foto] Arquivos recebidos:', files.length);
+        
+        if (!files.length) {
+            console.error('[Upload Foto] Nenhum arquivo recebido');
+            return res.status(400).json({ error: true, message: 'Selecione pelo menos uma foto.' });
+        }
+
+        const caption = String(req.body?.caption || '').trim();
+        const newPhotos = files.map((file) => normalizeServicePhotoItem({
+            id: randomUUID(),
+            url: `/uploads/${file.filename}`,
+            caption,
+            createdAt: new Date().toISOString()
+        }));
+
+        console.log('[Upload Foto] Novas fotos criadas:', newPhotos.length);
+
+        const photoKind = String(req.query.kind || 'general').toLowerCase();
+        let found = false;
+        const checklist = (prev.checklist || []).map((item) => {
+            const itemKeyStr = String(item.key || '').trim();
+            const paramKeyStr = String(itemKey).trim();
+            
+            if (itemKeyStr !== paramKeyStr) return item;
+            found = true;
+            
+            if (phase === 'intake') {
+                return { ...item, photos: [...(item.photos || []), ...newPhotos] };
+            }
+            if (photoKind === 'before') {
+                return { ...item, beforePhotos: [...(item.beforePhotos || []), ...newPhotos.map((p) => ({ ...p, kind: 'before' }))] };
+            }
+            if (photoKind === 'after') {
+                return { ...item, afterPhotos: [...(item.afterPhotos || []), ...newPhotos.map((p) => ({ ...p, kind: 'after' }))] };
+            }
+            return { ...item, techPhotos: [...(item.techPhotos || []), ...newPhotos] };
+        });
+
+        if (!found) {
+            const availableKeys = (prev.checklist || []).map(i => String(i.key || '')).filter(Boolean);
+            console.error('[Upload Foto] Item não encontrado - ItemKey procurado:', itemKey, 'Disponíveis:', availableKeys);
+            return res.status(404).json({ error: true, message: `Item "${itemKey}" não encontrado no checklist.` });
+        }
+
+        console.log('[Upload Foto] Item encontrado, salvando...');
+
+        const updatedAt = new Date().toISOString();
+        try {
+            await db.update(SERVICE_ORDERS_COLLECTION, id, { checklist, updatedAt });
+            console.log('[Upload Foto] Sucesso ao salvar fotos para:', id);
+        } catch (e) {
+            console.error('[Upload Foto] Erro ao salvar no Firebase:', e.message, e);
+            return res.status(500).json({ error: true, message: 'Erro ao salvar fotos: ' + (e.message || 'desconhecido') });
+        }
+
+        return res.json({
+            error: false,
+            service: normalizeServiceOrderRow({ ...prev, checklist, updatedAt })
+        });
+    } catch (error) {
+        console.error('[Upload Foto] Erro inesperado:', error.message, error.stack);
+        return res.status(500).json({ error: true, message: 'Erro inesperado: ' + (error.message || 'desconhecido') });
+    }
 });
 
 app.get('/api/sales/:id', verifyLogin, async (req, res) => {
