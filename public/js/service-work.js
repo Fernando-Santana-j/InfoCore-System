@@ -431,31 +431,74 @@ function renderAll() {
 }
 
 async function reloadService() {
-    const res = await fetch(`/api/services/${encodeURIComponent(service.id)}`);
-    const data = await res.json();
-    if (data.error || !data.service) {
-        showToast(data.message || 'Erro ao recarregar OS.', 'error');
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        
+        const res = await fetch(`/api/services/${encodeURIComponent(service.id)}`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({ error: true, message: 'Erro ao recarregar OS' }));
+            showToast(data.message || 'Erro ao recarregar OS.', 'error');
+            return false;
+        }
+        
+        const data = await res.json();
+        if (data.error || !data.service) {
+            showToast(data.message || 'Erro ao recarregar OS.', 'error');
+            return false;
+        }
+        service = data.service;
+        window.appData.service = service;
+        syncDefectItems();
+        if (currentStep >= defectItems.length) currentStep = Math.max(0, defectItems.length - 1);
+        return true;
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            showToast('Recarregamento demorou muito. Atualize a página manualmente.', 'error');
+        } else {
+            showToast(error.message || 'Erro ao recarregar OS.', 'error');
+        }
         return false;
     }
-    service = data.service;
-    window.appData.service = service;
-    syncDefectItems();
-    if (currentStep >= defectItems.length) currentStep = Math.max(0, defectItems.length - 1);
-    return true;
 }
 
 async function persistPatch(patch) {
-    const res = await fetch(`/api/services/${encodeURIComponent(service.id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch)
-    });
-    const data = await res.json();
-    if (data.error) {
-        showToast(data.message || 'Erro ao salvar.', 'error');
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        
+        const res = await fetch(`/api/services/${encodeURIComponent(service.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({ error: true, message: 'Erro na resposta do servidor' }));
+            showToast(data.message || `Erro: ${res.status} - ${res.statusText}`, 'error');
+            return null;
+        }
+        
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.message || 'Erro ao salvar.', 'error');
+            return null;
+        }
+        return data.service;
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            showToast('Requisição demorou muito. Verifique sua conexão.', 'error');
+        } else {
+            showToast(error.message || 'Erro ao salvar.', 'error');
+        }
         return null;
     }
-    return data.service;
 }
 
 async function uploadPhotoBatch(itemKey, files, phase, kind) {
@@ -464,13 +507,38 @@ async function uploadPhotoBatch(itemKey, files, phase, kind) {
     files.forEach((f) => form.append('photos', f));
     let url = `/api/services/${encodeURIComponent(service.id)}/checklist/${encodeURIComponent(itemKey)}/photos?phase=${phase}`;
     if (kind) url += `&kind=${encodeURIComponent(kind)}`;
-    const res = await fetch(url, { method: 'POST', body: form });
-    const data = await res.json();
-    if (data.error) {
-        showToast(data.message || 'Erro no upload de fotos.', 'error');
+    
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        
+        const res = await fetch(url, { 
+            method: 'POST', 
+            body: form,
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({ error: true, message: 'Erro na resposta do servidor' }));
+            showToast(data.message || `Erro: ${res.status} - ${res.statusText}`, 'error');
+            return false;
+        }
+        
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.message || 'Erro no upload de fotos.', 'error');
+            return false;
+        }
+        return true;
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            showToast('Upload demorou muito. Verifique sua conexão e tente novamente.', 'error');
+        } else {
+            showToast(error.message || 'Erro ao fazer upload de fotos.', 'error');
+        }
         return false;
     }
-    return true;
 }
 
 async function uploadPendingPhotos(itemKey) {
@@ -479,12 +547,21 @@ async function uploadPendingPhotos(itemKey) {
         [pendingAfterPhotos, 'tech', 'after'],
         [pendingPhotos, 'tech', 'general']
     ];
-    for (const [files, phase, kind] of batches) {
-        const ok = await uploadPhotoBatch(itemKey, files, phase, kind === 'general' ? '' : kind);
-        if (!ok) return false;
-        files.length = 0;
+    
+    try {
+        for (const [files, phase, kind] of batches) {
+            if (!files?.length) continue;
+            
+            const ok = await uploadPhotoBatch(itemKey, files, phase, kind === 'general' ? '' : kind);
+            if (!ok) return false;
+            files.length = 0;
+        }
+        return true;
+    } catch (error) {
+        console.error('Erro ao fazer upload de fotos:', error);
+        showToast(error.message || 'Erro ao fazer upload de fotos.', 'error');
+        return false;
     }
-    return true;
 }
 
 async function saveCurrentStep(isLast) {
@@ -526,7 +603,14 @@ async function saveCurrentStep(isLast) {
         return;
     }
 
-    await reloadService();
+    const reloaded = await reloadService();
+    if (!reloaded) {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.textContent = isLast ? 'Salvar e finalizar' : 'Salvar e continuar →';
+        }
+        return;
+    }
 
     if (archived) {
         showToast('Etapa arquivada.', 'success');

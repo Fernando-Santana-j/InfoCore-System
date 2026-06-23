@@ -4750,9 +4750,6 @@ app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, 
     if (!id || !itemKey) {
         return res.status(400).json({ error: true, message: 'Parâmetros inválidos.' });
     }
-    if (phase === 'tech' && req.session.user?.type !== 'admin') {
-        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
-    }
 
     const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
     if (!snap.exists) {
