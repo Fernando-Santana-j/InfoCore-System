@@ -553,10 +553,13 @@ async function uploadPhotoBatch(itemKey, files, phase, kind) {
     console.log('[Upload] Iniciando upload -', phase, kind, '- Arquivos:', files.length);
     
     const form = new FormData();
+    let totalSize = 0;
     files.forEach((f) => {
-        console.log('[Upload] Adicionando arquivo:', f.name, 'tipo:', f.type, 'tamanho:', f.size);
+        totalSize += f.size;
+        console.log('[Upload] Adicionando arquivo:', f.name, 'tipo:', f.type, 'tamanho:', (f.size / 1024 / 1024).toFixed(2) + ' MB');
         form.append('photos', f);
     });
+    console.log('[Upload] Tamanho total do FormData:', (totalSize / 1024 / 1024).toFixed(2) + ' MB');
     
     let url = `/api/services/${encodeURIComponent(service.id)}/checklist/${encodeURIComponent(itemKey)}/photos?phase=${phase}`;
     if (kind) url += `&kind=${encodeURIComponent(kind)}`;
@@ -567,7 +570,7 @@ async function uploadPhotoBatch(itemKey, files, phase, kind) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
         
-        console.log('[Upload] Enviando FormData...');
+        console.log('[Upload] Enviando FormData com', files.length, 'arquivo(s)...');
         const res = await fetch(url, { 
             method: 'POST', 
             body: form,

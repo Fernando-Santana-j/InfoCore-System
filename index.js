@@ -1990,8 +1990,8 @@ app.use(session({
 }));
 app.use(cookieParser());
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
+app.use(bodyParser.json({ limit: '50mb' }));
 app.use(compression());
 
 const staticMaxAge = process.env.NODE_ENV === 'production' ? '7d' : 0;
@@ -2160,7 +2160,7 @@ const storage = multer.diskStorage({
 const imageMime = /^image\/(jpeg|png|gif|webp)$/i;
 const upload = multer({
     storage,
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: 50 * 1024 * 1024 },
     fileFilter(req, file, cb) {
         if (imageMime.test(file.mimetype)) cb(null, true);
         else cb(new Error('Use uma imagem JPG, PNG, GIF ou WebP.'));
@@ -4736,9 +4736,11 @@ app.patch('/api/services/:id', verifyLogin, async (req, res) => {
 app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, next) => {
     upload.array('photos', 6)(req, res, (err) => {
         if (err) {
-            console.error('[Upload Foto] Erro no multer:', err.message);
-            return res.status(400).json({ error: true, message: err.message || 'Upload inválido.' });
+            console.error('[Upload Foto] Erro no multer:', err.message || err);
+            const statusCode = err.message?.includes('Entity Too Large') ? 413 : 400;
+            return res.status(statusCode).json({ error: true, message: err.message || 'Upload inválido.' });
         }
+        console.log('[Upload Foto] Multer OK, passando para o próximo middleware');
         next();
     });
 }, async (req, res) => {
@@ -4763,7 +4765,7 @@ app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, 
         const prev = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
         const files = Array.isArray(req.files) ? req.files : [];
         
-        console.log('[Upload Foto] Arquivos recebidos:', files.length);
+        console.log('[Upload Foto] Arquivos recebidos:', files.length, files.map(f => `${f.originalname} (${f.size} bytes)`));
         
         if (!files.length) {
             console.error('[Upload Foto] Nenhum arquivo recebido');
