@@ -4678,9 +4678,6 @@ app.post('/api/services', verifyLogin, async (req, res) => {
 });
 
 app.patch('/api/services/:id', verifyLogin, async (req, res) => {
-    if (req.session.user?.type !== 'admin') {
-        return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
-    }
     const id = String(req.params.id || '').trim();
     if (!id) {
         return res.status(400).json({ error: true, message: 'ID inválido.' });
@@ -4747,6 +4744,7 @@ app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, 
     const id = String(req.params.id || '').trim();
     const itemKey = String(req.params.itemKey || '').trim();
     const phase = String(req.query.phase || 'intake').trim() === 'tech' ? 'tech' : 'intake';
+    
     if (!id || !itemKey) {
         return res.status(400).json({ error: true, message: 'Parâmetros inválidos.' });
     }
@@ -4771,8 +4769,14 @@ app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, 
     }));
 
     const photoKind = String(req.query.kind || 'general').toLowerCase();
+    let found = false;
     const checklist = (prev.checklist || []).map((item) => {
-        if (String(item.key) !== itemKey) return item;
+        const itemKeyStr = String(item.key || '').trim();
+        const paramKeyStr = String(itemKey).trim();
+        
+        if (itemKeyStr !== paramKeyStr) return item;
+        found = true;
+        
         if (phase === 'intake') {
             return { ...item, photos: [...(item.photos || []), ...newPhotos] };
         }
@@ -4785,12 +4789,17 @@ app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, 
         return { ...item, techPhotos: [...(item.techPhotos || []), ...newPhotos] };
     });
 
+    if (!found) {
+        console.error(`[Upload Foto] Item não encontrado - ID: ${id}, ItemKey procurado: "${itemKey}", Chaves disponíveis:`, (prev.checklist || []).map(i => String(i.key)));
+        return res.status(404).json({ error: true, message: `Item "${itemKey}" não encontrado no checklist.` });
+    }
+
     const updatedAt = new Date().toISOString();
     try {
         await db.update(SERVICE_ORDERS_COLLECTION, id, { checklist, updatedAt });
     } catch (e) {
-        console.error(e);
-        return res.status(500).json({ error: true, message: 'Erro ao salvar fotos.' });
+        console.error('[Upload Foto] Erro ao salvar:', e);
+        return res.status(500).json({ error: true, message: 'Erro ao salvar fotos: ' + (e.message || 'desconhecido') });
     }
 
     return res.json({
