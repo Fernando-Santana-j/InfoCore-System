@@ -155,11 +155,19 @@ function markNavActive(path) {
 }
 
 function prefetchLazyLibs() {
+    const scheduleLoad = (fn) => {
+        if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(() => fn(), { timeout: 2500 });
+        } else {
+            setTimeout(() => fn(), 2500);
+        }
+    };
+    
     if (window.__needsHtml2canvas) {
-        (requestIdleCallback || setTimeout)(() => ensureHtml2Canvas().catch(() => {}), 2500);
+        scheduleLoad(() => ensureHtml2Canvas().catch(() => {}));
     }
     if (window.__needsXlsx) {
-        (requestIdleCallback || setTimeout)(() => ensureXlsx().catch(() => {}), 2500);
+        scheduleLoad(() => ensureXlsx().catch(() => {}));
     }
 }
 
