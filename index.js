@@ -2028,6 +2028,10 @@ app.get('/p/os/:token', async (req, res) => {
     });
 });
 
+
+let activeService = null
+
+
 app.post('/api/diagnostico', async (req, res) => {
     if (!verifyDiagnosticApiKey(req)) {
         return res.status(401).json({ error: true, message: 'Chave de API inválida.' });
@@ -2036,11 +2040,10 @@ app.post('/api/diagnostico', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const serviceCode = String(
         req.query.os
-        || req.query.service_code
-        || body.service_code
-        || body.os_code
-        || ''
+        || activeService?.code
     ).trim();
+    
+    
     const diagnostic = normalizePcDiagnostic(body);
     if (!diagnostic) {
         return res.status(400).json({
@@ -2484,6 +2487,8 @@ app.get('/services/:id', verifyAdmin, async (req, res) => {
     const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
     if (!snap.exists) return res.redirect('/services');
     const service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
+    
+    activeService = service; // Armazena a OS ativa para uso posterior
     res.render('layout', {
         body: 'service-work',
         bootstrap: '',
