@@ -219,7 +219,7 @@ function buildDetailMarkup(c) {
           <article class="crm-budget-row">
             <div class="crm-budget-row-head">
               <strong class="mono">${escapeHtml(b.code || 'ORC')}</strong>
-              <span class="badge ${b.status === 'finalized' ? 'green' : ''}">${b.status === 'finalized' ? 'Finalizado' : 'Rascunho'}</span>
+              <span class="badge ${['approved','acquiring_parts','converted'].includes(b.status) ? 'green' : ''}">${({draft:'Rascunho',sent:'Enviado',awaiting:'Aguardando',approved:'Aprovado',rejected:'Recusado',expired:'Expirado',cancelled:'Cancelado',acquiring_parts:'Peças em aquisição',converted:'Convertido'})[b.status] || 'Rascunho'}</span>
             </div>
             <div class="crm-budget-row-meta">
               <span>Validade: ${escapeHtml(b.validUntil || 'N/I')}</span>

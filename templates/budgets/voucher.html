@@ -26,30 +26,16 @@
     <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;">
       <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:6px;">Condições</div>
       <div style="font-size:.84rem;color:#475569;"><strong>Validade:</strong> {{date}}</div>
-      <div style="font-size:.84rem;color:#475569;margin-top:6px;"><strong>Observações:</strong> {{notes}}</div>
+      <div style="font-size:.8rem;color:#475569;margin-top:5px;line-height:1.5;">{{conditionLinesHtml}}</div>
     </div>
   </div>
 
-  <table style="width:100%;border-collapse:separate;border-spacing:0;margin-top:16px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
-    <thead>
-      <tr style="background:#0f172a;color:#fff;">
-        <th style="padding:10px 12px;text-align:left;font-size:.78rem;font-weight:600;">Item</th>
-        <th style="padding:10px 8px;text-align:center;font-size:.78rem;font-weight:600;width:56px;">Qtd</th>
-        <th style="padding:10px 12px;text-align:right;font-size:.78rem;font-weight:600;width:110px;">Unitário</th>
-        <th style="padding:10px 12px;text-align:right;font-size:.78rem;font-weight:600;width:110px;">Total</th>
-      </tr>
-    </thead>
-    <tbody>{{itemsRowsHtml}}</tbody>
-  </table>
+  {{optionsHtml}}
+  {{includedServicesHtml}}
 
-  <div style="margin-top:14px;display:flex;justify-content:flex-end;">
-    <div style="min-width:270px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;box-shadow:0 8px 24px rgba(15,23,42,.05);">
-      <div style="display:flex;justify-content:space-between;font-size:.88rem;color:#475569;padding:3px 0;"><span>Subtotal</span><strong style="color:#0f172a;">{{subtotal}}</strong></div>
-      <div style="display:flex;justify-content:space-between;font-size:.88rem;color:#475569;padding:3px 0;"><span>Desconto</span><strong style="color:#b91c1c;">- {{discount}}</strong></div>
-      <div style="display:flex;justify-content:space-between;font-size:.88rem;color:#475569;padding:3px 0;"><span>Acréscimo</span><strong style="color:#047857;">+ {{extra}}</strong></div>
-      <div style="height:1px;background:#e2e8f0;margin:8px 0;"></div>
-      <div style="display:flex;justify-content:space-between;font-size:1.05rem;font-weight:800;color:#0f172a;"><span>Total</span><span>{{total}}</span></div>
-    </div>
+  <div style="margin-top:12px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;">
+    <div style="font-size:.7rem;font-weight:800;text-transform:uppercase;color:#64748b;margin-bottom:4px;">Observações</div>
+    <div style="font-size:.8rem;color:#475569;white-space:pre-wrap;">{{notes}}</div>
   </div>
 
   <div style="margin-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:20px;">

@@ -265,12 +265,12 @@ function renderSavedBudgets() {
     list.innerHTML = budgets.slice().sort((a, b) => String(b.code || '').localeCompare(String(a.code || ''))).map((budget) => `
         <div class="pdv-budget-saved-card">
             <div>
-                <div><strong>${escapeHtml(budget.code || 'Orçamento')}</strong> ${budget.status === 'finalized' ? '✅' : '📝'}</div>
+                <div><strong>${escapeHtml(budget.code || 'Orçamento')}</strong> ${budget.status && budget.status !== 'draft' ? '✅' : '📝'}</div>
                 <div class="text-xs text-muted">${escapeHtml(budget.customerName || 'Cliente não informado')} · ${formatCurrency(asNumber(budget.total))}</div>
             </div>
             <div class="flex gap-8">
                 <button class="btn btn-ghost btn-sm" type="button" onclick="openBudgetTemplateById('${escapeHtml(String(budget.id || ''))}')">Template</button>
-                ${budget.status === 'finalized' ? '' : `<button class="btn btn-primary btn-sm" type="button" onclick="finalizeBudgetById('${escapeHtml(String(budget.id || ''))}')">Finalizar</button>`}
+                ${budget.status && budget.status !== 'draft' ? '' : `<button class="btn btn-primary btn-sm" type="button" onclick="finalizeBudgetById('${escapeHtml(String(budget.id || ''))}')">Enviar</button>`}
             </div>
         </div>
     `).join('');
@@ -333,7 +333,7 @@ function buildBudgetPayload(status) {
         items,
         discount: totals.discount,
         extra: totals.extra,
-        status: status === 'finalized' ? 'finalized' : 'draft'
+        status: status === 'finalized' ? 'sent' : 'draft'
     };
 }
 
@@ -371,7 +371,7 @@ async function saveBudget(status) {
         window.appData.budgets = asArray(window.appData.budgets);
         window.appData.budgets.unshift(data.budget);
         renderSavedBudgets();
-        showToast(status === 'finalized' ? 'Orçamento finalizado!' : 'Orçamento salvo!', 'success');
+        showToast(status === 'finalized' ? 'Orçamento enviado!' : 'Orçamento salvo!', 'success');
         openBudgetTemplateModal(data.budget);
     } catch (e) {
         console.error(e);
@@ -387,7 +387,7 @@ async function finalizeBudgetById(id) {
         });
         const data = await res.json();
         if (!res.ok || data.error) {
-            showToast(data.message || 'Erro ao finalizar orçamento.', 'error');
+            showToast(data.message || 'Erro ao enviar orçamento.', 'error');
             return;
         }
         window.appData.budgets = asArray(window.appData.budgets).map((item) => String(item.id) === String(data.budget.id) ? data.budget : item);

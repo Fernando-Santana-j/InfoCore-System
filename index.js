@@ -29,6 +29,9 @@ require('dotenv').config();
 const PRODUCTS_COLLECTION = 'products';
 const SALES_COLLECTION = 'sales';
 const BUDGETS_COLLECTION = 'budgets';
+const BUDGET_TEMPLATES_COLLECTION = 'budget_templates';
+const BUDGET_PUBLIC_RESPONSES_COLLECTION = 'budget_public_responses';
+const BUDGET_SHOWCASES_COLLECTION = 'budget_showcases';
 const CUSTOMERS_COLLECTION = 'customers';
 const CASH_FLOW_COLLECTION = 'cash_flow';
 const SERVICE_ORDERS_COLLECTION = 'service_orders';
@@ -37,6 +40,19 @@ const PC_DIAGNOSTICS_COLLECTION = 'pc_diagnostics';
 const INFOCORE_COLLECTION = 'infocore';
 const SHARED_NOTES_DOC = 'shared_notes';
 const { FieldValue } = require('firebase-admin/firestore');
+const budgetDomain = require('./lib/budget-domain');
+const {
+    normalizeStatus: normalizeBudgetStatus,
+    normalizeOptions: normalizeBudgetOptions,
+    bestOption: selectBudgetOption,
+    validateDates: validateBudgetDates,
+    addDaysIso: addBudgetDaysIso,
+    todayIso: budgetTodayIso,
+    normalizeTemplate: normalizeBudgetTemplate,
+    statusLabel: budgetStatusLabel,
+    sourceLabel: budgetSourceLabel,
+    rejectionLabel: budgetRejectionLabel
+} = budgetDomain;
 
 const PAYMENT_KEYS = new Set(['money', 'credit_card', 'debit_card', 'pix']);
 
@@ -106,10 +122,18 @@ function budgetDisplayCode() {
 
 function normalizeBudgetRow(row) {
     const r = row && typeof row === 'object' ? row : {};
-    const subtotal = Number(r.subtotal) || 0;
-    const discount = Number(r.discount) || 0;
-    const extra = Number(r.extra) || 0;
-    const total = Number(r.total) || Math.max(0, subtotal - discount + extra);
+    const options = normalizeBudgetOptions(r);
+    const selected = selectBudgetOption(options, r.selectedOptionId);
+    const validUntil = r.validUntil != null ? String(r.validUntil) : '';
+    const status = budgetDomain.effectiveStatus(r.status, validUntil, budgetTodayIso());
+    const createdAtDate = toDateSafe(r.createdAt);
+    const updatedAtDate = toDateSafe(r.updatedAt);
+    const sentAtDate = toDateSafe(r.sentAt || r.finalizedAt);
+    const followUpDoneAtDate = toDateSafe(r.followUpDoneAt);
+    const lastContactAtDate = toDateSafe(r.lastContactAt);
+    const convertedAtDate = toDateSafe(r.convertedAt);
+    const rejectedAtDate = toDateSafe(r.rejectedAt);
+
     return {
         id: r.id != null ? String(r.id) : '',
         code: r.code != null ? String(r.code) : '',
@@ -117,31 +141,48 @@ function normalizeBudgetRow(row) {
         customerName: r.customerName != null ? String(r.customerName) : '',
         customerPhone: r.customerPhone != null ? String(r.customerPhone) : '',
         customerEmail: r.customerEmail != null ? String(r.customerEmail) : '',
+        customerDoc: r.customerDoc != null ? String(r.customerDoc) : '',
+        source: r.source != null ? String(r.source) : '',
+        status,
+        rejectionReason: r.rejectionReason != null ? String(r.rejectionReason) : '',
+        rejectionNote: r.rejectionNote != null ? String(r.rejectionNote) : '',
         notes: r.notes != null ? String(r.notes) : '',
-        validUntil: r.validUntil != null ? String(r.validUntil) : '',
-        status: String(r.status || 'draft') === 'finalized' ? 'finalized' : 'draft',
-        items: Array.isArray(r.items) ? r.items.map((item) => ({
-            id: item?.id != null ? String(item.id) : '',
-            kind: String(item?.kind || 'custom') === 'product' ? 'product' : 'custom',
-            productId: item?.productId != null ? String(item.productId) : '',
-            sku: item?.sku != null ? String(item.sku) : '',
-            name: item?.name != null ? String(item.name) : '',
-            qty: Number(item?.qty) || 0,
-            unitPrice: Number(item?.unitPrice) || 0,
-            unitCost: Number(item?.unitCost) || 0,
-            lineCost: Number(item?.lineCost) || 0,
-            total: Number(item?.total) || 0
-        })) : [],
-        subtotal,
-        discount,
-        extra,
-        total,
-        costTotal: Number(r.costTotal) || 0,
-        profit: Number.isFinite(Number(r.profit)) ? Number(r.profit) : null,
-        createdAt: r.createdAt || null,
-        updatedAt: r.updatedAt || null,
-        finalizedAt: r.finalizedAt || null,
-        serviceOrderId: r.serviceOrderId != null ? String(r.serviceOrderId) : ''
+        internalNotes: r.internalNotes != null ? String(r.internalNotes) : '',
+        paymentTerms: r.paymentTerms != null ? String(r.paymentTerms) : '',
+        deadline: r.deadline != null ? String(r.deadline) : '',
+        warrantyText: r.warrantyText != null ? String(r.warrantyText) : '',
+        includedServices: Array.isArray(r.includedServices) ? r.includedServices.map((x) => String(x || '').trim()).filter(Boolean) : [],
+        issuedAt: r.issuedAt != null ? String(r.issuedAt) : (createdAtDate ? createdAtDate.toISOString().slice(0, 10) : ''),
+        validUntil,
+        templateId: r.templateId != null ? String(r.templateId) : '',
+        publicToken: r.publicToken != null ? String(r.publicToken) : '',
+        customerResponse: r.customerResponse && typeof r.customerResponse === 'object' ? publicBudgetResponse(r.customerResponse) : null,
+        options,
+        selectedOptionId: selected?.id || '',
+        recommendedOptionId: (options.find((o) => o.recommended) || selected || {})?.id || '',
+        // Campos legados continuam presentes para PDV/CRM e templates antigos.
+        items: selected?.items || [],
+        subtotal: Number(selected?.subtotal) || 0,
+        adjustments: selected ? { discount: selected.discount, extra: selected.extra } : null,
+        discount: Number(selected?.discount?.amount) || 0,
+        extra: Number(selected?.extra?.amount) || 0,
+        total: Number(selected?.total) || 0,
+        costTotal: Number(selected?.costTotal) || 0,
+        profit: Number(selected?.profit) || 0,
+        margin: Number(selected?.margin) || 0,
+        serviceOrderId: r.serviceOrderId != null ? String(r.serviceOrderId) : '',
+        saleId: r.saleId != null ? String(r.saleId) : '',
+        convertedOptionId: r.convertedOptionId != null ? String(r.convertedOptionId) : '',
+        followUpDone: Boolean(r.followUpDoneAt || r.followUpDone === true),
+        followUpDueAt: r.followUpDueAt != null ? String(r.followUpDueAt) : '',
+        followUpDoneAt: followUpDoneAtDate ? followUpDoneAtDate.toISOString() : null,
+        lastContactAt: lastContactAtDate ? lastContactAtDate.toISOString() : null,
+        createdAt: createdAtDate ? createdAtDate.toISOString() : r.createdAt || null,
+        updatedAt: updatedAtDate ? updatedAtDate.toISOString() : r.updatedAt || null,
+        sentAt: sentAtDate ? sentAtDate.toISOString() : null,
+        rejectedAt: rejectedAtDate ? rejectedAtDate.toISOString() : null,
+        convertedAt: convertedAtDate ? convertedAtDate.toISOString() : null,
+        legacyFinalized: String(r.status || '').toLowerCase() === 'finalized'
     };
 }
 
@@ -1180,36 +1221,44 @@ function isPdvCashFlowEntry(row) {
     return source === 'pdv' || source === 'budget' || Boolean(String(r.saleId || '').trim()) || Boolean(String(r.budgetId || '').trim());
 }
 
-async function enrichBudgetItemsWithCost(rawItems, maps) {
+async function enrichBudgetItemsWithCost(rawItems, maps, { preferProvidedProductCost = false } = {}) {
     const costMaps = maps?.byId ? maps : await loadProductCostMaps();
     const items = [];
     let costCents = 0;
     for (const row of asItemsArray(rawItems)) {
-        const kind = String(row?.kind || 'custom') === 'product' ? 'product' : 'custom';
-        const qty = Number(row?.qty);
-        const unitPrice = Number(row?.unitPrice);
-        const name = String(row?.name || '').trim();
-        const unitCost = await resolveItemUnitCost({
-            id: row?.productId || row?.id,
-            productId: row?.productId,
-            sku: row?.sku,
-            unitCost: row?.unitCost,
-            cost: row?.cost
-        }, costMaps);
-        const lineTotal = Math.round(qty * unitPrice * 100) / 100;
+        const normalized = budgetDomain.normalizeItem(row, items.length);
+        const qty = Number(normalized.qty) || 0;
+        const unitPrice = Number(normalized.unitPrice) || 0;
+        const name = String(normalized.name || '').trim();
+        const providedCost = Number(row?.unitCost ?? row?.cost);
+        const canUseProvided = preferProvidedProductCost
+            && normalized.kind === 'product'
+            && Number.isFinite(providedCost)
+            && providedCost >= 0;
+        const unitCost = canUseProvided
+            ? Math.round(providedCost * 100) / 100
+            : await resolveItemUnitCost({
+                id: normalized.productId || normalized.id,
+                productId: normalized.productId,
+                sku: normalized.sku,
+                unitCost: row?.unitCost,
+                cost: row?.cost
+            }, costMaps);
+        const gross = Math.round(qty * unitPrice * 100) / 100;
+        const itemAdj = budgetDomain.applyAdjustment(gross, normalized.discount, { type: 'fixed', value: 0 });
+        const lineTotal = itemAdj.total;
         const lineCost = lineCostFromUnit(unitCost, qty);
         costCents += toCents(lineCost);
         items.push({
-            id: row?.id != null ? String(row.id) : randomUUID(),
-            kind,
-            productId: row?.productId != null ? String(row.productId) : '',
-            sku: row?.sku != null ? String(row.sku) : '',
+            ...normalized,
+            id: normalized.id || randomUUID(),
             name,
             qty,
             unitPrice,
             unitCost,
             lineCost,
-            total: lineTotal
+            total: lineTotal,
+            discount: itemAdj.discount
         });
     }
     return { items, costTotal: fromCents(costCents) };
@@ -1336,13 +1385,10 @@ async function rebuildAllFinancialData() {
         await commitIfNeeded();
     }
 
-    for (const [budgetId, budget] of budgetMap) {
-        if (String(budget.status || '') !== 'finalized' || linkedBudgets.has(budgetId)) continue;
-        const payload = buildCashFlowPayloadFromBudget(budgetId, budget);
-        batch.set(firestore.collection(CASH_FLOW_COLLECTION).doc(payload.id), payload);
-        ops++;
-        await commitIfNeeded();
-    }
+    // Orçamento não é receita. Não criamos mais lançamentos financeiros só porque
+    // uma proposta foi enviada/aprovada. A receita nasce na conversão em venda.
+    // Entradas legadas já existentes com budgetId são preservadas para não apagar
+    // histórico automaticamente, mas não são recriadas se estiverem ausentes.
 
     await commitIfNeeded(true);
     return { sales: salesMap.size, budgets: budgetMap.size, cashFlow: (cfRows || []).length };
@@ -1386,24 +1432,9 @@ async function hydrateCashFlowEntriesFromProducts(entries) {
 }
 
 async function syncMissingBudgetsToCashFlow() {
-    const [budgetRows, cfRows] = await Promise.all([
-        db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
-        db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => [])
-    ]);
-    const linked = new Set(
-        (Array.isArray(cfRows) ? cfRows : [])
-            .map((e) => String(e.budgetId || '').trim())
-            .filter(Boolean)
-    );
-    const budgets = (Array.isArray(budgetRows) ? budgetRows : []).filter(
-        (b) => String(b.status || '') === 'finalized'
-    );
-    for (const budget of budgets) {
-        const id = budget?.id != null ? String(budget.id).trim() : '';
-        if (!id || linked.has(id)) continue;
-        await createCashFlowFromBudget(budget).catch((e) => console.error('sync orçamento→fluxo:', e));
-        linked.add(id);
-    }
+    // Mantido por compatibilidade com chamadas antigas. Desde o novo fluxo de
+    // orçamentos, proposta não gera caixa; somente venda convertida gera receita.
+    return 0;
 }
 
 const FINANCIAL_REBUILD_FLAG = 'financial_rebuild_v3';
@@ -1472,58 +1503,163 @@ function readBudgetTemplate(filename, fallback = '') {
     }
 }
 
-function buildBudgetRowsHtml(budget, compact = false) {
-    const items = Array.isArray(budget?.items) ? budget.items : [];
+function budgetItemConditionLabel(condition) {
+    const map = { new: 'NOVO', used: 'USADO', semi_new: 'SEMINOVO', refurbished: 'RECONDICIONADO', na: '' };
+    return map[String(condition || 'new')] || '';
+}
+
+function budgetHtmlValue(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function buildBudgetRowsHtmlFromItems(items, compact = false) {
+    const list = Array.isArray(items) ? items : [];
     const pad = compact ? '4px 6px' : '8px';
-    const fs = compact ? 'font-size:.7rem;' : '';
-    return items.map((item) => `
+    const fs = compact ? 'font-size:.68rem;' : '';
+    return list.map((item) => {
+        const condition = budgetItemConditionLabel(item.condition);
+        const detailBits = [];
+        if (condition && condition !== 'NOVO') detailBits.push(condition);
+        if (item.warranty) detailBits.push(`Garantia: ${budgetHtmlValue(item.warranty)}`);
+        if (item.specialOrder) detailBits.push('Sob encomenda');
+        if (item.note) detailBits.push(budgetHtmlValue(item.note));
+        const details = detailBits.length
+            ? `<div style="margin-top:2px;font-size:.62rem;color:#64748b;line-height:1.25;">${detailBits.join(' · ')}</div>`
+            : '';
+        return `
 <tr>
-  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;${fs}">${safeTemplateValue(item.name || '')}</td>
-  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:center;${fs}">${safeTemplateValue(item.qty || 0)}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;${fs}">${budgetHtmlValue(item.name || '')}${details}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:center;${fs}">${budgetHtmlValue(item.qty || 0)}</td>
   <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;${fs}">${moneyBr(item.unitPrice || 0)}</td>
-  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;${fs}">${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}</td>
-</tr>`).join('');
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;${fs}">${moneyBr(item.total != null ? item.total : ((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)))}</td>
+</tr>`;
+    }).join('');
+}
+
+function buildBudgetOptionHtml(option, compact = false, multi = false) {
+    if (!option) return '';
+    const recommended = option.recommended
+        ? '<span style="display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:.62rem;font-weight:800;vertical-align:middle;">RECOMENDADO PELA INFOCORE</span>'
+        : '';
+    const name = budgetHtmlValue(option.name || 'Proposta');
+    const card = budgetDomain.computeCardPayments(option.total || 0);
+    const title = multi
+        ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:${compact ? '7px' : '14px'} 0 6px;padding:7px 9px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;"><div style="font-weight:800;color:#0f172a;">${name}${recommended}</div><div style="font-weight:800;color:#0f172a;">${moneyBr(option.total || 0)}</div></div>`
+        : '';
+    return `${title}
+<table style="width:100%;border-collapse:separate;border-spacing:0;margin-top:${multi ? '0' : (compact ? '6px' : '16px')};border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+  <thead><tr style="background:#0f172a;color:#fff;">
+    <th style="padding:${compact ? '5px 6px' : '10px 12px'};text-align:left;font-size:${compact ? '.65rem' : '.78rem'};font-weight:600;">Item</th>
+    <th style="padding:${compact ? '5px 4px' : '10px 8px'};text-align:center;font-size:${compact ? '.65rem' : '.78rem'};font-weight:600;width:56px;">Qtd</th>
+    <th style="padding:${compact ? '5px 6px' : '10px 12px'};text-align:right;font-size:${compact ? '.65rem' : '.78rem'};font-weight:600;width:110px;">Unitário</th>
+    <th style="padding:${compact ? '5px 6px' : '10px 12px'};text-align:right;font-size:${compact ? '.65rem' : '.78rem'};font-weight:600;width:110px;">Total</th>
+  </tr></thead>
+  <tbody>${buildBudgetRowsHtmlFromItems(option.items, compact)}</tbody>
+</table>
+<div style="margin-top:7px;display:flex;justify-content:flex-end;">
+  <div style="min-width:${compact ? '190px' : '270px'};background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:${compact ? '6px 8px' : '10px 12px'};">
+    <div style="display:flex;justify-content:space-between;font-size:${compact ? '.66rem' : '.84rem'};color:#475569;"><span>Subtotal</span><strong>${moneyBr(option.subtotal || 0)}</strong></div>
+    ${(Number(option.discount?.amount) || 0) > 0 ? `<div style="display:flex;justify-content:space-between;font-size:${compact ? '.66rem' : '.84rem'};color:#475569;"><span>Desconto</span><strong style="color:#b91c1c;">- ${moneyBr(option.discount.amount)}</strong></div>` : ''}
+    ${(Number(option.extra?.amount) || 0) > 0 ? `<div style="display:flex;justify-content:space-between;font-size:${compact ? '.66rem' : '.84rem'};color:#475569;"><span>Acréscimo</span><strong style="color:#047857;">+ ${moneyBr(option.extra.amount)}</strong></div>` : ''}
+    <div style="height:1px;background:#e2e8f0;margin:5px 0;"></div>
+    <div style="display:flex;justify-content:space-between;font-size:${compact ? '.78rem' : '1rem'};font-weight:800;"><span>Total</span><span>${moneyBr(option.total || 0)}</span></div>
+    <div style="height:1px;background:#e2e8f0;margin:6px 0;"></div>
+    <div style="display:flex;justify-content:space-between;gap:12px;font-size:${compact ? '.64rem' : '.8rem'};color:#475569;"><span>Valor no cartão</span><strong>${moneyBr(card.cardTotal)}</strong></div>
+    <div style="display:flex;justify-content:space-between;gap:12px;font-size:${compact ? '.62rem' : '.78rem'};color:#475569;margin-top:2px;"><span>Ou em até ${card.installments}x sem juros</span><strong>${card.installments}x de ${moneyBr(card.installmentValue)}</strong></div>
+  </div>
+</div>`;
+}
+
+function buildBudgetRowsHtml(budget, compact = false) {
+    const normalized = normalizeBudgetRow(budget || {});
+    const options = normalized.options || [];
+    const multi = options.length > 1;
+    return options.map((o) => buildBudgetOptionHtml(o, compact, multi)).join('');
 }
 
 function buildBudgetRowsText(budget) {
-    const items = Array.isArray(budget?.items) ? budget.items : [];
-    return items.map((item) => `- ${safeTemplateValue(item.name || 'Item')} (x${Number(item.qty) || 0}) ${moneyBr((Number(item.qty) || 0) * (Number(item.unitPrice) || 0))}`).join('\n');
+    const normalized = normalizeBudgetRow(budget || {});
+    return (normalized.options || []).map((option) => {
+        const header = normalized.options.length > 1 ? `\n*${option.name}${option.recommended ? ' — RECOMENDADO' : ''}*\n` : '';
+        const items = (option.items || []).map((item) => {
+            const state = budgetItemConditionLabel(item.condition);
+            const info = [state && state !== 'NOVO' ? state : '', item.specialOrder ? 'sob encomenda' : ''].filter(Boolean).join(', ');
+            return `- ${safeTemplateValue(item.name || 'Item')}${info ? ` (${info})` : ''} x${Number(item.qty) || 0}: ${moneyBr(item.total != null ? item.total : ((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)))}`;
+        }).join('\n');
+        const card = budgetDomain.computeCardPayments(option.total || 0);
+        return `${header}${items}\nValor à vista: ${moneyBr(option.total || 0)}\nValor no cartão: ${moneyBr(card.cardTotal)}\nOu em até ${card.installments}x sem juros: ${card.installments}x de ${moneyBr(card.installmentValue)}`;
+    }).join('\n');
 }
 
 function budgetTemplateData(budget, req, options = {}) {
     const compact = options?.compact === true;
+    const plainText = options?.plainText === true;
+    const scalar = plainText ? safeTemplateValue : budgetHtmlValue;
+    const normalized = normalizeBudgetRow(budget || {});
     const reqBase = req ? `${req.protocol}://${req.get('host')}` : '';
-    const envBase = process.env.APP_PUBLIC_BASE_URL
-        ? String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '')
-        : '';
+    const envBase = process.env.APP_PUBLIC_BASE_URL ? String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '') : '';
     const base = reqBase || envBase;
     const logoUrl = base ? `${base}/public/img/logo_bg.png` : '/public/img/logo_bg.png';
-    const isFinalized = String(budget?.status || 'draft') === 'finalized';
-    const validUntilRaw = budget?.validUntil || budget?.date || '';
-    const statusBadgeHtml = isFinalized
-        ? '<span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;background:#dcfce7;color:#166534;">Finalizado</span>'
+    const status = normalizeBudgetStatus(normalized.status);
+    const statusText = budgetStatusLabel(status);
+    const statusColors = {
+        draft: ['#e2e8f0','#475569'], sent: ['#dbeafe','#1d4ed8'], awaiting: ['#fef3c7','#92400e'],
+        approved: ['#dcfce7','#166534'], rejected: ['#fee2e2','#991b1b'], expired: ['#f1f5f9','#475569'],
+        cancelled: ['#f1f5f9','#64748b'], acquiring_parts: ['#ede9fe','#6d28d9'], converted: ['#dcfce7','#166534']
+    };
+    const [statusBg, statusColor] = statusColors[status] || statusColors.draft;
+    const statusBadgeHtml = `<span style="display:inline-block;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;background:${statusBg};color:${statusColor};">${scalar(statusText)}</span>`;
+    const selected = selectBudgetOption(normalized.options, normalized.selectedOptionId);
+    const selectedCard = budgetDomain.computeCardPayments(selected?.total || 0);
+    const includedServicesHtml = normalized.includedServices?.length
+        ? `<div style="margin-top:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;"><div style="font-size:.7rem;font-weight:800;text-transform:uppercase;color:#64748b;margin-bottom:5px;">Serviços incluídos</div>${normalized.includedServices.map((x) => `<div style="font-size:${compact ? '.65rem' : '.8rem'};color:#334155;margin:2px 0;">✓ ${budgetHtmlValue(x)}</div>`).join('')}</div>`
         : '';
-    const signatureTerms = 'Ao assinar, declaro que o problema foi resolvido e que o aparelho foi devolvido.';
+    const conditionLines = [
+        normalized.deadline ? `<strong>Prazo:</strong> ${budgetHtmlValue(normalized.deadline)}` : '',
+        normalized.paymentTerms ? `<strong>Pagamento:</strong> ${budgetHtmlValue(normalized.paymentTerms)}` : '',
+        normalized.warrantyText ? `<strong>Garantia:</strong> ${budgetHtmlValue(normalized.warrantyText)}` : ''
+    ].filter(Boolean).join('<br>');
+    const conditionLinesText = [
+        normalized.deadline ? `Prazo: ${normalized.deadline}` : '',
+        normalized.paymentTerms ? `Pagamento: ${normalized.paymentTerms}` : '',
+        normalized.warrantyText ? `Garantia: ${normalized.warrantyText}` : ''
+    ].filter(Boolean).join(' | ');
+    const signatureTerms = 'Ao assinar, declaro que recebi e conferi as condições deste orçamento.';
     return {
-        code: safeTemplateValue(budget?.code || 'ORC'),
-        customerName: safeTemplateValue(budget?.customerName || 'Não informado'),
-        customerPhone: safeTemplateValue(budget?.customerPhone || '-'),
-        customerEmail: safeTemplateValue(budget?.customerEmail || '-'),
-        validUntil: formatDateBr(validUntilRaw),
-        date: formatDateBr(validUntilRaw),
-        notes: safeTemplateValue(budget?.notes || '-'),
-        subtotal: moneyBr(budget?.subtotal || 0),
-        discount: moneyBr(budget?.discount || 0),
-        extra: moneyBr(budget?.extra || 0),
-        total: moneyBr(budget?.total || 0),
-        status: safeTemplateValue(isFinalized ? 'Finalizado' : ''),
-        statusBg: isFinalized ? '#dcfce7' : 'transparent',
-        statusColor: isFinalized ? '#166534' : 'transparent',
+        code: scalar(normalized.code || 'ORC'),
+        customerName: scalar(normalized.customerName || 'Não informado'),
+        customerPhone: scalar(normalized.customerPhone || '-'),
+        customerEmail: scalar(normalized.customerEmail || '-'),
+        validUntil: formatDateBr(normalized.validUntil),
+        date: formatDateBr(normalized.validUntil),
+        notes: scalar(normalized.notes || '-'),
+        internalNotes: '',
+        subtotal: moneyBr(selected?.subtotal || 0),
+        discount: moneyBr(selected?.discount?.amount || 0),
+        extra: moneyBr(selected?.extra?.amount || 0),
+        total: moneyBr(selected?.total || 0),
+        cardTotal: moneyBr(selectedCard.cardTotal),
+        cardInstallmentTotal: moneyBr(selectedCard.installmentTotal),
+        cardInstallments: selectedCard.installments,
+        cardInstallmentValue: moneyBr(selectedCard.installmentValue),
+        status: scalar(statusText),
+        statusBg,
+        statusColor,
         statusBadgeHtml,
-        signatureTerms: safeTemplateValue(signatureTerms),
-        issuedAt: formatDateBr(new Date().toISOString().slice(0, 10)),
-        itemsRowsHtml: buildBudgetRowsHtml(budget, compact),
-        itemsRowsText: buildBudgetRowsText(budget),
+        signatureTerms: scalar(signatureTerms),
+        issuedAt: formatDateBr(normalized.issuedAt || normalized.createdAt || budgetTodayIso()),
+        itemsRowsHtml: buildBudgetRowsHtml(normalized, compact),
+        optionsHtml: buildBudgetRowsHtml(normalized, compact),
+        itemsRowsText: buildBudgetRowsText(normalized),
+        includedServicesHtml,
+        conditionLinesHtml: conditionLines || '-',
+        conditionLinesText: scalar(conditionLinesText || '-'),
+        sourceLabel: scalar(budgetSourceLabel(normalized.source)),
         logoUrl
     };
 }
@@ -1556,7 +1692,7 @@ function renderBudgetTemplateText(kind, budget, req) {
     const fallback = kind === 'email'
         ? `<h2>Orçamento {{code}}</h2><p>Total: {{total}}</p><pre>{{itemsRowsText}}</pre>`
         : `*Orçamento {{code}}*\nTotal: {{total}}\n{{itemsRowsText}}`;
-    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget, req));
+    return renderTemplateString(readBudgetTemplate(file, fallback), budgetTemplateData(budget, req, { plainText: kind === 'whatsapp' }));
 }
 
 function sanitizePhone(raw) {
@@ -2018,6 +2154,7 @@ app.get('/p/os/:token', async (req, res) => {
         return res.status(404).send('<!DOCTYPE html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px;"><h1>Link inválido ou expirado</h1></body></html>');
     }
     const configs = await getConfigsSafe();
+    if (!configs.storePhone) configs.storePhone = whatsappClient.getStatus()?.phone || '';
     return res.render('service-share-public', {
         service,
         configs,
@@ -2028,9 +2165,190 @@ app.get('/p/os/:token', async (req, res) => {
     });
 });
 
+function normalizeFirestoreDate(value) {
+    if (!value) return null;
+    if (typeof value.toDate === 'function') return value.toDate().toISOString();
+    if (value instanceof Date) return value.toISOString();
+    return String(value);
+}
 
-let activeService = null
+function publicBudgetResponse(row = {}) {
+    return {
+        selectedOptionId: String(row.selectedOptionId || ''),
+        choices: row.choices && typeof row.choices === 'object' ? row.choices : {},
+        requestedItems: Array.isArray(row.requestedItems) ? row.requestedItems.slice(0, 20) : [],
+        notes: String(row.notes || ''), customerName: String(row.customerName || ''),
+        customerPhone: String(row.customerPhone || ''), finalized: row.finalized === true,
+        updatedAt: normalizeFirestoreDate(row.updatedAt), finalizedAt: normalizeFirestoreDate(row.finalizedAt)
+    };
+}
 
+async function findBudgetByPublicToken(token) {
+    const clean = String(token || '').trim();
+    if (!/^[a-f0-9-]{32,64}$/i.test(clean)) return null;
+    const snap = await firestore.collection(BUDGETS_COLLECTION).where('publicToken', '==', clean).limit(1).get();
+    if (snap.empty) return null;
+    return normalizeBudgetRow({ id: snap.docs[0].id, ...snap.docs[0].data() });
+}
+
+function normalizeBudgetShowcase(row = {}) {
+    const created = toDateSafe(row.createdAt), updated = toDateSafe(row.updatedAt);
+    return { id:String(row.id||''), title:String(row.title||'Escolha seu orçamento'), customerName:String(row.customerName||''), customerPhone:String(row.customerPhone||''), token:String(row.token||''), status:row.status==='closed'?'closed':'open', options:Array.isArray(row.options)?row.options.map((o,i)=>budgetDomain.computeOption(o,i)):[], customerResponse:row.customerResponse&&typeof row.customerResponse==='object'?publicBudgetResponse(row.customerResponse):null, createdAt:created?created.toISOString():null, updatedAt:updated?updated.toISOString():null };
+}
+
+async function findShowcaseByToken(token) {
+    const clean=String(token||'').trim(); if(!/^[a-f0-9-]{32,64}$/i.test(clean))return null;
+    const snap=await firestore.collection(BUDGET_SHOWCASES_COLLECTION).where('token','==',clean).limit(1).get();
+    if(snap.empty)return null; return normalizeBudgetShowcase({id:snap.docs[0].id,...snap.docs[0].data()});
+}
+
+app.get('/p/escolha/:token', async (req,res)=>{
+    const showcase=await findShowcaseByToken(req.params.token);
+    if(!showcase||showcase.status==='closed')return res.status(404).send('<!doctype html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px"><h1>Link encerrado ou inválido</h1></body></html>');
+    const configs=await getConfigsSafe(); if(!configs.storePhone)configs.storePhone=whatsappClient.getStatus()?.phone||'';
+    const responseSnap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();
+    const budget={id:showcase.id,code:'SELEÇÃO',customerName:showcase.customerName,customerPhone:showcase.customerPhone,validUntil:'',options:showcase.options,recommendedOptionId:showcase.options.find(o=>o.recommended)?.id||showcase.options[0]?.id||''};
+    return res.render('budget-share-public',{layout:false,budget,configs,response:publicBudgetResponse(responseSnap.exists?responseSnap.data():{}),token:req.params.token,publicApiBase:'/api/public/showcases'});
+});
+
+app.get('/api/public/showcases/:token',async(req,res)=>{const s=await findShowcaseByToken(req.params.token);if(!s)return res.status(404).json({error:true,message:'Link não encontrado.'});const snap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(s.id).get();return res.json({error:false,response:publicBudgetResponse(snap.exists?snap.data():{})});});
+app.put('/api/public/showcases/:token/response',async(req,res)=>{
+    const showcase=await findShowcaseByToken(req.params.token);if(!showcase||showcase.status==='closed')return res.status(404).json({error:true,message:'Link não encontrado.'});
+    const body=req.body||{},option=showcase.options.find(o=>String(o.id)===String(body.selectedOptionId||''));if(!option)return res.status(400).json({error:true,message:'Selecione uma opção válida.'});
+    const ids=new Set((option.items||[]).map(i=>String(i.id))),choices={};Object.entries(body.choices&&typeof body.choices==='object'?body.choices:{}).forEach(([id,v])=>{if(ids.has(String(id)))choices[id]={included:v?.included!==false,qty:Math.min(99,Math.max(0,Math.trunc(Number(v?.qty)||0)))}});
+    const payload={showcaseId:showcase.id,selectedOptionId:option.id,selectedOptionName:option.name,choices,requestedItems:(Array.isArray(body.requestedItems)?body.requestedItems:[]).map(x=>({name:String(x?.name||'').trim().slice(0,120),details:String(x?.details||'').trim().slice(0,500)})).filter(x=>x.name).slice(0,20),notes:String(body.notes||'').trim().slice(0,3000),customerName:String(body.customerName||showcase.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||showcase.customerPhone||'').trim().slice(0,30),finalized:body.finalized===true,updatedAt:FieldValue.serverTimestamp()};if(payload.finalized)payload.finalizedAt=FieldValue.serverTimestamp();
+    await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).set(payload,{merge:true});await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(showcase.id).set({customerResponse:payload,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();return res.json({error:false,response:publicBudgetResponse(fresh.data()||{})});
+});
+
+app.get('/p/orcamento/:token', async (req, res) => {
+    const budget = await findBudgetByPublicToken(req.params.token);
+    if (!budget) return res.status(404).send('<!doctype html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px"><h1>Link inválido</h1><p>Solicite um novo link à loja.</p></body></html>');
+    const configs = await getConfigsSafe();
+    if (!configs.storePhone) configs.storePhone = whatsappClient.getStatus()?.phone || '';
+    const responseSnap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
+    return res.render('budget-share-public', { layout: false, budget, configs, response: publicBudgetResponse(responseSnap.exists ? responseSnap.data() : {}), token: req.params.token });
+});
+
+app.get('/api/public/budgets/:token', async (req, res) => {
+    const budget = await findBudgetByPublicToken(req.params.token);
+    if (!budget) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    const snap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
+    return res.json({ error: false, response: publicBudgetResponse(snap.exists ? snap.data() : {}) });
+});
+
+app.put('/api/public/budgets/:token/response', async (req, res) => {
+    const budget = await findBudgetByPublicToken(req.params.token);
+    if (!budget) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    const body = req.body || {};
+    const option = (budget.options || []).find((o) => String(o.id) === String(body.selectedOptionId || ''));
+    if (!option) return res.status(400).json({ error: true, message: 'Selecione uma opção válida.' });
+    const validIds = new Set((option.items || []).map((i) => String(i.id)));
+    const choices = {};
+    Object.entries(body.choices && typeof body.choices === 'object' ? body.choices : {}).forEach(([id, value]) => {
+        if (validIds.has(String(id))) choices[String(id)] = { included: value?.included !== false, qty: Math.min(99, Math.max(0, Math.trunc(Number(value?.qty) || 0))) };
+    });
+    const requestedItems = (Array.isArray(body.requestedItems) ? body.requestedItems : []).map((x) => ({ name: String(x?.name || '').trim().slice(0, 120), details: String(x?.details || '').trim().slice(0, 500) })).filter((x) => x.name).slice(0, 20);
+    const finalized = body.finalized === true;
+    const payload = { budgetId: budget.id, budgetCode: budget.code || '', selectedOptionId: option.id, selectedOptionName: option.name || '', choices, requestedItems, notes: String(body.notes || '').trim().slice(0, 3000), customerName: String(body.customerName || budget.customerName || '').trim().slice(0, 120), customerPhone: String(body.customerPhone || budget.customerPhone || '').trim().slice(0, 30), finalized, updatedAt: FieldValue.serverTimestamp() };
+    if (finalized) payload.finalizedAt = FieldValue.serverTimestamp();
+    await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).set(payload, { merge: true });
+    await firestore.collection(BUDGETS_COLLECTION).doc(budget.id).set({ customerResponse: payload, customerResponseUpdatedAt: FieldValue.serverTimestamp(), status: finalized ? 'awaiting' : (budget.status === 'draft' ? 'sent' : budget.status), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    const fresh = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
+    return res.json({ error: false, response: publicBudgetResponse(fresh.data() || {}) });
+});
+
+
+const DIAGNOSTIC_SESSION_TTL_MS = 45000;
+const diagnosticSessions = new Map();
+
+function pruneDiagnosticSessions() {
+    const now = Date.now();
+    for (const [id, session] of diagnosticSessions) {
+        if (now - session.lastSeen > DIAGNOSTIC_SESSION_TTL_MS) {
+            diagnosticSessions.delete(id);
+        }
+    }
+}
+
+function registerDiagnosticSession(service) {
+    if (!service?.id || !service?.code) return null;
+    const existing = diagnosticSessions.get(service.id);
+    const next = {
+        serviceId: service.id,
+        serviceCode: service.code,
+        customerName: String(service.customerName || '').trim(),
+        deviceType: String(service.deviceType || '').trim(),
+        deviceBrandModel: String(service.deviceBrandModel || '').trim(),
+        hasDiagnostic: Boolean(service.pcDiagnostic),
+        openedAt: existing?.openedAt || new Date().toISOString(),
+        lastSeen: Date.now()
+    };
+    diagnosticSessions.set(service.id, next);
+    return next;
+}
+
+function clearDiagnosticSession(serviceId) {
+    diagnosticSessions.delete(String(serviceId || '').trim());
+}
+
+function getActiveDiagnosticSession() {
+    pruneDiagnosticSessions();
+    let best = null;
+    for (const session of diagnosticSessions.values()) {
+        if (!best || session.lastSeen > best.lastSeen) best = session;
+    }
+    return best;
+}
+
+function resolveDiagnosticServiceCode(req, body) {
+    const active = getActiveDiagnosticSession();
+    return String(
+        req.query.os
+        || req.query.service_code
+        || body.service_code
+        || body.os_code
+        || active?.serviceCode
+        || ''
+    ).trim();
+}
+
+app.get('/api/diagnostico/sessao-ativa', (req, res) => {
+    if (!verifyDiagnosticApiKey(req)) {
+        return res.status(401).json({ error: true, message: 'Chave de API inválida.' });
+    }
+    const session = getActiveDiagnosticSession();
+    return res.json({
+        error: false,
+        active: Boolean(session),
+        session: session || null
+    });
+});
+
+app.post('/api/diagnostico/sessao/ping', verifyLogin, async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const serviceId = String(body.serviceId || '').trim();
+    if (!serviceId) {
+        return res.status(400).json({ error: true, message: 'serviceId é obrigatório.' });
+    }
+    try {
+        const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(serviceId).get();
+        if (!snap.exists) {
+            clearDiagnosticSession(serviceId);
+            return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
+        }
+        const service = normalizeServiceOrderRow({ id: serviceId, ...(snap.data() || {}) });
+        const session = registerDiagnosticSession(service);
+        return res.json({ error: false, session });
+    } catch (e) {
+        console.error('[Diagnóstico] Erro no ping de sessão:', e);
+        return res.status(500).json({ error: true, message: 'Erro ao registrar sessão de diagnóstico.' });
+    }
+});
+
+app.delete('/api/diagnostico/sessao/:serviceId', verifyLogin, (req, res) => {
+    clearDiagnosticSession(req.params.serviceId);
+    return res.json({ error: false, message: 'Sessão encerrada.' });
+});
 
 app.post('/api/diagnostico', async (req, res) => {
     if (!verifyDiagnosticApiKey(req)) {
@@ -2038,12 +2356,7 @@ app.post('/api/diagnostico', async (req, res) => {
     }
 
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const serviceCode = String(
-        req.query.os
-        || activeService?.code
-    ).trim();
-    
-    
+    const serviceCode = resolveDiagnosticServiceCode(req, body);
     const diagnostic = normalizePcDiagnostic(body);
     if (!diagnostic) {
         return res.status(400).json({
@@ -2066,6 +2379,11 @@ app.post('/api/diagnostico', async (req, res) => {
                     pcDiagnostic: diagnostic,
                     updatedAt: now
                 });
+                const activeSession = diagnosticSessions.get(service.id);
+                if (activeSession) {
+                    activeSession.hasDiagnostic = true;
+                    activeSession.lastSeen = Date.now();
+                }
             } catch (e) {
                 console.error('[Diagnóstico] Erro ao vincular à OS:', e);
                 return res.status(500).json({ error: true, message: 'Erro ao salvar diagnóstico na ordem de serviço.' });
@@ -2253,7 +2571,7 @@ function verifyAdmin(req, res, next) {
 }
 
 function isBudgetFinalized(row) {
-    return String(row?.status || 'draft').toLowerCase() === 'finalized';
+    return normalizeBudgetStatus(row?.status) === 'converted';
 }
 
 async function deleteCashFlowEntriesForBudget(budgetId) {
@@ -2278,21 +2596,30 @@ function budgetFirestorePatchFromBuilt(built) {
         customerName: String(p.customerName || ''),
         customerPhone: String(p.customerPhone || ''),
         customerEmail: String(p.customerEmail || ''),
+        customerDoc: String(p.customerDoc || ''),
+        source: String(p.source || ''),
         notes: String(p.notes || ''),
+        internalNotes: String(p.internalNotes || ''),
+        paymentTerms: String(p.paymentTerms || ''),
+        deadline: String(p.deadline || ''),
+        warrantyText: String(p.warrantyText || ''),
+        includedServices: Array.isArray(p.includedServices) ? p.includedServices : [],
+        issuedAt: String(p.issuedAt || ''),
         validUntil: String(p.validUntil || ''),
-        items: p.items,
-        subtotal: Number(p.subtotal) || 0,
-        discount: Number(p.discount) || 0,
-        extra: Number(p.extra) || 0,
-        total: Number(p.total) || 0,
-        costTotal: Number(p.costTotal) || 0,
-        profit: Number.isFinite(Number(p.profit)) ? Number(p.profit) : 0,
-        status: p.status === 'finalized' ? 'finalized' : 'draft',
+        templateId: String(p.templateId || ''),
+        options: p.options,
+        selectedOptionId: String(p.selectedOptionId || ''),
+        status: normalizeBudgetStatus(p.status),
+        rejectionReason: String(p.rejectionReason || ''),
+        rejectionNote: String(p.rejectionNote || ''),
+        followUpDueAt: String(p.followUpDueAt || ''),
         updatedAt: FieldValue.serverTimestamp()
     };
-    if (patch.status === 'finalized') {
-        patch.finalizedAt = FieldValue.serverTimestamp();
-    }
+    if (p.serviceOrderId) patch.serviceOrderId = String(p.serviceOrderId);
+    if (p.saleId) patch.saleId = String(p.saleId);
+    if (p.convertedOptionId) patch.convertedOptionId = String(p.convertedOptionId);
+    if (patch.status === 'sent' && !p.sentAt) patch.sentAt = FieldValue.serverTimestamp();
+    if (patch.status === 'rejected' && !p.rejectedAt) patch.rejectedAt = FieldValue.serverTimestamp();
     return patch;
 }
 
@@ -2300,6 +2627,13 @@ async function fetchBudgetNormalized(id) {
     const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
     if (!snap.exists) return null;
     return normalizeBudgetRow({ id, ...snap.data() });
+}
+
+async function loadBudgetTemplatesNormalized() {
+    const rows = await db.findAll({ colecao: BUDGET_TEMPLATES_COLLECTION }).catch(() => []);
+    return (Array.isArray(rows) ? rows : [])
+        .map((row) => normalizeBudgetTemplate(row))
+        .sort((a, b) => String(a.category || '').localeCompare(String(b.category || ''), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
 }
 
 async function getConfigsSafe() {
@@ -2378,13 +2712,20 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'budgets') {
-            const [products, budgetRows, customers] = await Promise.all([
+            const [products, budgetRows, customers, budgetTemplates] = await Promise.all([
                 loadProductsFromDb(),
                 db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
-                loadCustomersNormalized()
+                loadCustomersNormalized(),
+                loadBudgetTemplatesNormalized()
             ]);
             const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-            return res.json({ configs, products, budgets, customers });
+            return res.json({ configs, products, budgets, customers, budgetTemplates });
+        }
+
+        if (scope === 'budget-links') {
+            const [rows,budgetTemplates]=await Promise.all([db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]),loadBudgetTemplatesNormalized()]);
+            const showcases=(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
+            return res.json({configs,showcases,budgetTemplates});
         }
 
         if (scope === 'stock') {
@@ -2469,6 +2810,8 @@ app.get('/budgets', verifyLogin, (req, res) => {
     renderAppShell(res, 'budgets', req.session.user);
 });
 
+app.get('/budget-links', verifyLogin, (req,res)=>renderAppShell(res,'budget-links',req.session.user));
+
 app.get('/stock', verifyLogin, (req, res) => {
     if (req.session.user.type !== 'admin') {
         return res.redirect('/dashboard');
@@ -2487,8 +2830,7 @@ app.get('/services/:id', verifyAdmin, async (req, res) => {
     const snap = await firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id).get();
     if (!snap.exists) return res.redirect('/services');
     const service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
-    
-    activeService = service; // Armazena a OS ativa para uso posterior
+    registerDiagnosticSession(service);
     res.render('layout', {
         body: 'service-work',
         bootstrap: '',
@@ -2657,8 +2999,8 @@ app.get('/api/budgets', verifyLogin, async (req, res) => {
         const rows = await db.findAll({ colecao: BUDGETS_COLLECTION });
         const budgets = Array.isArray(rows) ? rows.map(normalizeBudgetRow) : [];
         budgets.sort((a, b) => {
-            const ad = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-            const bd = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+            const ad = new Date(a.updatedAt || a.createdAt || 0).getTime() || 0;
+            const bd = new Date(b.updatedAt || b.createdAt || 0).getTime() || 0;
             return bd - ad;
         });
         return res.json({ error: false, budgets });
@@ -2668,8 +3010,38 @@ app.get('/api/budgets', verifyLogin, async (req, res) => {
     }
 });
 
+app.post('/api/budgets/:id/public-link', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+    if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    const current = snap.data() || {};
+    const token = String(current.publicToken || randomUUID());
+    await firestore.collection(BUDGETS_COLLECTION).doc(id).set({ publicToken: token, publicLinkCreatedAt: FieldValue.serverTimestamp(), status: normalizeBudgetStatus(current.status) === 'draft' ? 'sent' : current.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return res.json({ error: false, token, url: `${req.protocol}://${req.get('host')}/p/orcamento/${token}`, budget: await fetchBudgetNormalized(id) });
+});
+
+app.get('/api/budgets/:id/customer-response', verifyLogin, async (req, res) => {
+    const snap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(String(req.params.id || '')).get();
+    return res.json({ error: false, response: publicBudgetResponse(snap.exists ? snap.data() : {}) });
+});
+
+app.post('/api/budget-templates/image', verifyLogin, uploadProductImage, (req, res) => {
+    if (!req.file) return res.status(400).json({ error: true, message: 'Selecione uma imagem.' });
+    return res.json({ error: false, imageUrl: `/uploads/${req.file.filename}` });
+});
+
+app.get('/api/budget-showcases',verifyLogin,async(_req,res)=>{const rows=await db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]);return res.json({error:false,showcases:(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase)});});
+app.post('/api/budget-showcases',verifyLogin,async(req,res)=>{
+    const body=req.body||{},ids=[...new Set((Array.isArray(body.templateIds)?body.templateIds:[]).map(String))].slice(0,12);if(!ids.length)return res.status(400).json({error:true,message:'Selecione ao menos um modelo.'});
+    const templates=[];for(const id of ids){const snap=await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();if(snap.exists&&snap.data()?.active!==false)templates.push(normalizeBudgetTemplate({id,...snap.data()}));}if(!templates.length)return res.status(400).json({error:true,message:'Nenhum modelo válido selecionado.'});
+    const id=randomUUID(),token=randomUUID(),options=templates.map((t,i)=>budgetDomain.computeOption({id:randomUUID(),name:t.name,description:t.description,imageUrl:t.imageUrl,recommended:i===0,items:t.items},i));
+    const payload={id,token,title:String(body.title||'Seleção de orçamentos').trim().slice(0,120),customerName:String(body.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||'').trim().slice(0,30),templateIds:ids,options,status:'open',createdAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp()};await db.create(BUDGET_SHOWCASES_COLLECTION,id,payload);const snap=await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id).get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...snap.data()}),url:`${req.protocol}://${req.get('host')}/p/escolha/${token}`});
+});
+app.patch('/api/budget-showcases/:id',verifyLogin,async(req,res)=>{const id=String(req.params.id||''),status=req.body?.status==='closed'?'closed':'open';const ref=firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id),snap=await ref.get();if(!snap.exists)return res.status(404).json({error:true,message:'Link não encontrado.'});await ref.set({status,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await ref.get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...fresh.data()})});});
+app.delete('/api/budget-showcases/:id',verifyLogin,async(req,res)=>{const id=String(req.params.id||'');await Promise.all([firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id).delete(),firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(id).delete()]);return res.json({error:false});});
+
 function autoCustomerNotesFromBudget({ code, status, validUntil, total, budgetNotes }) {
-    const stLabel = status === 'finalized' ? 'finalizado' : 'rascunho';
+    const stLabel = budgetStatusLabel(status).toLowerCase();
     const lines = [
         `Cadastro automático via orçamento ${code || '—'} (${stLabel}).`,
         `Data do registro: ${new Date().toLocaleString('pt-BR')}.`
@@ -2683,13 +3055,17 @@ function autoCustomerNotesFromBudget({ code, status, validUntil, total, budgetNo
     return lines.join('\n');
 }
 
-async function findCustomerByContact({ name, phone, email }) {
+async function findCustomerByContact({ name, phone, email, doc }) {
     const rows = await db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []);
     const list = Array.isArray(rows) ? rows : [];
     const phoneNorm = sanitizePhone(phone);
     const emailNorm = String(email || '').trim().toLowerCase();
-    const nameNorm = String(name || '').trim().toLowerCase();
+    const docNorm = String(doc || '').replace(/\D/g, '');
 
+    if (docNorm) {
+        const byDoc = list.find((c) => String(c.doc || '').replace(/\D/g, '') === docNorm);
+        if (byDoc) return byDoc;
+    }
     if (phoneNorm) {
         const byPhone = list.find((c) => sanitizePhone(c.phone) === phoneNorm);
         if (byPhone) return byPhone;
@@ -2698,18 +3074,18 @@ async function findCustomerByContact({ name, phone, email }) {
         const byEmail = list.find((c) => String(c.email || '').trim().toLowerCase() === emailNorm);
         if (byEmail) return byEmail;
     }
-    if (nameNorm) {
-        const byName = list.find((c) => String(c.name || '').trim().toLowerCase() === nameNorm);
-        if (byName) return byName;
-    }
+    // Não vincula automaticamente apenas pelo nome: clientes diferentes podem ter o mesmo nome.
+    // Quando não há telefone, documento ou e-mail, o usuário pode selecionar explicitamente
+    // um cadastro existente pelo autocomplete da tela.
     return null;
 }
 
-async function resolveBudgetCustomerLink({ customerId, customerName, customerPhone, customerEmail, budgetMeta }) {
+async function resolveBudgetCustomerLink({ customerId, customerName, customerPhone, customerEmail, customerDoc, budgetMeta }) {
     let cid = String(customerId || '').trim();
     let name = String(customerName || '').trim();
     let phone = String(customerPhone || '').trim();
     let email = String(customerEmail || '').trim();
+    let doc = String(customerDoc || '').trim();
     let customerCreated = false;
     let customer = null;
 
@@ -2720,16 +3096,17 @@ async function resolveBudgetCustomerLink({ customerId, customerName, customerPho
             name = name || String(c.name || '').trim();
             phone = phone || String(c.phone || '').trim();
             email = email || String(c.email || '').trim();
-            return { customerId: cid, customerName: name, customerPhone: phone, customerEmail: email, customerCreated, customer };
+            doc = doc || String(c.doc || '').trim();
+            return { customerId: cid, customerName: name, customerPhone: phone, customerEmail: email, customerDoc: doc, customerCreated, customer };
         }
         cid = '';
     }
 
     if (!name) {
-        return { customerId: '', customerName: '', customerPhone: phone, customerEmail: email, customerCreated, customer };
+        return { customerId: '', customerName: '', customerPhone: phone, customerEmail: email, customerDoc: doc, customerCreated, customer };
     }
 
-    const existing = await findCustomerByContact({ name, phone, email });
+    const existing = await findCustomerByContact({ name, phone, email, doc });
     if (existing) {
         const eid = existing.id != null ? String(existing.id) : '';
         return {
@@ -2737,6 +3114,7 @@ async function resolveBudgetCustomerLink({ customerId, customerName, customerPho
             customerName: name,
             customerPhone: phone || String(existing.phone || '').trim(),
             customerEmail: email || String(existing.email || '').trim(),
+            customerDoc: doc || String(existing.doc || '').trim(),
             customerCreated: false,
             customer: null
         };
@@ -2747,7 +3125,7 @@ async function resolveBudgetCustomerLink({ customerId, customerName, customerPho
     const custPayload = {
         id: newId,
         name,
-        doc: '',
+        doc,
         phone,
         email,
         address: '',
@@ -2764,50 +3142,111 @@ async function resolveBudgetCustomerLink({ customerId, customerName, customerPho
         customerName: name,
         customerPhone: phone,
         customerEmail: email,
+        customerDoc: doc,
         customerCreated,
         customer
     };
 }
 
-async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus }) {
-    const rawItems = Array.isArray(body.items) ? body.items : [];
-    if (rawItems.length === 0) {
+async function enrichBudgetOptionsFromBody(body, { existingOptions = [], preserveSubmittedProductCosts = false } = {}) {
+    const rawOptions = Array.isArray(body?.options) && body.options.length
+        ? body.options
+        : [{
+            id: body?.optionId,
+            name: body?.optionName || 'Proposta',
+            recommended: true,
+            items: Array.isArray(body?.items) ? body.items : [],
+            discount: body?.adjustments?.discount || { type: 'fixed', value: body?.discount || 0 },
+            extra: body?.adjustments?.extra || { type: 'fixed', value: body?.extra || 0 }
+        }];
+    if (!rawOptions.length || rawOptions.every((o) => !Array.isArray(o.items) || o.items.length === 0)) {
         return { error: true, message: 'Adicione ao menos 1 item ao orçamento.' };
     }
 
-    let enriched;
+    const oldItemsById = new Map();
+    for (const option of Array.isArray(existingOptions) ? existingOptions : []) {
+        for (const item of Array.isArray(option?.items) ? option.items : []) {
+            const itemId = String(item?.id || '').trim();
+            if (itemId) oldItemsById.set(itemId, item);
+        }
+    }
+
+    const maps = await loadProductCostMaps();
+    const options = [];
+    for (let i = 0; i < rawOptions.length; i++) {
+        const raw = rawOptions[i] || {};
+        if (!Array.isArray(raw.items) || raw.items.length === 0) continue;
+        const snapshotItems = raw.items.map((itemRaw) => {
+            const item = { ...(itemRaw || {}), priceMode: 'snapshot' };
+            if (String(item.kind || '').toLowerCase() === 'product') {
+                const old = oldItemsById.get(String(item.id || '').trim());
+                const sameProduct = old && String(old.productId || '') === String(item.productId || '');
+                if (sameProduct) {
+                    item.unitCost = Number(old.unitCost) || 0;
+                } else if (!preserveSubmittedProductCosts) {
+                    // Produto novo em orçamento: custo vem do cadastro, nunca de um valor arbitrário do navegador.
+                    delete item.unitCost;
+                    delete item.cost;
+                }
+            }
+            return item;
+        });
+        const enriched = await enrichBudgetItemsWithCost(snapshotItems, maps, { preferProvidedProductCost: true });
+        const base = budgetDomain.computeOption({ ...raw, items: enriched.items }, i);
+        options.push(base);
+    }
+    if (!options.length) return { error: true, message: 'Adicione ao menos 1 item ao orçamento.' };
+    if (!options.some((o) => o.recommended)) options[0].recommended = true;
+    if (options.filter((o) => o.recommended).length > 1) {
+        let used = false;
+        options.forEach((o) => {
+            if (o.recommended && !used) used = true;
+            else o.recommended = false;
+        });
+    }
+    return { error: false, options };
+}
+
+async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus, existing = null, preserveSubmittedProductCosts = false }) {
+    let optionResult;
     try {
-        enriched = await enrichBudgetItemsWithCost(rawItems);
+        optionResult = await enrichBudgetOptionsFromBody(body || {}, {
+            existingOptions: existing ? normalizeBudgetOptions(existing) : [],
+            preserveSubmittedProductCosts
+        });
     } catch (e) {
         console.error(e);
         return { error: true, message: 'Erro ao calcular custos do orçamento.' };
     }
-    const items = enriched.items;
-    const subtotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
-    const costTotal = enriched.costTotal;
+    if (optionResult.error) return optionResult;
 
-    const discount = Math.max(0, Number(body.discount) || 0);
-    const extra = Math.max(0, Number(body.extra) || 0);
-    const total = Math.max(0, Math.round((subtotal - discount + extra) * 100) / 100);
-    let profit = Math.round((total - costTotal) * 100) / 100;
-    if (!Number.isFinite(profit)) profit = 0;
-    const requestedStatus = String(body.status || 'draft') === 'finalized' ? 'finalized' : 'draft';
-    const status = prevStatus === 'finalized' ? 'finalized' : requestedStatus;
+    const options = optionResult.options;
+    const selected = selectBudgetOption(options, body.selectedOptionId) || options[0];
+    const requestedRawStatus = String(body.status || prevStatus || 'draft').trim().toLowerCase();
+    const requestedStatus = normalizeBudgetStatus(requestedRawStatus);
+    if (requestedRawStatus === 'converted' && normalizeBudgetStatus(existing?.status) !== 'converted') {
+        return { error: true, message: 'Use a ação "Converter em venda" para marcar um orçamento como convertido.' };
+    }
+    const status = normalizeBudgetStatus(existing?.status) === 'converted' ? 'converted' : requestedStatus;
     const budgetCode = code || budgetDisplayCode();
-    const validUntil = String(body.validUntil || body.date || '').trim();
-    const notes = String(body.notes || '').trim();
+    const issuedRaw = String(body.issuedAt || existing?.issuedAt || budgetTodayIso()).trim();
+    const validRaw = String(body.validUntil || '').trim() || addBudgetDaysIso(issuedRaw, Number(body.validDays) || 7);
+    const dates = validateBudgetDates(issuedRaw, validRaw);
+    if (dates.error) return dates;
 
+    const notes = String(body.notes || '').trim();
+    const internalNotes = String(body.internalNotes || '').trim();
+    const source = String(body.source || '').trim();
     const customerLink = await resolveBudgetCustomerLink({
         customerId: body.customerId,
         customerName: body.customerName,
         customerPhone: body.customerPhone,
         customerEmail: body.customerEmail,
-        budgetMeta: { code: budgetCode, status, validUntil, total, budgetNotes: notes }
+        customerDoc: body.customerDoc,
+        budgetMeta: { code: budgetCode, status, validUntil: dates.validUntil, total: selected.total, budgetNotes: notes }
     });
 
     const now = FieldValue.serverTimestamp();
-    const serviceOrderId = body.serviceOrderId != null ? String(body.serviceOrderId).trim() : '';
-
     const payload = {
         id,
         code: budgetCode,
@@ -2815,22 +3254,38 @@ async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus
         customerName: customerLink.customerName,
         customerPhone: customerLink.customerPhone,
         customerEmail: customerLink.customerEmail,
+        customerDoc: customerLink.customerDoc || (body.customerDoc != null ? String(body.customerDoc).trim() : ''),
+        source,
         notes,
-        validUntil,
-        items,
-        subtotal,
-        discount,
-        extra,
-        total,
-        costTotal,
-        profit,
+        internalNotes,
+        paymentTerms: body.paymentTerms != null ? String(body.paymentTerms).trim() : '',
+        deadline: body.deadline != null ? String(body.deadline).trim() : '',
+        warrantyText: body.warrantyText != null ? String(body.warrantyText).trim() : '',
+        includedServices: Array.isArray(body.includedServices)
+            ? body.includedServices.map((x) => String(x || '').trim()).filter(Boolean)
+            : [],
+        issuedAt: dates.issuedAt,
+        validUntil: dates.validUntil,
+        templateId: body.templateId != null ? String(body.templateId).trim() : '',
+        options,
+        selectedOptionId: selected.id,
         status,
+        rejectionReason: status === 'rejected' ? String(body.rejectionReason || '').trim() : '',
+        rejectionNote: status === 'rejected' ? String(body.rejectionNote || '').trim() : '',
+        followUpDueAt: body.followUpDueAt != null ? String(body.followUpDueAt).trim() : '',
         updatedAt: now
     };
+
+    const serviceOrderId = body.serviceOrderId != null ? String(body.serviceOrderId).trim() : '';
     if (serviceOrderId) payload.serviceOrderId = serviceOrderId;
+    if (existing?.saleId) payload.saleId = String(existing.saleId);
+    if (existing?.convertedOptionId) payload.convertedOptionId = String(existing.convertedOptionId);
+    if (existing?.sentAt) payload.sentAt = existing.sentAt;
+    if (existing?.rejectedAt) payload.rejectedAt = existing.rejectedAt;
     if (createdAt != null) payload.createdAt = createdAt;
     else payload.createdAt = now;
-    if (status === 'finalized') payload.finalizedAt = now;
+    if (status === 'sent' && normalizeBudgetStatus(existing?.status) !== 'sent') payload.sentAt = now;
+    if (status === 'rejected' && normalizeBudgetStatus(existing?.status) !== 'rejected') payload.rejectedAt = now;
 
     return {
         error: false,
@@ -2847,26 +3302,20 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
         id: randomUUID(),
         code: null,
         createdAt: null,
-        prevStatus: null
+        prevStatus: null,
+        existing: null
     });
-    if (built.error) {
-        return res.status(400).json({ error: true, message: built.message });
-    }
+    if (built.error) return res.status(400).json({ error: true, message: built.message });
 
     try {
         await db.create(BUDGETS_COLLECTION, built.payload.id, built.payload);
         const budget = await fetchBudgetNormalized(built.payload.id);
         let notifications = null;
-        let cashFlowEntry = null;
-        if (built.status === 'finalized' && budget) {
-            notifications = await dispatchBudgetNotifications(budget);
-            cashFlowEntry = await createCashFlowFromBudget(budget);
-        }
+        if (built.status === 'sent' && budget) notifications = await dispatchBudgetNotifications(budget);
         return res.json({
             error: false,
             budget: budget || built.budget,
             notifications,
-            cashFlowEntry,
             customerCreated: built.customerCreated,
             customer: built.customer
         });
@@ -2881,30 +3330,31 @@ app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
 
     const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
-    if (!snap.exists) {
-        return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
-    }
+    if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
     const prev = snap.data() || {};
-    if (isBudgetFinalized(prev)) {
-        return res.status(400).json({ error: true, message: 'Orçamentos finalizados não podem ser editados.' });
+    if (normalizeBudgetStatus(prev.status) === 'converted') {
+        return res.status(400).json({ error: true, message: 'Orçamentos convertidos em venda ficam bloqueados para edição financeira.' });
     }
 
     const built = await buildBudgetRecordFromBody(req.body || {}, {
         id,
         code: prev.code,
         createdAt: prev.createdAt,
-        prevStatus: 'draft'
+        prevStatus: prev.status,
+        existing: prev
     });
-    if (built.error) {
-        return res.status(400).json({ error: true, message: built.message });
-    }
+    if (built.error) return res.status(400).json({ error: true, message: built.message });
 
     try {
+        const beforeStatus = normalizeBudgetStatus(prev.status);
         await db.update(BUDGETS_COLLECTION, id, budgetFirestorePatchFromBuilt(built));
         const budget = await fetchBudgetNormalized(id);
+        let notifications = null;
+        if (beforeStatus !== 'sent' && built.status === 'sent' && budget) notifications = await dispatchBudgetNotifications(budget);
         return res.json({
             error: false,
             budget: budget || built.budget,
+            notifications,
             customerCreated: built.customerCreated,
             customer: built.customer
         });
@@ -2917,18 +3367,15 @@ app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
 app.delete('/api/budgets/:id', verifyLogin, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
-
     const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
-    if (!snap.exists) {
-        return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    const budgetForDelete = snap.data() || {};
+    if (normalizeBudgetStatus(budgetForDelete.status) === 'converted' || String(budgetForDelete.saleId || '').trim()) {
+        return res.status(400).json({ error: true, message: 'Não é possível excluir um orçamento já convertido/vinculado a uma venda.' });
     }
-    const prev = snap.data() || {};
-    if (isBudgetFinalized(prev)) {
-        return res.status(400).json({ error: true, message: 'Orçamentos finalizados não podem ser excluídos.' });
-    }
-
     try {
         await firestore.collection(BUDGETS_COLLECTION).doc(id).delete();
+        // Mantém compatibilidade: remove apenas lançamentos legados ligados diretamente a orçamento.
         await deleteCashFlowEntriesForBudget(id);
         return res.json({ error: false, message: 'Orçamento excluído.' });
     } catch (e) {
@@ -2959,6 +3406,7 @@ app.post('/api/budgets/template', verifyLogin, (req, res) => {
     }
 });
 
+// Endpoint legado: "finalizar" agora significa enviar o orçamento, sem lançar receita.
 app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
@@ -2966,32 +3414,355 @@ app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
         const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
         if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
         const prev = snap.data() || {};
-        const enriched = await enrichBudgetItemsWithCost(Array.isArray(prev.items) ? prev.items : []);
-        const total = Number(prev.total) || 0;
-        const costTotal = enriched.costTotal;
-        let profit = Math.round((total - costTotal) * 100) / 100;
-        if (!Number.isFinite(profit)) profit = 0;
-        const patch = {
-            status: 'finalized',
-            items: enriched.items,
-            costTotal,
-            profit,
-            updatedAt: FieldValue.serverTimestamp(),
-            finalizedAt: FieldValue.serverTimestamp()
-        };
-        await db.update(BUDGETS_COLLECTION, id, patch);
-        const budget = await fetchBudgetNormalized(id);
-        if (!budget) {
-            return res.status(500).json({ error: true, message: 'Erro ao carregar orçamento finalizado.' });
+        if (normalizeBudgetStatus(prev.status) === 'converted') {
+            return res.status(400).json({ error: true, message: 'Orçamento já convertido em venda.' });
         }
-        const notifications = await dispatchBudgetNotifications(budget);
-        const cashFlowEntry = await createCashFlowFromBudget(budget);
-        return res.json({ error: false, budget, notifications, cashFlowEntry });
+        await firestore.collection(BUDGETS_COLLECTION).doc(id).set({
+            status: 'sent',
+            sentAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        const budget = await fetchBudgetNormalized(id);
+        const notifications = budget ? await dispatchBudgetNotifications(budget) : null;
+        return res.json({ error: false, budget, notifications });
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ error: true, message: 'Erro ao finalizar orçamento.' });
+        return res.status(500).json({ error: true, message: 'Erro ao enviar orçamento.' });
     }
 });
+
+app.patch('/api/budgets/:id/follow-up', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+    if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+    try {
+        const now = FieldValue.serverTimestamp();
+        const done = req.body?.done !== false;
+        const patch = {
+            followUpDone: done,
+            followUpDoneAt: done ? now : null,
+            lastContactAt: done ? now : (snap.data()?.lastContactAt || null),
+            updatedAt: now
+        };
+        await firestore.collection(BUDGETS_COLLECTION).doc(id).set(patch, { merge: true });
+        return res.json({ error: false, budget: await fetchBudgetNormalized(id) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar follow-up.' });
+    }
+});
+
+app.post('/api/budgets/:id/duplicate', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    try {
+        const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+        if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+        const original = normalizeBudgetRow({ id, ...snap.data() });
+        const updatePrices = req.body?.updatePrices === true;
+        const productMap = new Map((await loadProductsFromDb()).map((p) => [String(p.id), p]));
+        const options = original.options.map((opt) => ({
+            ...opt,
+            id: randomUUID(),
+            items: opt.items.map((item) => {
+                const product = productMap.get(String(item.productId || ''));
+                const shouldRefresh = updatePrices && item.kind === 'product' && product;
+                return {
+                    ...item,
+                    id: randomUUID(),
+                    unitPrice: shouldRefresh ? Number(product.price) || 0 : Number(item.unitPrice) || 0,
+                    unitCost: shouldRefresh ? Number(product.unitCostTotal ?? product.cost) || 0 : Number(item.unitCost) || 0,
+                    priceMode: 'snapshot'
+                };
+            })
+        }));
+        const body = {
+            customerId: req.body?.keepCustomer === false ? '' : original.customerId,
+            customerName: req.body?.keepCustomer === false ? '' : original.customerName,
+            customerPhone: req.body?.keepCustomer === false ? '' : original.customerPhone,
+            customerEmail: req.body?.keepCustomer === false ? '' : original.customerEmail,
+            customerDoc: req.body?.keepCustomer === false ? '' : original.customerDoc,
+            source: original.source,
+            issuedAt: budgetTodayIso(),
+            validUntil: addBudgetDaysIso(budgetTodayIso(), Number(req.body?.validDays) || 7),
+            notes: original.notes,
+            internalNotes: original.internalNotes,
+            paymentTerms: original.paymentTerms,
+            deadline: original.deadline,
+            warrantyText: original.warrantyText,
+            includedServices: original.includedServices,
+            options,
+            selectedOptionId: options.find((o) => o.recommended)?.id || options[0]?.id,
+            status: 'draft'
+        };
+        const built = await buildBudgetRecordFromBody(body, { id: randomUUID(), code: null, createdAt: null, prevStatus: null, existing: null, preserveSubmittedProductCosts: true });
+        if (built.error) return res.status(400).json({ error: true, message: built.message });
+        await db.create(BUDGETS_COLLECTION, built.payload.id, built.payload);
+        return res.json({ error: false, budget: await fetchBudgetNormalized(built.payload.id) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao duplicar orçamento.' });
+    }
+});
+
+app.get('/api/budget-templates', verifyLogin, async (_req, res) => {
+    try {
+        return res.json({ error: false, templates: await loadBudgetTemplatesNormalized() });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao carregar modelos.' });
+    }
+});
+
+async function buildBudgetTemplatePayload(body, existing = null) {
+    const name = String(body?.name || '').trim();
+    if (!name) return { error: true, message: 'Nome do modelo é obrigatório.' };
+    const rawItems = Array.isArray(body?.items) ? body.items : [];
+    if (!rawItems.length) return { error: true, message: 'Adicione ao menos 1 item ao modelo.' };
+    const maps = await loadProductCostMaps();
+    const enriched = await enrichBudgetItemsWithCost(rawItems, maps);
+    const now = FieldValue.serverTimestamp();
+    return {
+        error: false,
+        payload: {
+            id: existing?.id || randomUUID(),
+            name,
+            description: String(body?.description || '').trim(),
+            imageUrl: String(body?.imageUrl || existing?.imageUrl || '').trim().slice(0, 1000),
+            category: String(body?.category || 'Outros').trim() || 'Outros',
+            active: body?.active !== false,
+            internalNotes: String(body?.internalNotes || '').trim(),
+            customerNotes: String(body?.customerNotes || body?.notes || '').trim(),
+            defaultValidDays: Math.min(90, Math.max(1, Number.parseInt(String(body?.defaultValidDays || 7), 10) || 7)),
+            warrantyText: String(body?.warrantyText || '').trim(),
+            paymentTerms: String(body?.paymentTerms || '').trim(),
+            deadline: String(body?.deadline || '').trim(),
+            includedServices: Array.isArray(body?.includedServices) ? body.includedServices.map((x) => String(x || '').trim()).filter(Boolean) : [],
+            items: enriched.items,
+            createdAt: existing?.createdAt || now,
+            updatedAt: now
+        }
+    };
+}
+
+app.post('/api/budget-templates', verifyLogin, async (req, res) => {
+    try {
+        const built = await buildBudgetTemplatePayload(req.body || {});
+        if (built.error) return res.status(400).json({ error: true, message: built.message });
+        await db.create(BUDGET_TEMPLATES_COLLECTION, built.payload.id, built.payload);
+        const snap = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(built.payload.id).get();
+        return res.json({ error: false, template: normalizeBudgetTemplate({ id: built.payload.id, ...snap.data() }) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao criar modelo.' });
+    }
+});
+
+app.patch('/api/budget-templates/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    try {
+        const snap = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();
+        if (!snap.exists) return res.status(404).json({ error: true, message: 'Modelo não encontrado.' });
+        const built = await buildBudgetTemplatePayload(req.body || {}, { id, ...snap.data() });
+        if (built.error) return res.status(400).json({ error: true, message: built.message });
+        await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).set(built.payload, { merge: true });
+        const updated = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();
+        return res.json({ error: false, template: normalizeBudgetTemplate({ id, ...updated.data() }) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao atualizar modelo.' });
+    }
+});
+
+app.delete('/api/budget-templates/:id', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    try {
+        await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).delete();
+        return res.json({ error: false });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao excluir modelo.' });
+    }
+});
+
+app.post('/api/budget-templates/:id/duplicate', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    try {
+        const snap = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();
+        if (!snap.exists) return res.status(404).json({ error: true, message: 'Modelo não encontrado.' });
+        const src = normalizeBudgetTemplate({ id, ...snap.data() });
+        const body = {
+            ...src,
+            name: String(req.body?.name || `${src.name} (cópia)`).trim(),
+            items: src.items.map((x) => ({ ...x, id: randomUUID() }))
+        };
+        const built = await buildBudgetTemplatePayload(body);
+        if (built.error) return res.status(400).json({ error: true, message: built.message });
+        await db.create(BUDGET_TEMPLATES_COLLECTION, built.payload.id, built.payload);
+        const created = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(built.payload.id).get();
+        return res.json({ error: false, template: normalizeBudgetTemplate({ id: built.payload.id, ...created.data() }) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao duplicar modelo.' });
+    }
+});
+
+app.post('/api/budgets/:id/save-as-template', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    try {
+        const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+        if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+        const budget = normalizeBudgetRow({ id, ...snap.data() });
+        const option = selectBudgetOption(budget.options, req.body?.optionId || budget.selectedOptionId);
+        if (!option) return res.status(400).json({ error: true, message: 'Opção do orçamento não encontrada.' });
+        const built = await buildBudgetTemplatePayload({
+            name: String(req.body?.name || `${budget.code} - ${option.name}`).trim(),
+            description: String(req.body?.description || '').trim(),
+            category: String(req.body?.category || 'Outros').trim(),
+            active: true,
+            customerNotes: budget.notes,
+            internalNotes: budget.internalNotes,
+            defaultValidDays: Number(req.body?.defaultValidDays) || 7,
+            warrantyText: budget.warrantyText,
+            paymentTerms: budget.paymentTerms,
+            deadline: budget.deadline,
+            includedServices: budget.includedServices,
+            items: option.items.map((x) => ({ ...x, id: randomUUID() }))
+        });
+        if (built.error) return res.status(400).json({ error: true, message: built.message });
+        await db.create(BUDGET_TEMPLATES_COLLECTION, built.payload.id, built.payload);
+        const created = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(built.payload.id).get();
+        return res.json({ error: false, template: normalizeBudgetTemplate({ id: built.payload.id, ...created.data() }) });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao salvar orçamento como modelo.' });
+    }
+});
+
+app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
+    const budgetId = String(req.params.id || '').trim();
+    if (!budgetId) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    const payment = normalizePaymentKey(req.body?.payment || 'money');
+    if (!PAYMENT_KEYS.has(payment)) return res.status(400).json({ error: true, message: 'Forma de pagamento inválida.' });
+    const allowInsufficientStock = req.body?.allowInsufficientStock === true;
+    if (req.body?.paymentConfirmed !== true) {
+        return res.status(400).json({ error: true, message: 'Confirme que o pagamento foi recebido/aprovado antes de registrar a venda.' });
+    }
+    try {
+        let result = null;
+        await firestore.runTransaction(async (tx) => {
+            const budgetRef = firestore.collection(BUDGETS_COLLECTION).doc(budgetId);
+            const budgetSnap = await tx.get(budgetRef);
+            if (!budgetSnap.exists) throw Object.assign(new Error('Orçamento não encontrado.'), { httpStatus: 404 });
+            const rawBudget = { id: budgetId, ...budgetSnap.data() };
+            const budget = normalizeBudgetRow(rawBudget);
+            if (budget.saleId || budget.status === 'converted') {
+                throw Object.assign(new Error('Este orçamento já foi convertido em venda.'), { httpStatus: 409, saleId: budget.saleId });
+            }
+            if (!['approved', 'acquiring_parts'].includes(budget.status)) {
+                throw Object.assign(new Error('Marque o orçamento como aprovado antes de converter em venda.'), { httpStatus: 400 });
+            }
+            const option = selectBudgetOption(budget.options, req.body?.optionId || budget.selectedOptionId);
+            if (!option) throw Object.assign(new Error('Selecione uma opção válida.'), { httpStatus: 400 });
+
+            // Agrupa a necessidade por produto antes de escrever no estoque. Isso evita
+            // que duas linhas do mesmo produto usem o mesmo saldo inicial e a última
+            // atualização sobrescreva a anterior.
+            const productNeeds = budgetDomain.aggregateProductQuantities(option.items);
+
+            const productMap = new Map();
+            for (const [productId, neededQty] of productNeeds) {
+                const ref = firestore.collection(PRODUCTS_COLLECTION).doc(productId);
+                const snap = await tx.get(ref);
+                if (!snap.exists) {
+                    const example = option.items.find((x) => String(x.productId || '') === productId);
+                    throw Object.assign(new Error(`Produto não encontrado: ${example?.name || productId}`), { httpStatus: 400 });
+                }
+                const data = snap.data() || {};
+                const stock = Number.parseInt(String(data.qty), 10) || 0;
+                const tracksStock = productTracksStock(data);
+                if (tracksStock && stock < neededQty && !allowInsufficientStock) {
+                    throw Object.assign(new Error(`Estoque insuficiente para "${data.name || productId}". Necessário: ${neededQty}. Disponível: ${stock}.`), { httpStatus: 409, stockInsufficient: true });
+                }
+                productMap.set(productId, { ref, id: productId, data, stock, tracksStock, neededQty });
+            }
+
+            const saleItems = [];
+            let costCents = 0;
+            for (const item of option.items) {
+                const qty = parsePositiveInt(item.qty) || Math.max(0, Number(item.qty) || 0);
+                if (!qty) continue;
+                if (item.kind === 'product' && item.productId) {
+                    const row = productMap.get(String(item.productId));
+                    const p = row?.data || {};
+                    const cost = productUnitCost(p);
+                    const lineCost = lineCostFromUnit(cost, qty);
+                    costCents += toCents(lineCost);
+                    saleItems.push({
+                        id: String(item.productId), sku: String(item.sku || p.sku || ''), name: String(item.name || p.name || ''),
+                        category: String(p.category || ''), itemType: String(p.itemType || 'product'), price: Number(item.unitPrice) || 0,
+                        cost, qty, lineTotal: Number(item.total) || lineCostFromUnit(item.unitPrice, qty), lineCost,
+                        condition: String(item.condition || 'new'), warranty: String(item.warranty || ''), sourceBudgetItemId: String(item.id || '')
+                    });
+                } else {
+                    saleItems.push({
+                        id: `custom:${randomUUID()}`, sku: '', name: String(item.name || 'Item personalizado'), category: 'custom', custom: true,
+                        price: Number(item.unitPrice) || 0, cost: Number(item.unitCost) || 0, qty,
+                        lineTotal: Number(item.total) || lineCostFromUnit(item.unitPrice, qty), lineCost: lineCostFromUnit(item.unitCost, qty),
+                        condition: String(item.condition || 'na'), warranty: String(item.warranty || ''), sourceBudgetItemId: String(item.id || '')
+                    });
+                    costCents += toCents(lineCostFromUnit(item.unitCost, qty));
+                }
+            }
+            // Todas as leituras da transação já ocorreram; agora as baixas podem ser aplicadas.
+            for (const row of productMap.values()) {
+                if (row.tracksStock) tx.update(row.ref, { qty: row.stock - row.neededQty });
+            }
+
+            const saleId = randomUUID();
+            const code = saleDisplayCode();
+            const total = Number(option.total) || 0;
+            const costTotal = fromCents(costCents);
+            const profit = Math.round((total - costTotal) * 100) / 100;
+            const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
+            const saleRecord = {
+                id: saleId, code, client: budget.customerName || 'Balcão', customerId: budget.customerId || '', payment,
+                source: 'budget', budgetId, budgetCode: budget.code, budgetOptionId: option.id, budgetOptionName: option.name,
+                items: saleItems,
+                adjustments: { discount: option.discount, extra: option.extra },
+                subtotal: Number(option.subtotal) || 0,
+                discount: Number(option.discount?.amount) || 0,
+                extra: Number(option.extra?.amount) || 0,
+                total, costTotal, profit, createdAt: FieldValue.serverTimestamp()
+            };
+            if (user && (user.name || user.email)) saleRecord.cashier = { name: String(user.name || ''), email: String(user.email || '') };
+            if (payment === 'money') {
+                const received = req.body?.cashReceived == null || req.body?.cashReceived === '' ? total : Number(req.body.cashReceived);
+                if (!Number.isFinite(received) || received + 1e-6 < total) throw Object.assign(new Error('Valor recebido menor que o total.'), { httpStatus: 400 });
+                saleRecord.cashReceived = Math.round(received * 100) / 100;
+                saleRecord.change = Math.round((saleRecord.cashReceived - total) * 100) / 100;
+            }
+            const saleRef = firestore.collection(SALES_COLLECTION).doc(saleId);
+            tx.set(saleRef, saleRecord);
+            const cfPayload = buildCashFlowPayloadFromSale(saleId, saleRecord);
+            tx.set(firestore.collection(CASH_FLOW_COLLECTION).doc(cfPayload.id), cfPayload);
+            tx.set(budgetRef, {
+                status: 'converted', saleId, convertedOptionId: option.id,
+                selectedOptionId: option.id, convertedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+            result = { saleId, saleCode: code, optionId: option.id, cashFlowId: cfPayload.id };
+        });
+        return res.json({ error: false, ...result, budget: await fetchBudgetNormalized(budgetId) });
+    } catch (e) {
+        console.error(e);
+        const status = Number(e?.httpStatus) || 500;
+        return res.status(status).json({ error: true, message: e.message || 'Erro ao converter orçamento em venda.', saleId: e?.saleId || '', stockInsufficient: e?.stockInsufficient === true });
+    }
+});
+
 const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MP_DEVICE_ID = process.env.MERCADOPAGO_DEVICE_ID || "PAX_Q92__Q92-1733817193";
 const MP_ENABLED = Boolean(MP_TOKEN && MP_DEVICE_ID);

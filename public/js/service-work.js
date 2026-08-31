@@ -22,6 +22,39 @@ function diagnosticEndpointUrl() {
     return `${window.location.origin}/api/diagnostico?os=${code}`;
 }
 
+let diagnosticPingTimer = null;
+
+async function pingDiagnosticSession() {
+    if (!service?.id) return;
+    try {
+        await fetch('/api/diagnostico/sessao/ping', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ serviceId: service.id })
+        });
+    } catch (e) {
+        console.warn('[Diagnóstico] Falha no ping de sessão:', e);
+    }
+}
+
+function startDiagnosticSession() {
+    stopDiagnosticSession();
+    pingDiagnosticSession();
+    diagnosticPingTimer = setInterval(pingDiagnosticSession, 15000);
+}
+
+function stopDiagnosticSession() {
+    if (diagnosticPingTimer) {
+        clearInterval(diagnosticPingTimer);
+        diagnosticPingTimer = null;
+    }
+    if (service?.id) {
+        fetch(`/api/diagnostico/sessao/${encodeURIComponent(service.id)}`, {
+            method: 'DELETE'
+        }).catch(() => null);
+    }
+}
+
 function formatDiagTimestamp(ts) {
     if (!ts) return '—';
     const d = new Date(ts);
@@ -66,14 +99,14 @@ function renderDiagnosticWorkCard() {
                 <div>
                     <p class="svc-diag-kicker">Diagnóstico de hardware</p>
                     <h3>Aguardando coleta no PC do cliente</h3>
-                    <p class="svc-diag-meta">Execute o script PowerShell na manutenção com o código <strong>${esc(service?.code || '')}</strong></p>
+                    <p class="svc-diag-meta">Com o pendrive InfoCore no PC do cliente, o envio é automático para a OS <strong>${esc(service?.code || '')}</strong></p>
                 </div>
                 <span class="svc-diag-status">Pendente</span>
             </header>
-            <p class="svc-diag-note">O script envia CPU, RAM, discos, GPU e saúde da bateria para esta OS. Depois, tudo aparece no relatório do cliente.</p>
+            <p class="svc-diag-note">O app portátil envia CPU, RAM, discos, GPU e saúde da bateria para esta OS. Depois, tudo aparece no relatório do cliente.</p>
             <div class="svc-diag-actions">
-                <button type="button" class="btn btn-primary btn-sm" id="svcDiagCopyUrlBtn">Copiar URL do script</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="svcDiagRefreshBtn">Verificar recebimento</button>
+                <button type="button" class="btn btn-primary btn-sm" id="svcDiagRefreshBtn">Verificar recebimento</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="svcDiagCopyUrlBtn">Copiar URL manual</button>
             </div>
             <code class="svc-diag-url">${esc(endpoint)}</code>
         </section>
@@ -85,7 +118,7 @@ function bindDiagnosticPanel() {
         const url = diagnosticEndpointUrl();
         try {
             await navigator.clipboard.writeText(url);
-            showToast('URL copiada. Cole no script PowerShell (variável BaseUrl + ?os=).', 'success');
+            showToast('URL copiada. Use apenas se o envio automático do pendrive falhar.', 'success');
         } catch {
             showToast(url, 'info');
         }
@@ -913,6 +946,8 @@ function bootServiceWork() {
             }
         }
         bindShareModal();
+        startDiagnosticSession();
+        window.addEventListener('beforeunload', stopDiagnosticSession);
         renderAll();
     });
 }

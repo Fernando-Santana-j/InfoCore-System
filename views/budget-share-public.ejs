@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#08090d">
+  <title>Escolha seu orçamento — <%= configs.storeName || configs.name || 'InfoCore' %></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/budget-share-public.css?v=2">
+  <link rel="icon" href="/img/logo_bg.ico" type="image/x-icon">
+
+</head>
+
+<body>
+  <main class="share-shell">
+    <header class="share-header"><img src="/public/img/logo_bg.png" alt="">
+      <div><span><%= configs.storeName || configs.name || 'InfoCore' %></span><small>Proposta interativa · <%= budget.code %></small></div>
+      <div class="save-state" id="saveState">Salvo</div>
+    </header>
+    <section class="share-hero">
+      <div><span class="eyebrow">FEITO PARA VOCÊ</span>
+        <h1>Olá, <%= budget.customerName || 'cliente' %>.</h1>
+        <p>Compare as opções, personalize peças e conte exatamente o que você precisa. Suas escolhas são salvas automaticamente.</p>
+      </div><% if (budget.validUntil) { %><div class="validity"><small>Válido até</small><strong><%= String(budget.validUntil).split('-').reverse().join('/') %></strong></div><% } %>
+    </section>
+    <section>
+      <div class="section-heading">
+        <div><span>01</span>
+          <h2>Escolha a proposta</h2>
+        </div>
+        <p>Você pode mudar de ideia quando quiser.</p>
+      </div>
+      <div class="option-grid" id="optionGrid"></div>
+    </section>
+    <section id="customizeSection">
+      <div class="section-heading">
+        <div><span>02</span>
+          <h2>Personalize os itens</h2>
+        </div>
+        <p>Retire peças ou altere quantidades.</p>
+      </div>
+      <div class="custom-card">
+        <div id="itemList"></div><button class="add-request" id="addRequestBtn" type="button">+ Pedir outra peça ou serviço</button>
+        <div id="requestList"></div><label class="notes-label">Observações para a equipe<textarea id="notes" rows="4" placeholder="Ex.: prefiro gabinete branco, preciso de mais armazenamento..."></textarea></label>
+      </div>
+    </section>
+    <section>
+      <div class="section-heading">
+        <div><span>03</span>
+          <h2>Revise e finalize</h2>
+        </div>
+      </div>
+      <div class="summary-card">
+        <div><small>Sua seleção estimada</small><strong id="summaryTotal">R$ 0,00</strong>
+          <div id="summaryPayments" class="summary-payments"></div>
+          <p id="summaryText"></p>
+        </div><button class="finish-btn" id="finishBtn" type="button">Finalizar minhas escolhas</button><a class="whatsapp-btn" id="whatsappBtn" hidden target="_blank" rel="noopener">Avisar que finalizei no WhatsApp <span>↗</span></a><small class="optional-note">O aviso pelo WhatsApp é opcional. Suas respostas já ficam disponíveis para a loja.</small>
+      </div>
+    </section>
+  </main>
+  <script id="publicBudgetData" type="application/json">
+    <%- JSON.stringify({budget,response,token,apiBase:typeof publicApiBase!=='undefined'?publicApiBase:'/api/public/budgets',storeName:configs.storeName||configs.name||'InfoCore',storePhone:configs.whatsapp||configs.phone||configs.telephone||configs.storePhone||''}).replace(/</g,'\\u003c') %>
+  </script>
+  <script src="/js/budget-share-public.js?v=4"></script>
+</body>
+
+</html>

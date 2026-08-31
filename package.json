@@ -7,9 +7,10 @@
     "type": "commonjs",
     "main": "index.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
+        "test": "node --test test/*.test.js",
         "start": "node index.js",
-        "dev": "nodemon --config nodemon.json index.js"
+        "dev": "nodemon --config nodemon.json index.js",
+        "check": "node --check index.js && node --check public/js/budgets.js && node --check public/js/budget-links.js && node --check public/js/budget-share-public.js && node --check public/js/budget-templates.js && node --check public/js/pdv.js && node --check public/js/clients.js && node --check lib/budget-domain.js"
     },
     "dependencies": {
         "@whiskeysockets/baileys": "^7.0.0-rc13",

@@ -2,121 +2,275 @@
   <div class="budget-hero card">
     <div>
       <h2 style="margin:0;">Central de Orçamentos</h2>
-      <p class="text-sm text-muted budget-hero-sub">Veja rascunhos e finalizados, e crie novos orçamentos em popup.</p>
+      <p class="text-sm text-muted budget-hero-sub">Modelos rápidos, propostas com opções, margem, follow-up e conversão em venda.</p>
     </div>
     <div class="budget-hero-actions">
-      <input class="form-input" id="budgetSearchInput" placeholder="Buscar por código ou cliente">
-      <button class="btn btn-primary btn-sm" type="button" id="openCreateBudgetModalBtn">+ Criar orçamento</button>
+      <a class="btn btn-ghost btn-sm" href="/budget-links">Links de propostas</a>
+      <button class="btn btn-ghost btn-sm" type="button" id="openTemplatesBtn">Modelos pré-montados</button>
+      <button class="btn btn-primary btn-sm" type="button" id="openCreateBudgetModalBtn">+ Novo orçamento</button>
     </div>
   </div>
 
-  <div class="budgets-layout">
-    <section class="card budget-list-card">
-      <div class="budget-list-head">
-        <h3>Orçamentos salvos (rascunho)</h3>
-        <span class="text-xs text-muted">Orçamentos aguardando finalização.</span>
-      </div>
-      <div class="budgets-grid" id="budgetsDraftGrid"></div>
-    </section>
+  <div class="budget-kpis" id="budgetKpis"></div>
 
-    <section class="card budget-list-card">
-      <div class="budget-list-head">
-        <h3>Orçamentos finalizados</h3>
-        <span class="text-xs text-muted">Prontos para impressão e envio.</span>
-      </div>
-      <div class="budgets-grid" id="budgetsFinalGrid"></div>
-    </section>
+  <div class="budget-insights-grid">
+    <div class="card">
+      <div class="budget-list-head"><h3>Origem dos orçamentos</h3><span class="text-xs text-muted">Mês atual</span></div>
+      <div id="budgetSourceSummary" class="budget-summary-list"></div>
+    </div>
+    <div class="card">
+      <div class="budget-list-head"><h3>Motivos de perda</h3><span class="text-xs text-muted">Mês atual</span></div>
+      <div id="budgetLossSummary" class="budget-summary-list"></div>
+    </div>
   </div>
+
+  <div class="card budget-filter-card">
+    <input class="form-input" id="budgetSearchInput" placeholder="Buscar código, cliente ou item...">
+    <select class="form-input" id="budgetStatusFilter">
+      <option value="">Todos os status</option>
+      <option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="awaiting">Aguardando cliente</option>
+      <option value="approved">Aprovado</option><option value="acquiring_parts">Peças em aquisição</option><option value="rejected">Recusado</option>
+      <option value="expired">Expirado</option><option value="cancelled">Cancelado</option><option value="converted">Convertido em venda</option>
+    </select>
+    <select class="form-input" id="budgetSourceFilter">
+      <option value="">Todas as origens</option><option value="instagram">Instagram</option><option value="google">Google</option>
+      <option value="referral">Indicação</option><option value="storefront">Passou na loja</option><option value="old_customer">Cliente antigo</option>
+      <option value="whatsapp">WhatsApp</option><option value="facebook">Facebook</option><option value="other">Outro</option>
+    </select>
+    <input class="form-input" id="budgetMonthFilter" type="month">
+  </div>
+
+  <section class="card budget-list-card">
+    <div class="budget-list-head"><h3>Orçamentos</h3><span class="text-xs text-muted" id="budgetResultCount"></span></div>
+    <div class="budgets-grid" id="budgetsGrid"></div>
+  </section>
 </div>
 
-<div class="pdv-modal-overlay" id="budgetCreateModal">
-  <div class="pdv-modal-card pdv-budget-create-card">
+<!-- Editor principal -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetCreateModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetCreateModalTitle">
+  <div class="pdv-modal-card budget-editor-card" role="document">
     <div class="pdv-modal-header">
-      <div class="pdv-modal-title" id="budgetCreateModalTitle">Criar orçamento</div>
-      <button class="pdv-modal-close" id="closeCreateBudgetModalBtn">✕</button>
+      <div class="budget-modal-heading">
+        <div class="pdv-modal-title" id="budgetCreateModalTitle">Novo orçamento</div>
+        <div class="text-xs text-muted" id="budgetEditorSubtitle">Crie vazio ou carregue um modelo.</div>
+      </div>
+      <button class="pdv-modal-close" type="button" id="closeCreateBudgetModalBtn" aria-label="Fechar">✕</button>
     </div>
-    <div class="pdv-modal-body">
-      <div class="budget-customer-section">
-        <label class="form-label">Cliente (CRM)</label>
-        <div class="budget-ac-wrap" id="budgetCustomerAcWrap">
-          <span class="budget-ac-icon" aria-hidden="true">👤</span>
-          <input class="form-input budget-ac-input" id="budgetCustomerSearch" type="search" placeholder="Buscar por nome, telefone, email ou documento..." autocomplete="off">
-          <div class="budget-ac-list" id="budgetCustomerResults" hidden></div>
+
+    <div class="pdv-modal-body budget-editor-body">
+      <section class="budget-section budget-template-loader" id="budgetTemplateLoader">
+        <div class="section-title-row">
+          <div><strong>Começar rápido</strong><div class="text-xs text-muted">Carregue um modelo; o orçamento gerado será uma cópia independente.</div></div>
         </div>
-        <div class="budget-customer-selected" id="budgetCustomerSelected" hidden>
-          <div class="budget-customer-chip">
-            <span class="budget-customer-chip-name" id="budgetCustomerChipName"></span>
-            <a class="btn btn-ghost btn-sm" id="budgetCustomerCrmLink" href="/clients">Ver no CRM</a>
-            <button type="button" class="btn btn-ghost btn-sm" id="budgetCustomerClearBtn">Trocar</button>
+        <div class="budget-inline-row">
+          <label class="budget-field budget-field-grow"><span>Modelo</span><select class="form-input" id="budgetTemplateSelect"><option value="">Criar orçamento vazio</option></select></label>
+          <button class="btn btn-ghost btn-sm budget-inline-action" id="budgetLoadTemplateBtn" type="button">Carregar modelo</button>
+        </div>
+      </section>
+
+      <section class="budget-section">
+        <div class="section-title-row"><div><strong>Cliente e acompanhamento</strong><div class="text-xs text-muted">Nome é obrigatório. WhatsApp, email e documento são opcionais.</div></div></div>
+        <label class="budget-field"><span>Pesquisar cliente</span>
+          <div class="budget-ac-wrap" id="budgetCustomerAcWrap">
+            <span class="budget-ac-icon" aria-hidden="true">👤</span>
+            <input class="form-input budget-ac-input" id="budgetCustomerSearch" type="search" placeholder="Nome, telefone, email ou CPF/CNPJ..." autocomplete="off">
+            <div class="budget-ac-list" id="budgetCustomerResults" hidden></div>
           </div>
+        </label>
+        <input type="hidden" id="budgetCustomerId">
+
+        <div class="budget-form-grid cols-4">
+          <label class="budget-field"><span>Nome *</span><input class="form-input" id="budgetCustomerName" placeholder="Nome do cliente"></label>
+          <label class="budget-field"><span>WhatsApp</span><input class="form-input" id="budgetCustomerPhone" placeholder="(79) 99999-9999" inputmode="tel"></label>
+          <label class="budget-field"><span>Email</span><input class="form-input" id="budgetCustomerEmail" placeholder="cliente@email.com" type="email"></label>
+          <label class="budget-field"><span>CPF/CNPJ</span><input class="form-input" id="budgetCustomerDoc" placeholder="Opcional"></label>
+          <label class="budget-field"><span>Origem</span><select class="form-input" id="budgetSource">
+            <option value="">Não informado</option><option value="instagram">Instagram</option><option value="google">Google</option>
+            <option value="referral">Indicação</option><option value="storefront">Passou na frente da loja</option><option value="old_customer">Cliente antigo</option>
+            <option value="whatsapp">WhatsApp</option><option value="facebook">Facebook</option><option value="other">Outro</option>
+          </select></label>
+          <label class="budget-field"><span>Status</span><select class="form-input" id="budgetStatus">
+            <option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="awaiting">Aguardando cliente</option>
+            <option value="approved">Aprovado</option><option value="acquiring_parts">Peças em aquisição</option><option value="rejected">Recusado</option>
+            <option value="expired">Expirado</option><option value="cancelled">Cancelado</option>
+          </select></label>
+          <label class="budget-field"><span>Emissão</span><input class="form-input" id="budgetIssuedAt" type="date"></label>
+          <label class="budget-field"><span>Validade</span><input class="form-input" id="budgetValidUntil" type="date"></label>
         </div>
-        <input type="hidden" id="budgetCustomerId" value="">
-        <div class="budget-form-grid budget-form-grid--contact">
-          <input class="form-input" id="budgetCustomerName" placeholder="Nome (preenchido ao selecionar)">
-          <input class="form-input" id="budgetCustomerPhone" placeholder="WhatsApp">
-          <input class="form-input" id="budgetCustomerEmail" placeholder="Email" type="email">
-          <input class="form-input" id="budgetdate" type="date">
+
+        <div class="budget-form-grid cols-2 budget-rejection-fields" id="budgetRejectionFields" hidden>
+          <label class="budget-field"><span>Motivo da perda</span><select class="form-input" id="budgetRejectionReason"><option value="">Selecione</option><option value="price">Preço</option><option value="saving">Cliente vai juntar dinheiro</option><option value="competitor">Comprou em outro lugar</option><option value="gave_up">Desistiu</option><option value="no_response">Não respondeu</option><option value="deadline">Prazo</option><option value="other">Outro</option></select></label>
+          <label class="budget-field"><span>Detalhe</span><input class="form-input" id="budgetRejectionNote" placeholder="Opcional"></label>
         </div>
-      </div>
-      <textarea class="form-input" id="budgetNotes" rows="2" placeholder="Observações, prazo, garantia, condições..."></textarea>
-      <div class="budget-product-section">
-        <label class="form-label">Adicionar produto</label>
-        <div class="budget-ac-wrap" id="budgetProductAcWrap">
-          <span class="budget-ac-icon" aria-hidden="true">🔍</span>
-          <input class="form-input budget-ac-input" id="budgetProductSearch" type="search" placeholder="Nome, SKU, código de barras..." autocomplete="off">
-          <div class="budget-ac-list" id="budgetProductResults" hidden></div>
+      </section>
+
+      <section class="budget-section">
+        <div class="section-title-row">
+          <div><strong>Opções da proposta</strong><div class="text-xs text-muted">Use uma opção comum ou compare Econômica / Recomendada / Melhor desempenho.</div></div>
+          <div class="budget-section-actions"><button class="btn btn-ghost btn-sm" id="addBudgetOptionBtn" type="button">+ Opção</button><button class="btn btn-ghost btn-sm" id="duplicateBudgetOptionBtn" type="button">Duplicar opção</button></div>
         </div>
-        <div class="budget-add-actions">
-          <button class="btn btn-ghost btn-sm" type="button" id="budgetAddProductBtn">+ Adicionar selecionado</button>
-          <button class="btn btn-ghost btn-sm" type="button" id="budgetAddCustomBtn">+ Item personalizado</button>
+
+        <div class="budget-option-tabs" id="budgetOptionTabs" aria-label="Opções da proposta"></div>
+        <div class="budget-option-header-grid">
+          <label class="budget-field"><span>Nome da opção</span><input class="form-input" id="budgetOptionName" placeholder="Ex.: Recomendada"></label>
+          <label class="budget-check budget-check-card"><input type="checkbox" id="budgetOptionRecommended"> <span>Recomendada pela InfoCore</span></label>
+          <button class="btn btn-danger-soft btn-sm budget-option-delete" id="removeBudgetOptionBtn" type="button">Excluir opção</button>
         </div>
-      </div>
-      <div class="budget-items-table-wrap">
-        <div class="budget-items-table-head">
-          <span>Item</span>
-          <span>Qtd</span>
-          <span>Valor unit.</span>
-          <span>Total</span>
-          <span></span>
+
+        <div class="budget-product-section">
+          <label class="budget-field budget-field-grow"><span>Adicionar produto ou serviço</span>
+            <div class="budget-ac-wrap" id="budgetProductAcWrap">
+              <span class="budget-ac-icon" aria-hidden="true">🔍</span>
+              <input class="form-input budget-ac-input" id="budgetProductSearch" type="search" placeholder="Nome, SKU ou categoria..." autocomplete="off">
+              <div class="budget-ac-list" id="budgetProductResults" hidden></div>
+            </div>
+          </label>
+          <div class="budget-add-actions"><button class="btn btn-ghost btn-sm" type="button" id="budgetAddProductBtn">+ Adicionar selecionado</button><button class="btn btn-ghost btn-sm" type="button" id="budgetAddCustomBtn">+ Item manual</button></div>
         </div>
-        <div id="budgetItemsList" class="budget-items-table-body"></div>
-      </div>
-      <div class="budget-adjustments-row">
-        <label>Desconto (R$)<input class="form-input" id="budgetDiscountInput" type="number" min="0" step="0.01" value="0"></label>
-        <label>Acréscimo (R$)<input class="form-input" id="budgetExtraInput" type="number" min="0" step="0.01" value="0"></label>
-      </div>
-      <div id="budgetTotalsBox"></div>
+
+        <div class="budget-items-table-wrap">
+          <div class="budget-items-table-head advanced"><span>Item</span><span>Estado</span><span>Qtd</span><span>Unitário</span><span>Modo</span><span>Encomenda</span><span>Total</span><span>Ações</span></div>
+          <div id="budgetItemsList" class="budget-items-table-body"></div>
+        </div>
+
+        <div class="budget-adjustments-row advanced">
+          <label>Desconto<select class="form-input" id="budgetDiscountType"><option value="fixed">R$</option><option value="percent">%</option></select><input class="form-input" id="budgetDiscountValue" type="number" min="0" step="0.01" value="0"></label>
+          <label>Acréscimo<select class="form-input" id="budgetExtraType"><option value="fixed">R$</option><option value="percent">%</option></select><input class="form-input" id="budgetExtraValue" type="number" min="0" step="0.01" value="0"></label>
+        </div>
+        <div id="budgetTotalsBox"></div>
+      </section>
+
+      <section class="budget-section">
+        <div class="section-title-row"><div><strong>Condições e observações</strong><div class="text-xs text-muted">Somente “observação interna” fica oculta do cliente.</div></div></div>
+        <div class="budget-form-grid cols-3">
+          <label class="budget-field"><span>Prazo</span><input class="form-input" id="budgetDeadline" placeholder="Ex.: 5 a 8 dias úteis"></label>
+          <label class="budget-field"><span>Pagamento</span><input class="form-input" id="budgetPaymentTerms" placeholder="Ex.: PIX ou consultar parcelamento"></label>
+          <label class="budget-field"><span>Garantia geral</span><input class="form-input" id="budgetWarrantyText" placeholder="Ex.: conforme item/fornecedor"></label>
+        </div>
+        <label class="budget-field"><span>Serviços incluídos</span><textarea class="form-input" id="budgetIncludedServices" rows="3" placeholder="Um por linha:&#10;Montagem completa&#10;Organização de cabos&#10;Testes de estabilidade"></textarea></label>
+        <label class="budget-field"><span>Observações para o cliente</span><textarea class="form-input" id="budgetNotes" rows="3" placeholder="Informações que devem aparecer no orçamento"></textarea></label>
+        <label class="budget-field"><span>Observação interna</span><textarea class="form-input" id="budgetInternalNotes" rows="2" placeholder="Ex.: cliente recebe dia 10 — não aparece no PDF"></textarea></label>
+      </section>
     </div>
-    <div class="pdv-modal-footer">
-      <button class="btn btn-ghost btn-sm" id="cancelCreateBudgetBtn">Cancelar</button>
-      <button class="btn btn-ghost btn-sm" id="budgetPageSaveDraftBtn">Salvar rascunho</button>
-      <button class="btn btn-primary btn-sm" id="budgetPageSaveFinalBtn">Finalizar orçamento</button>
+
+    <div class="pdv-modal-footer budget-editor-footer">
+      <button class="btn btn-ghost btn-sm" type="button" id="cancelCreateBudgetBtn">Cancelar</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="budgetSaveAsTemplateBtn">Salvar opção como modelo</button>
+      <button class="btn btn-primary btn-sm" type="button" id="budgetSaveBtn">Salvar orçamento</button>
     </div>
   </div>
 </div>
 
-<div class="pdv-modal-overlay" id="budgetTemplateModal">
-  <div class="pdv-modal-card pdv-budget-template-card">
+<!-- Gerenciador de modelos -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetTemplatesModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetTemplatesTitle">
+  <div class="pdv-modal-card budget-templates-card" role="document">
     <div class="pdv-modal-header">
-      <div class="pdv-modal-title">Modelo do orçamento</div>
-      <button class="pdv-modal-close" id="closeBudgetTemplateModalBtn">✕</button>
+      <div class="budget-modal-heading"><div class="pdv-modal-title" id="budgetTemplatesTitle">Modelos pré-montados</div><div class="text-xs text-muted">Cadastre configurações uma vez e reutilize em segundos.</div></div>
+      <button class="pdv-modal-close" type="button" id="closeTemplatesBtn" aria-label="Fechar">✕</button>
     </div>
+    <div class="pdv-modal-body template-manager-grid">
+      <aside class="template-list-panel">
+        <div class="template-list-toolbar"><input class="form-input" id="templateSearchInput" placeholder="Buscar modelo"><button class="btn btn-primary btn-sm" type="button" id="newTemplateBtn">+ Novo</button></div>
+        <div id="budgetTemplatesList" class="template-list"></div>
+      </aside>
+      <section class="template-editor-panel" id="templateEditorPanel">
+        <input type="hidden" id="templateId">
+        <div class="budget-form-grid cols-2">
+          <label class="budget-field"><span>Nome do modelo *</span><input class="form-input" id="templateName" placeholder="Ex.: InfoCore Gamer"></label>
+          <label class="budget-field"><span>Categoria</span><input class="form-input" id="templateCategory" placeholder="Ex.: PC Gamer"></label>
+        </div>
+        <label class="budget-field"><span>Descrição</span><textarea class="form-input" id="templateDescription" rows="2" placeholder="Descrição curta do objetivo do modelo"></textarea></label>
+        <label class="budget-field"><span>Imagem de apresentação</span><div class="template-image-input"><input class="form-input" id="templateImageUrl" placeholder="URL da imagem ou envie um arquivo"><input type="file" id="templateImageFile" accept="image/jpeg,image/png,image/gif,image/webp"><button class="btn btn-ghost btn-sm" type="button" id="templateUploadImageBtn">Enviar imagem</button></div><img id="templateImagePreview" class="template-image-preview" alt="Prévia do modelo" hidden></label>
+        <div class="budget-form-grid cols-3">
+          <label class="budget-field"><span>Validade padrão</span><div class="budget-input-suffix"><input class="form-input" id="templateValidDays" type="number" min="1" max="90" value="7"><span>dias</span></div></label>
+          <label class="budget-field"><span>Prazo padrão</span><input class="form-input" id="templateDeadline" placeholder="Ex.: 5 a 8 dias úteis"></label>
+          <label class="budget-field"><span>Garantia padrão</span><input class="form-input" id="templateWarranty" placeholder="Garantia"></label>
+        </div>
+        <label class="budget-field"><span>Condição de pagamento</span><input class="form-input" id="templatePaymentTerms" placeholder="Ex.: PIX ou consultar parcelamento"></label>
+        <label class="budget-field"><span>Serviços incluídos</span><textarea class="form-input" id="templateIncludedServices" rows="2" placeholder="Um por linha"></textarea></label>
+        <label class="budget-field"><span>Observação padrão para o cliente</span><textarea class="form-input" id="templateCustomerNotes" rows="2"></textarea></label>
+        <label class="budget-field"><span>Observação interna</span><textarea class="form-input" id="templateInternalNotes" rows="2"></textarea></label>
+        <label class="budget-check budget-check-card budget-check-inline"><input type="checkbox" id="templateActive" checked> <span>Modelo ativo e disponível para novos orçamentos</span></label>
+
+        <div class="budget-product-section">
+          <label class="budget-field budget-field-grow"><span>Adicionar item ao modelo</span>
+            <div class="budget-ac-wrap" id="templateProductAcWrap"><span class="budget-ac-icon" aria-hidden="true">🔍</span><input class="form-input budget-ac-input" id="templateProductSearch" type="search" placeholder="Nome, SKU ou categoria..." autocomplete="off"><div class="budget-ac-list" id="templateProductResults" hidden></div></div>
+          </label>
+          <div class="budget-add-actions"><button class="btn btn-ghost btn-sm" type="button" id="templateAddProductBtn">+ Adicionar selecionado</button><button class="btn btn-ghost btn-sm" type="button" id="templateAddCustomBtn">+ Item manual</button></div>
+        </div>
+        <div class="template-items-title"><div><strong>Itens do modelo</strong><small>Edite nomes, quantidades, preços e detalhes diretamente na tabela.</small></div><span id="templateItemsCount">0 itens</span></div>
+        <div class="budget-items-table-wrap template-items-table-wrap"><div class="budget-items-table-head advanced template"><span>Item</span><span>Estado</span><span>Qtd</span><span>Unitário</span><span>Modo</span><span>Encomenda</span><span>Total</span><span>Ações</span></div><div id="templateItemsList" class="budget-items-table-body"></div></div>
+        <div id="templateFinancialBox"></div>
+        <div class="template-editor-actions"><button class="btn btn-danger-soft btn-sm" type="button" id="deleteTemplateBtn" hidden>Excluir</button><button class="btn btn-ghost btn-sm" type="button" id="duplicateTemplateBtn" hidden>Duplicar</button><button class="btn btn-primary btn-sm" type="button" id="saveTemplateBtn">Salvar modelo</button></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetCustomerResponseModal" role="dialog" aria-modal="true" aria-hidden="true"></div>
+
+<!-- Conversão em venda -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetConvertModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetConvertTitle">
+  <div class="pdv-modal-card small-modal-card" role="document">
+    <div class="pdv-modal-header"><div class="pdv-modal-title" id="budgetConvertTitle">Converter em venda</div><button class="pdv-modal-close" type="button" id="closeConvertBtn" aria-label="Fechar">✕</button></div>
     <div class="pdv-modal-body">
-      <div class="pdv-budget-template-actions">
-        <button class="btn btn-ghost btn-sm" type="button" id="budgetCopyWhatsappBtn">Copiar WhatsApp</button>
-        <button class="btn btn-ghost btn-sm" type="button" id="budgetCopyEmailBtn">Copiar Email (HTML)</button>
-        <button class="btn btn-ghost btn-sm" type="button" id="budgetDownloadImageBtn">Baixar imagem</button>
-        <button class="btn btn-primary btn-sm" type="button" id="budgetGeneratePdfBtn">Gerar PDF</button>
-      </div>
+      <div class="budget-alert budget-alert-warning"><strong>Atenção</strong><span>Esta ação registra uma venda já paga e baixa o estoque. Ela não inicia cobrança na maquininha nem gera PIX.</span></div>
+      <label class="budget-field"><span>Opção aprovada</span><select class="form-input" id="convertOptionSelect"></select></label>
+      <label class="budget-field"><span>Forma de pagamento</span><select class="form-input" id="convertPayment"><option value="money">Dinheiro</option><option value="pix">PIX</option><option value="debit_card">Débito</option><option value="credit_card">Crédito</option></select></label>
+      <label class="budget-field" id="convertCashReceivedField"><span>Valor recebido</span><input class="form-input" id="convertCashReceived" type="number" step="0.01" min="0" placeholder="R$ 0,00"></label>
+      <label class="budget-check budget-check-card"><input type="checkbox" id="convertPaymentConfirmed"> <span>Confirmo que o pagamento já foi recebido/aprovado</span></label>
+      <label class="budget-check budget-check-card budget-check-danger"><input type="checkbox" id="convertAllowStock"> <span>Permitir estoque insuficiente (pode deixar quantidade negativa)</span></label>
+    </div>
+    <div class="pdv-modal-footer"><button class="btn btn-ghost btn-sm" type="button" id="cancelConvertBtn">Cancelar</button><button class="btn btn-primary btn-sm" type="button" id="confirmConvertBtn">Registrar venda</button></div>
+  </div>
+</div>
+
+<!-- Pré-visualização -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetTemplateModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetPreviewTitle">
+  <div class="pdv-modal-card pdv-budget-template-card" role="document">
+    <div class="pdv-modal-header"><div class="pdv-modal-title" id="budgetPreviewTitle">Pré-visualização do orçamento</div><button class="pdv-modal-close" type="button" id="closeBudgetTemplateModalBtn" aria-label="Fechar">✕</button></div>
+    <div class="pdv-modal-body">
+      <div class="pdv-budget-template-actions"><button class="btn btn-ghost btn-sm" type="button" id="budgetCopyWhatsappBtn">Copiar WhatsApp</button><button class="btn btn-ghost btn-sm" type="button" id="budgetOpenWhatsappBtn">Abrir WhatsApp</button><button class="btn btn-ghost btn-sm" type="button" id="budgetCopyEmailBtn">Copiar Email</button><button class="btn btn-ghost btn-sm" type="button" id="budgetDownloadImageBtn">Baixar imagem</button><button class="btn btn-primary btn-sm" type="button" id="budgetGeneratePdfBtn">Gerar PDF</button></div>
       <div class="pdv-budget-template-preview" id="budgetTemplatePreview"></div>
-      <div class="pdv-budget-signature">
-        <div>Assinatura do cliente: __________________________________________</div>
-        <p style="margin:6px 0 0;font-size:.78rem;color:var(--text2);line-height:1.35;">Ao assinar, o cliente declara que o problema foi resolvido e que o aparelho foi devolvido.</p>
-        <div>Data: ____ / ____ / ______</div>
+    </div>
+    <div class="pdv-modal-footer"><button class="btn btn-primary btn-sm" type="button" id="budgetTemplateDoneBtn">Fechar</button></div>
+  </div>
+</div>
+
+<!-- Duplicação sem ambiguidade de Cancelar -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetDuplicateModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetDuplicateTitle">
+  <div class="pdv-modal-card small-modal-card" role="document">
+    <div class="pdv-modal-header"><div><div class="pdv-modal-title" id="budgetDuplicateTitle">Duplicar orçamento</div><div class="text-xs text-muted" id="duplicateBudgetCode"></div></div><button class="pdv-modal-close" type="button" id="closeDuplicateBtn" aria-label="Fechar">✕</button></div>
+    <div class="pdv-modal-body">
+      <div class="budget-choice-group">
+        <label class="budget-choice"><input type="radio" name="duplicatePriceMode" id="duplicateKeepPrices" value="keep" checked><span><strong>Manter preços do orçamento</strong><small>Cria uma cópia exatamente com os valores atuais deste orçamento.</small></span></label>
+        <label class="budget-choice"><input type="radio" name="duplicatePriceMode" id="duplicateUpdatePrices" value="update"><span><strong>Atualizar preços dos produtos</strong><small>Busca o preço de venda atual do cadastro antes de criar a cópia.</small></span></label>
       </div>
+      <label class="budget-check budget-check-card"><input type="checkbox" id="duplicateKeepCustomer" checked> <span>Manter os dados do cliente</span></label>
     </div>
-    <div class="pdv-modal-footer">
-      <button class="btn btn-primary btn-sm" id="budgetTemplateDoneBtn">Fechar</button>
+    <div class="pdv-modal-footer"><button class="btn btn-ghost btn-sm" type="button" id="cancelDuplicateBtn">Cancelar</button><button class="btn btn-primary btn-sm" type="button" id="confirmDuplicateBtn">Duplicar</button></div>
+  </div>
+</div>
+
+<!-- Salvar opção atual como modelo -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetSaveTemplateModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetSaveTemplateTitle">
+  <div class="pdv-modal-card small-modal-card" role="document">
+    <div class="pdv-modal-header"><div class="pdv-modal-title" id="budgetSaveTemplateTitle">Salvar opção como modelo</div><button class="pdv-modal-close" type="button" id="closeSaveTemplateBtn" aria-label="Fechar">✕</button></div>
+    <div class="pdv-modal-body">
+      <label class="budget-field"><span>Nome do modelo *</span><input class="form-input" id="saveTemplateFromBudgetName" placeholder="Ex.: InfoCore Gamer"></label>
+      <label class="budget-field"><span>Categoria</span><input class="form-input" id="saveTemplateFromBudgetCategory" placeholder="Ex.: PC Gamer"></label>
+      <label class="budget-field"><span>Validade padrão</span><div class="budget-input-suffix"><input class="form-input" id="saveTemplateFromBudgetValidDays" type="number" min="1" max="90" value="7"><span>dias</span></div></label>
+      <div class="budget-alert"><strong>O que será salvo?</strong><span>A opção ativa, itens, condições, garantia, prazo e serviços incluídos. Dados do cliente não entram no modelo.</span></div>
     </div>
+    <div class="pdv-modal-footer"><button class="btn btn-ghost btn-sm" type="button" id="cancelSaveTemplateBtn">Cancelar</button><button class="btn btn-primary btn-sm" type="button" id="confirmSaveTemplateBtn">Criar modelo</button></div>
+  </div>
+</div>
+
+<!-- Confirmações destrutivas com o mesmo visual do sistema -->
+<div class="pdv-modal-overlay budget-modal-overlay" hidden id="budgetConfirmModal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="budgetConfirmTitle">
+  <div class="pdv-modal-card confirm-modal-card" role="document">
+    <div class="pdv-modal-header"><div class="pdv-modal-title" id="budgetConfirmTitle">Confirmar</div><button class="pdv-modal-close" type="button" id="closeBudgetConfirmBtn" aria-label="Fechar">✕</button></div>
+    <div class="pdv-modal-body"><p class="budget-confirm-message" id="budgetConfirmMessage"></p></div>
+    <div class="pdv-modal-footer"><button class="btn btn-ghost btn-sm" type="button" id="cancelBudgetConfirmBtn">Cancelar</button><button class="btn btn-danger-soft btn-sm" type="button" id="confirmBudgetConfirmBtn">Confirmar</button></div>
   </div>
 </div>

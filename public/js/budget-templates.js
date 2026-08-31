@@ -73,14 +73,17 @@ async function downloadBudgetTemplateImage(budget) {
 }
 
 async function printBudgetTemplatePdf(budget) {
+    const w = window.open('', '_blank');
+    if (!w) {
+        showToast('Permita pop-ups para gerar o PDF.', 'error');
+        return;
+    }
     showToast('Preparando impressão...', 'info');
     try {
+        w.document.open();
+        w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Preparando orçamento…</title></head><body style="font-family:Arial,sans-serif;padding:24px;color:#475569">Preparando orçamento…</body></html>');
+        w.document.close();
         const html = await fetchBudgetTemplateHtml('pdf', budget);
-        const w = window.open('', '_blank');
-        if (!w) {
-            showToast('Permita pop-ups para gerar o PDF.', 'error');
-            return;
-        }
         const title = `Orçamento ${budget?.code || ''}`;
         w.document.open();
         w.document.write(`<!DOCTYPE html>
@@ -91,8 +94,10 @@ async function printBudgetTemplatePdf(budget) {
   <style>
     html, body { margin: 0; padding: 0; background: #fff; color: #0f172a; }
     @media print {
-      @page { size: A4 portrait; margin: 4mm; }
-      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+      @page { size: A4 portrait; margin: 6mm; }
+      html, body { margin: 0; padding: 0; height: auto; overflow: visible; }
+      table { break-inside: auto; }
+      tr { break-inside: avoid; break-after: auto; }
     }
   </style>
 </head>
@@ -104,11 +109,32 @@ async function printBudgetTemplatePdf(budget) {
         w.print();
     } catch (e) {
         console.error(e);
+        try { if (w && !w.closed) w.close(); } catch (_) { /* ignore */ }
         showToast(e.message || 'Erro ao gerar PDF.', 'error');
     }
 }
 
+async function writeBudgetTextToClipboard(text) {
+    const value = String(text || '');
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function' && window.isSecureContext) {
+        await navigator.clipboard.writeText(value);
+        return;
+    }
+
+    // Fallback para instalações locais/LAN em HTTP, onde Clipboard API pode não existir.
+    const area = document.createElement('textarea');
+    area.value = value;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    let copied = false;
+    try { copied = document.execCommand('copy'); } finally { area.remove(); }
+    if (!copied) throw new Error('Não foi possível copiar automaticamente.');
+}
+
 async function copyBudgetTemplateText(kind, budget) {
     const html = await fetchBudgetTemplateHtml(kind, budget);
-    await navigator.clipboard.writeText(html);
+    await writeBudgetTextToClipboard(html);
 }

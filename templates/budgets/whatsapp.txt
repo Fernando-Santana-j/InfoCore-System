@@ -1,10 +1,8 @@
 *Orçamento {{code}}* - InfoCore
 Cliente: {{customerName}}
 Validade: {{date}}
-Total: {{total}}
 
 {{itemsRowsText}}
 
+Condições: {{conditionLinesText}}
 Observações: {{notes}}
-Ao assinar, declaro que o problema foi resolvido e que o aparelho foi devolvido.
-Assinatura: ________________________

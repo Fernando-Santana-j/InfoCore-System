@@ -1,938 +1,715 @@
-let budgetItemsDraft = [];
-let budgetCurrentRecord = null;
 let editingBudgetId = '';
+let budgetOptionsDraft = [];
+let activeBudgetOptionId = '';
+let budgetCurrentRecord = null;
 let selectedBudgetCustomerId = '';
 let selectedBudgetProductId = '';
 let budgetProductAcIndex = -1;
 let budgetCustomerAcIndex = -1;
+let templateItemsDraft = [];
+let editingTemplateId = '';
+let selectedTemplateProductId = '';
+let templateProductAcIndex = -1;
+let convertBudgetId = '';
+let duplicateBudgetId = '';
+let pendingBudgetConfirm = null;
 
-function asArray(value) {
-    if (Array.isArray(value)) return value;
-    if (value && typeof value === 'object') return Object.values(value);
-    return [];
-}
+const BUDGET_STATUS_LABELS = {
+    draft: 'Rascunho', sent: 'Enviado', awaiting: 'Aguardando cliente', approved: 'Aprovado',
+    rejected: 'Recusado', expired: 'Expirado', cancelled: 'Cancelado', acquiring_parts: 'Peças em aquisição', converted: 'Convertido em venda'
+};
+const SOURCE_LABELS = {
+    instagram: 'Instagram', google: 'Google', referral: 'Indicação', storefront: 'Passou na loja',
+    old_customer: 'Cliente antigo', whatsapp: 'WhatsApp', facebook: 'Facebook', other: 'Outro'
+};
+const REJECTION_LABELS = {
+    price: 'Preço', saving: 'Cliente vai juntar dinheiro', competitor: 'Comprou em outro lugar', gave_up: 'Desistiu',
+    no_response: 'Não respondeu', deadline: 'Prazo', other: 'Outro'
+};
+const CONDITION_LABELS = { new: 'Novo', used: 'Usado', semi_new: 'Seminovo', refurbished: 'Recondicionado', na: 'N/A' };
 
-function asNumber(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : 0;
-}
+function arr(v) { return Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : []); }
+function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function money(v) { return formatCurrency(Math.round(num(v) * 100) / 100); }
+function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
+function uuid() { return (crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`); }
+function todayIso() { const d = new Date(); const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 10); }
+function addDays(dateIso, days) { const d = new Date(`${dateIso || todayIso()}T12:00:00`); d.setDate(d.getDate() + Number(days || 0)); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function dateBr(v) { const s = String(v || ''); const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : '—'; }
+function activeProducts() { return arr(window.appData?.products).filter((p) => p.active !== false); }
+function customers() { return arr(window.appData?.customers).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR')); }
+function templates() { return arr(window.appData?.budgetTemplates).slice().sort((a, b) => String(a.category || '').localeCompare(String(b.category || ''), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR')); }
+function budgets() { return arr(window.appData?.budgets); }
+function productById(id) { return activeProducts().find((p) => String(p.id) === String(id)) || null; }
 
-function escapeHtml(str) {
-    return String(str || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-async function parseJsonResponse(res) {
+async function jsonResponse(res) {
     const text = await res.text();
-    if (!text) {
-        return {
-            error: !res.ok,
-            message: res.ok ? '' : 'Resposta vazia do servidor.'
-        };
-    }
-    try {
-        return JSON.parse(text);
-    } catch (_e) {
-        const plain = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
-        return {
-            error: true,
-            message: res.status === 401
-                ? 'Sessão expirada. Faça login novamente.'
-                : (plain || 'Resposta inválida do servidor.')
-        };
-    }
+    if (!text) return { error: !res.ok, message: res.ok ? '' : 'Resposta vazia.' };
+    try { return JSON.parse(text); } catch { return { error: true, message: 'Resposta inválida do servidor.' }; }
+}
+async function api(url, options = {}) {
+    const res = await fetch(url, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } });
+    const data = await jsonResponse(res);
+    if (!res.ok || data.error) { const err = new Error(data.message || 'Erro na operação.'); err.data = data; err.status = res.status; throw err; }
+    return data;
+}
+function upsert(listName, row) {
+    window.appData[listName] = arr(window.appData[listName]);
+    const i = window.appData[listName].findIndex((x) => String(x.id) === String(row.id));
+    if (i >= 0) window.appData[listName][i] = row; else window.appData[listName].unshift(row);
+}
+function syncBudgetModalLock() {
+    const hasOpen = Boolean(document.querySelector('.budget-modal-overlay.open:not([hidden])'));
+    document.body.classList.toggle('budget-modal-open', hasOpen);
+}
+function openBudgetModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    modal.classList.add('open');
+    syncBudgetModalLock();
+}
+function closeBudgetModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    modal.hidden = true;
+    if (id === 'budgetConfirmModal') pendingBudgetConfirm = null;
+    if (id === 'budgetDuplicateModal') duplicateBudgetId = '';
+    if (id === 'budgetConvertModal') convertBudgetId = '';
+    if (id === 'budgetTemplateModal') budgetCurrentRecord = null;
+    syncBudgetModalLock();
+}
+function closeTopBudgetModal() {
+    const open = [...document.querySelectorAll('.budget-modal-overlay.open')];
+    if (open.length) closeBudgetModal(open[open.length - 1].id);
+}
+function openBudgetConfirm({ title = 'Confirmar', message = '', confirmText = 'Confirmar', danger = true, onConfirm = null } = {}) {
+    pendingBudgetConfirm = typeof onConfirm === 'function' ? onConfirm : null;
+    document.getElementById('budgetConfirmTitle').textContent = title;
+    document.getElementById('budgetConfirmMessage').textContent = message;
+    const btn = document.getElementById('confirmBudgetConfirmBtn');
+    btn.textContent = confirmText;
+    btn.classList.toggle('btn-danger-soft', danger);
+    btn.classList.toggle('btn-primary', !danger);
+    openBudgetModal('budgetConfirmModal');
+}
+function statusLabel(s) { return BUDGET_STATUS_LABELS[s] || 'Rascunho'; }
+function sourceLabel(s) { return SOURCE_LABELS[s] || (s ? s : 'Não informado'); }
+function rejectionLabel(s) { return REJECTION_LABELS[s] || (s ? s : 'Não informado'); }
+async function copyBudgetLink(text){if(window.isSecureContext&&navigator.clipboard)return navigator.clipboard.writeText(text);const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();document.execCommand('copy');area.remove();}
+function updateTemplateImagePreview(url){const img=document.getElementById('templateImagePreview');if(!img)return;img.src=url||'';img.hidden=!url;}
+async function uploadTemplateImage(){const file=document.getElementById('templateImageFile')?.files?.[0];if(!file)return showToast('Selecione uma imagem.','info');const fd=new FormData();fd.append('image',file);try{const res=await fetch('/api/budget-templates/image',{method:'POST',credentials:'same-origin',body:fd});const data=await jsonResponse(res);if(!res.ok||data.error)throw new Error(data.message||'Falha no upload.');document.getElementById('templateImageUrl').value=data.imageUrl;updateTemplateImagePreview(data.imageUrl);showToast('Imagem enviada.','success');}catch(e){showToast(e.message,'error');}}
+
+function normalizeAdjustment(raw) {
+    const r = raw && typeof raw === 'object' ? raw : {};
+    const type = r.type === 'percent' ? 'percent' : 'fixed';
+    let value = Math.max(0, num(r.value)); if (type === 'percent') value = Math.min(100, value);
+    return { type, value };
+}
+function adjustmentAmount(subtotal, adj) { const a = normalizeAdjustment(adj); return a.type === 'percent' ? subtotal * a.value / 100 : a.value; }
+function itemTotal(item) {
+    const gross = Math.max(0, num(item.qty)) * Math.max(0, num(item.unitPrice));
+    return Math.max(0, gross - adjustmentAmount(gross, item.discount));
+}
+function optionTotals(option) {
+    const subtotal = (option.items || []).reduce((s, item) => s + itemTotal(item), 0);
+    const discountAmount = Math.min(subtotal, adjustmentAmount(subtotal, option.discount));
+    const extraAmount = adjustmentAmount(subtotal, option.extra);
+    const total = Math.max(0, subtotal - discountAmount + extraAmount);
+    const costTotal = (option.items || []).reduce((s, item) => s + Math.max(0, num(item.qty)) * Math.max(0, num(item.unitCost)), 0);
+    const profit = total - costTotal;
+    const margin = total > 0 ? profit / total * 100 : 0;
+    return { subtotal, discountAmount, extraAmount, total, costTotal, profit, margin };
+}
+function cardPaymentTotals(total) {
+    const base = Math.max(0, Math.round(num(total) * 100));
+    const installmentTotalCents = Math.round(base * 1.0967);
+    return { cardTotal: installmentTotalCents / 100, installments: 6, installmentValue: Math.round(installmentTotalCents / 6) / 100 };
+}
+function newOption(name = 'Proposta', recommended = null) {
+    const isRecommended = recommended == null ? budgetOptionsDraft.length === 0 : recommended === true;
+    return { id: uuid(), name, description: '', recommended: isRecommended, items: [], discount: { type: 'fixed', value: 0 }, extra: { type: 'fixed', value: 0 } };
 }
 
-function activeProducts() {
-    return asArray(window.appData?.products).filter((p) => p.active !== false);
+function activeOption() { return budgetOptionsDraft.find((x) => String(x.id) === String(activeBudgetOptionId)) || budgetOptionsDraft[0] || null; }
+function normalizeDraftItem(row, { forTemplate = false, refreshCost = false } = {}) {
+    const p = row?.productId ? productById(row.productId) : null;
+    const templatePriceMode = row?.priceMode === 'snapshot' ? 'snapshot' : 'live';
+    const liveTemplateProduct = forTemplate && templatePriceMode === 'live' && p;
+    const unitCost = (refreshCost || liveTemplateProduct) && p
+        ? num(p.unitCostTotal ?? p.cost)
+        : num(row?.unitCost ?? p?.unitCostTotal ?? p?.cost);
+    const unitPrice = liveTemplateProduct
+        ? num(p.price)
+        : num(row?.unitPrice ?? p?.price);
+    return {
+        id: row?.id || uuid(),
+        kind: row?.kind === 'product' ? 'product' : 'custom',
+        productId: String(row?.productId || ''),
+        sku: String(row?.sku || ''),
+        name: String(row?.name || (p?.name || 'Item')),
+        qty: Math.max(1, Math.trunc(num(row?.qty) || 1)),
+        unitPrice: Math.max(0, unitPrice),
+        unitCost: Math.max(0, unitCost),
+        condition: row?.condition || (row?.kind === 'custom' ? 'na' : 'new'),
+        warranty: String(row?.warranty || ''),
+        note: String(row?.note || ''),
+        // Modelos podem acompanhar o preço atual. Orçamentos são sempre snapshots.
+        priceMode: forTemplate ? templatePriceMode : 'snapshot',
+        specialOrder: row?.specialOrder === true,
+        discount: normalizeAdjustment(row?.discount)
+    };
+}
+function itemFromProduct(p, { forTemplate = false } = {}) {
+    return normalizeDraftItem({
+        kind: 'product', productId: p.id, sku: p.sku || '', name: p.name || 'Produto', qty: 1, unitPrice: num(p.price),
+        unitCost: num(p.unitCostTotal ?? p.cost), condition: 'new', warranty: '', note: '', priceMode: forTemplate ? 'live' : 'snapshot',
+        specialOrder: p.trackStock !== false && num(p.qty) <= 0
+    }, { forTemplate });
 }
 
-function customerList() {
-    return asArray(window.appData?.customers)
-        .slice()
-        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-}
-
-function budgetTotals(items = budgetItemsDraft) {
-    const subtotal = items.reduce((sum, item) => sum + (asNumber(item.qty) * asNumber(item.unitPrice)), 0);
-    const discount = asNumber(document.getElementById('budgetDiscountInput')?.value);
-    const extra = asNumber(document.getElementById('budgetExtraInput')?.value);
-    const total = Math.max(0, subtotal - discount + extra);
-    return { subtotal, discount, extra, total };
-}
-
-function normalizeSearchTerm(s) {
-    return String(s || '').trim().toLowerCase();
-}
-
-function filterProducts(term) {
-    const q = normalizeSearchTerm(term);
-    let list = activeProducts();
-    if (!q) return list.slice(0, 24);
-    return list.filter((p) => {
-        const name = String(p.name || '').toLowerCase();
-        const sku = String(p.sku || '').toLowerCase();
-        const cat = String(p.category || '').toLowerCase();
-        return name.includes(q) || sku.includes(q) || sku === q || cat.includes(q);
-    }).slice(0, 24);
-}
-
+// ---------- Customer autocomplete ----------
 function filterCustomers(term) {
-    const q = normalizeSearchTerm(term);
-    const list = customerList();
-    if (!q) return list.slice(0, 20);
-    return list.filter((c) =>
-        String(c.name || '').toLowerCase().includes(q) ||
-        String(c.email || '').toLowerCase().includes(q) ||
-        String(c.phone || '').includes(q) ||
-        String(c.doc || '').includes(q)
-    ).slice(0, 20);
+    const q = String(term || '').trim().toLowerCase();
+    return customers().filter((c) => !q || [c.name, c.phone, c.email, c.doc].some((v) => String(v || '').toLowerCase().includes(q))).slice(0, 20);
+}
+function renderCustomerResults(term) {
+    const el = document.getElementById('budgetCustomerResults'); if (!el) return;
+    const rows = filterCustomers(term); budgetCustomerAcIndex = rows.length ? 0 : -1;
+    el.innerHTML = rows.length ? rows.map((c, i) => `<button type="button" class="budget-ac-item${i === 0 ? ' is-active' : ''}" data-customer-id="${esc(c.id)}"><span class="budget-ac-item-title">${esc(c.name)}</span><span class="budget-ac-item-meta">${esc([c.phone, c.email, c.doc].filter(Boolean).join(' · ') || 'Sem contato')}</span></button>`).join('') : '<div class="budget-ac-empty">Nenhum cliente encontrado. Você pode preencher o nome e WhatsApp manualmente abaixo.</div>';
+    el.hidden = false;
+    el.querySelectorAll('[data-customer-id]').forEach((b, i) => {
+        b.onmousedown = (e) => { e.preventDefault(); applyCustomer(customers().find((c) => String(c.id) === String(b.dataset.customerId))); };
+        b.onmouseenter = () => { budgetCustomerAcIndex = i; [...el.querySelectorAll('.budget-ac-item')].forEach((x, j) => x.classList.toggle('is-active', j === i)); };
+    });
+}
+function applyCustomer(c) {
+    if (!c) return; selectedBudgetCustomerId = String(c.id || '');
+    document.getElementById('budgetCustomerId').value = selectedBudgetCustomerId;
+    document.getElementById('budgetCustomerName').value = c.name || '';
+    document.getElementById('budgetCustomerPhone').value = c.phone || '';
+    document.getElementById('budgetCustomerEmail').value = c.email || '';
+    document.getElementById('budgetCustomerDoc').value = c.doc || '';
+    document.getElementById('budgetCustomerSearch').value = c.name || '';
+    document.getElementById('budgetCustomerResults').hidden = true;
 }
 
-function findProductByCode(code) {
-    const lower = String(code || '').trim().toLowerCase();
-    if (!lower) return null;
-    return activeProducts().find((p) => String(p.sku || '').trim().toLowerCase() === lower) || null;
+// ---------- Product autocomplete (budget/template) ----------
+function filterProducts(term) {
+    const q = String(term || '').trim().toLowerCase();
+    return activeProducts().filter((p) => !q || [p.name, p.sku, p.category].some((v) => String(v || '').toLowerCase().includes(q))).slice(0, 30);
+}
+function renderProductResults(term, context = 'budget') {
+    const isTemplate = context === 'template';
+    const el = document.getElementById(isTemplate ? 'templateProductResults' : 'budgetProductResults'); if (!el) return;
+    const rows = filterProducts(term);
+    if (isTemplate) templateProductAcIndex = rows.length ? 0 : -1; else budgetProductAcIndex = rows.length ? 0 : -1;
+    el.innerHTML = rows.length ? rows.map((p, i) => `<button type="button" class="budget-ac-item${i === 0 ? ' is-active' : ''}" data-product-id="${esc(p.id)}"><span class="budget-ac-item-title">${esc(p.name)}</span><span class="budget-ac-item-meta">${esc(p.sku || 'Sem SKU')} · ${money(p.price)} · Estoque ${num(p.qty)}${p.itemType === 'service' ? ' · Serviço' : ''}</span></button>`).join('') : '<div class="budget-ac-empty">Nenhum produto encontrado.</div>';
+    el.hidden = false;
+    el.querySelectorAll('[data-product-id]').forEach((b, i) => {
+        b.onmousedown = (e) => { e.preventDefault(); addProductToContext(b.dataset.productId, context); };
+        b.onmouseenter = () => { if (isTemplate) templateProductAcIndex = i; else budgetProductAcIndex = i; [...el.querySelectorAll('.budget-ac-item')].forEach((x, j) => x.classList.toggle('is-active', j === i)); };
+    });
+    if (isTemplate) selectedTemplateProductId = String(rows[0]?.id || ''); else selectedBudgetProductId = String(rows[0]?.id || '');
+}
+function addProductToContext(id, context) {
+    const p = productById(id); if (!p) return;
+    const isTemplate = context === 'template';
+    const list = isTemplate ? templateItemsDraft : (activeOption()?.items || []);
+    const existing = list.find((x) => x.kind === 'product' && String(x.productId) === String(id));
+    if (existing) existing.qty = num(existing.qty) + 1; else list.push(itemFromProduct(p, { forTemplate: isTemplate }));
+    const search = document.getElementById(isTemplate ? 'templateProductSearch' : 'budgetProductSearch'); if (search) search.value = '';
+    document.getElementById(isTemplate ? 'templateProductResults' : 'budgetProductResults').hidden = true;
+    if (isTemplate) { selectedTemplateProductId = ''; renderTemplateItems(); } else { selectedBudgetProductId = ''; renderBudgetItems(); }
 }
 
-function renderProductAcList(term) {
-    const listEl = document.getElementById('budgetProductResults');
-    if (!listEl) return;
-    const matches = filterProducts(term);
-    budgetProductAcIndex = matches.length ? 0 : -1;
+// ---------- Budget option/items rendering ----------
+function renderOptionTabs() {
+    const el = document.getElementById('budgetOptionTabs'); if (!el) return;
+    el.innerHTML = budgetOptionsDraft.map((o) => `<button type="button" class="budget-option-tab${String(o.id) === String(activeBudgetOptionId) ? ' active' : ''}" data-option-id="${esc(o.id)}">${esc(o.name || 'Opção')}${o.recommended ? '<span class="rec">★</span>' : ''}</button>`).join('');
+    el.querySelectorAll('[data-option-id]').forEach((b) => b.onclick = () => { syncOptionHeader(); syncAdjustmentsFromUi(); activeBudgetOptionId = b.dataset.optionId; renderOptionTabs(); renderBudgetItems(); });
+    syncOptionHeader(true);
+}
+function syncOptionHeader(renderOnly = false) {
+    const o = activeOption(); if (!o) return;
+    const name = document.getElementById('budgetOptionName'); const rec = document.getElementById('budgetOptionRecommended');
+    if (!renderOnly) { if (name) o.name = name.value.trim() || o.name; if (rec) o.recommended = rec.checked; }
+    if (name) name.value = o.name || '';
+    if (rec) rec.checked = o.recommended === true;
+}
+function renderBudgetItems() {
+    const option = activeOption(); const el = document.getElementById('budgetItemsList'); if (!el || !option) return;
+    if (!option.items.length) el.innerHTML = '<div class="empty-state">Nenhum item nesta opção.</div>';
+    else el.innerHTML = option.items.map((item, i) => itemRowHtml(item, i, 'budget')).join('');
+    bindItemRowEvents('budget');
+    renderBudgetTotals();
+}
+function itemRowHtml(item, i, context) {
+    const p = item.productId ? productById(item.productId) : null;
+    const total = itemTotal(item);
+    const stockWarn = p && p.trackStock !== false && num(p.qty) < num(item.qty)
+        ? `<span class="budget-stock-warn">Estoque ${num(p.qty)}</span>`
+        : (p ? `Estoque ${num(p.qty)}` : 'Item manual');
+    const isTemplate = context === 'template';
+    const priceModeControl = isTemplate
+        ? `<select class="form-input item-price-mode"><option value="snapshot"${item.priceMode !== 'live' ? ' selected' : ''}>Fixo</option><option value="live"${item.priceMode === 'live' ? ' selected' : ''}>Atual</option></select>`
+        : '<span class="budget-price-lock" title="O preço do orçamento não muda automaticamente depois de salvo.">Fixo no orçamento</span>';
+    const priceReadonly = '';
+    return `<div class="budget-items-row advanced" data-index="${i}">
+      <div class="budget-item-name-wrap"><input class="form-input item-name" value="${esc(item.name)}"><div class="budget-item-secondary"><input class="form-input item-warranty" value="${esc(item.warranty || '')}" placeholder="Garantia"><input class="form-input item-note" value="${esc(item.note || '')}" placeholder="Observação"></div><div class="budget-item-meta">${stockWarn}</div></div>
+      <select class="form-input item-condition">${Object.entries(CONDITION_LABELS).map(([v,l]) => `<option value="${v}"${item.condition === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <input class="form-input item-qty" type="number" min="1" step="1" value="${Math.max(1, Math.trunc(num(item.qty) || 1))}">
+      <input class="form-input item-price" type="number" min="0" step="0.01" value="${num(item.unitPrice).toFixed(2)}"${priceReadonly}>
+      ${priceModeControl}
+      <label class="budget-special-order" title="Item sob encomenda"><input class="item-special" type="checkbox"${item.specialOrder ? ' checked' : ''}></label>
+      <div class="budget-items-total">${money(total)}</div>
+      <div class="budget-row-actions"><button class="btn btn-ghost budget-row-up" type="button" title="Mover para cima"${i === 0 ? ' disabled' : ''}>↑</button><button class="btn btn-ghost budget-row-down" type="button" title="Mover para baixo">↓</button><button class="btn btn-danger-soft budget-row-remove" type="button" title="Remover">×</button></div>
+    </div>`;
+}
+function bindItemRowEvents(context) {
+    const container = document.getElementById(context === 'template' ? 'templateItemsList' : 'budgetItemsList');
+    if (!container) return;
+    container.querySelectorAll('.budget-items-row').forEach((row) => {
+        const i = Number(row.dataset.index);
+        const list = context === 'template' ? templateItemsDraft : (activeOption()?.items || []);
+        const item = list[i];
+        if (!item) return;
+        const update = () => {
+            item.name = row.querySelector('.item-name').value.trim();
+            item.warranty = row.querySelector('.item-warranty').value.trim();
+            item.note = row.querySelector('.item-note').value.trim();
+            item.condition = row.querySelector('.item-condition').value;
+            item.qty = Math.max(1, Math.trunc(num(row.querySelector('.item-qty').value) || 1));
+            item.unitPrice = Math.max(0, num(row.querySelector('.item-price').value));
+            const mode = row.querySelector('.item-price-mode');
+            item.priceMode = context === 'template' && mode ? mode.value : 'snapshot';
+            item.specialOrder = row.querySelector('.item-special').checked;
+            if (context === 'template' && item.priceMode === 'live' && item.productId) {
+                const p = productById(item.productId);
+                if (p) {
+                    item.unitPrice = num(p.price);
+                    item.unitCost = num(p.unitCostTotal ?? p.cost);
+                }
+            }
+            if (context === 'template') renderTemplateItems(); else renderBudgetItems();
+        };
+        row.addEventListener('change', (e) => { if (e.target.matches('.item-price') && context === 'template') { item.priceMode='snapshot'; const mode=row.querySelector('.item-price-mode'); if(mode)mode.value='snapshot'; } if (e.target.matches('input,select')) update(); });
+        row.querySelector('.item-name').onblur = update;
+        row.querySelector('.item-warranty').onblur = update;
+        row.querySelector('.item-note').onblur = update;
+        const rerender = () => context === 'template' ? renderTemplateItems() : renderBudgetItems();
+        const up = row.querySelector('.budget-row-up');
+        const down = row.querySelector('.budget-row-down');
+        if (up) up.onclick = () => { if (i <= 0) return; [list[i - 1], list[i]] = [list[i], list[i - 1]]; rerender(); };
+        if (down) { down.disabled = i >= list.length - 1; down.onclick = () => { if (i >= list.length - 1) return; [list[i + 1], list[i]] = [list[i], list[i + 1]]; rerender(); }; }
+        row.querySelector('.budget-row-remove').onclick = () => { list.splice(i, 1); rerender(); };
+    });
+}
+function renderBudgetTotals() {
+    const o = activeOption(); if (!o) return;
+    const dType = document.getElementById('budgetDiscountType'), dVal = document.getElementById('budgetDiscountValue'), eType = document.getElementById('budgetExtraType'), eVal = document.getElementById('budgetExtraValue');
+    if (dType && document.activeElement !== dType) dType.value = o.discount?.type || 'fixed'; if (dVal && document.activeElement !== dVal) dVal.value = num(o.discount?.value);
+    if (eType && document.activeElement !== eType) eType.value = o.extra?.type || 'fixed'; if (eVal && document.activeElement !== eVal) eVal.value = num(o.extra?.value);
+    const t = optionTotals(o); const box = document.getElementById('budgetTotalsBox'); if (!box) return;
+    const card = cardPaymentTotals(t.total);
+    box.innerHTML = `<div class="budget-financial-box"><div class="budget-financial-cell"><small>Subtotal</small><strong>${money(t.subtotal)}</strong></div><div class="budget-financial-cell"><small>Custo interno</small><strong>${money(t.costTotal)}</strong></div><div class="budget-financial-cell"><small>Valor à vista</small><strong>${money(t.total)}</strong></div><div class="budget-financial-cell"><small>Valor no cartão</small><strong>${money(card.cardTotal)}</strong><small>ou 6x de ${money(card.installmentValue)}</small></div><div class="budget-financial-cell"><small>Lucro bruto</small><strong class="${t.profit < 0 ? 'margin-low' : ''}">${money(t.profit)}</strong></div><div class="budget-financial-cell"><small>Margem</small><strong class="${t.margin < 10 ? 'margin-low' : 'margin-good'}">${t.margin.toFixed(1)}%${t.margin < 10 ? ' · baixa' : ''}</strong></div></div>`;
+}
+function syncAdjustmentsFromUi() {
+    const o = activeOption(); if (!o) return;
+    o.discount = { type: document.getElementById('budgetDiscountType').value, value: Math.max(0, num(document.getElementById('budgetDiscountValue').value)) };
+    o.extra = { type: document.getElementById('budgetExtraType').value, value: Math.max(0, num(document.getElementById('budgetExtraValue').value)) };
+    renderBudgetTotals();
+}
 
-    if (!matches.length) {
-        listEl.innerHTML = '<div class="budget-ac-empty">Nenhum produto encontrado.</div>';
-        listEl.hidden = false;
-        selectedBudgetProductId = '';
+// ---------- Template editor ----------
+function resetTemplateEditor() {
+    editingTemplateId = ''; templateItemsDraft = []; selectedTemplateProductId = ''; templateProductAcIndex = -1;
+    const search = document.getElementById('templateProductSearch'); if (search) search.value = '';
+    const results = document.getElementById('templateProductResults'); if (results) results.hidden = true;
+    ['templateId','templateName','templateCategory','templateDescription','templateImageUrl','templateDeadline','templateWarranty','templatePaymentTerms','templateIncludedServices','templateCustomerNotes','templateInternalNotes'].forEach((id) => { const el=document.getElementById(id); if(el) el.value=''; });
+    updateTemplateImagePreview('');
+    document.getElementById('templateValidDays').value = 7; document.getElementById('templateActive').checked = true;
+    document.getElementById('deleteTemplateBtn').hidden = true; document.getElementById('duplicateTemplateBtn').hidden = true; renderTemplateItems(); renderTemplateList();
+}
+function loadTemplateEditor(t) {
+    editingTemplateId = String(t.id || ''); document.getElementById('templateId').value = editingTemplateId; document.getElementById('templateName').value = t.name || ''; document.getElementById('templateCategory').value = t.category || '';
+    document.getElementById('templateDescription').value = t.description || ''; document.getElementById('templateImageUrl').value=t.imageUrl||''; updateTemplateImagePreview(t.imageUrl); document.getElementById('templateValidDays').value = num(t.defaultValidDays) || 7; document.getElementById('templateDeadline').value = t.deadline || '';
+    document.getElementById('templateWarranty').value = t.warrantyText || ''; document.getElementById('templatePaymentTerms').value = t.paymentTerms || ''; document.getElementById('templateIncludedServices').value = arr(t.includedServices).join('\n');
+    document.getElementById('templateCustomerNotes').value = t.customerNotes || ''; document.getElementById('templateInternalNotes').value = t.internalNotes || ''; document.getElementById('templateActive').checked = t.active !== false;
+    templateItemsDraft = arr(t.items).map((x) => normalizeDraftItem(x, { forTemplate: true, refreshCost: true })); document.getElementById('deleteTemplateBtn').hidden = false; document.getElementById('duplicateTemplateBtn').hidden = false; renderTemplateItems(); renderTemplateList();
+}
+function renderTemplateItems() {
+    const el = document.getElementById('templateItemsList'); if (!el) return;
+    const countEl = document.getElementById('templateItemsCount'); if (countEl) countEl.textContent = `${templateItemsDraft.length} ${templateItemsDraft.length === 1 ? 'item' : 'itens'}`;
+    el.innerHTML = templateItemsDraft.length ? templateItemsDraft.map((x,i) => itemRowHtml(x,i,'template')).join('') : '<div class="template-items-empty"><span>📦</span><strong>Nenhum item adicionado</strong><small>Pesquise um produto acima ou crie um item manual.</small></div>';
+    bindItemRowEvents('template');
+    const subtotal = templateItemsDraft.reduce((s,x)=>s+itemTotal(x),0), cost = templateItemsDraft.reduce((s,x)=>s+num(x.qty)*num(x.unitCost),0), profit=subtotal-cost, margin=subtotal?profit/subtotal*100:0;
+    document.getElementById('templateFinancialBox').innerHTML = `<div class="template-items-summary"><span>${templateItemsDraft.length} item(ns) no modelo</span></div><div class="budget-financial-box"><div class="budget-financial-cell"><small>Preço estimado</small><strong>${money(subtotal)}</strong></div><div class="budget-financial-cell"><small>Custo</small><strong>${money(cost)}</strong></div><div class="budget-financial-cell"><small>Lucro bruto</small><strong>${money(profit)}</strong></div><div class="budget-financial-cell"><small>Margem</small><strong class="${margin < 10 ? 'margin-low':'margin-good'}">${margin.toFixed(1)}%</strong></div></div>`;
+}
+function renderTemplateList() {
+    const q = String(document.getElementById('templateSearchInput')?.value || '').toLowerCase(); const el = document.getElementById('budgetTemplatesList'); if (!el) return;
+    const list = templates().filter((t) => !q || `${t.name} ${t.category} ${t.description}`.toLowerCase().includes(q));
+    el.innerHTML = list.length ? list.map((t) => `<div class="template-list-item${String(t.id)===String(editingTemplateId)?' active':''}" data-template-id="${esc(t.id)}"><div class="template-list-item-head"><strong>${esc(t.name)}</strong><span class="budget-status ${t.active !== false ? 'status-approved':'status-cancelled'}">${t.active !== false ? 'Ativo':'Inativo'}</span></div><div class="template-list-item-meta">${esc(t.category || 'Outros')} · ${money(t.subtotal || 0)} · margem ${num(t.margin).toFixed(1)}%</div></div>`).join('') : '<div class="empty-state">Nenhum modelo cadastrado.</div>';
+    el.querySelectorAll('[data-template-id]').forEach((x) => x.onclick = () => { const t = templates().find((r)=>String(r.id)===String(x.dataset.templateId)); if(t) loadTemplateEditor(t); });
+    fillTemplateSelect();
+}
+function templatePayload() {
+    return {
+        name: document.getElementById('templateName').value.trim(), category: document.getElementById('templateCategory').value.trim() || 'Outros', description: document.getElementById('templateDescription').value.trim(), imageUrl:document.getElementById('templateImageUrl').value.trim(),
+        defaultValidDays: Math.max(1, num(document.getElementById('templateValidDays').value) || 7), deadline: document.getElementById('templateDeadline').value.trim(), warrantyText: document.getElementById('templateWarranty').value.trim(),
+        paymentTerms: document.getElementById('templatePaymentTerms').value.trim(), includedServices: document.getElementById('templateIncludedServices').value.split('\n').map((x)=>x.trim()).filter(Boolean),
+        customerNotes: document.getElementById('templateCustomerNotes').value.trim(), internalNotes: document.getElementById('templateInternalNotes').value.trim(), active: document.getElementById('templateActive').checked,
+        items: templateItemsDraft.map(clone)
+    };
+}
+async function saveTemplate() {
+    const payload = templatePayload(); if (!payload.name) return showToast('Informe o nome do modelo.', 'error'); if (!payload.items.length) return showToast('Adicione pelo menos um item.', 'error');
+    try { const data = await api(editingTemplateId ? `/api/budget-templates/${encodeURIComponent(editingTemplateId)}` : '/api/budget-templates', { method: editingTemplateId ? 'PATCH':'POST', body: JSON.stringify(payload) }); upsert('budgetTemplates', data.template); loadTemplateEditor(data.template); showToast('Modelo salvo.', 'success'); }
+    catch(e){ console.error(e); showToast(e.message,'error'); }
+}
+function fillTemplateSelect() {
+    const el = document.getElementById('budgetTemplateSelect'); if (!el) return; const cur=el.value;
+    const active = templates().filter((t)=>t.active!==false); const groups = new Map(); active.forEach((t)=>{ const c=t.category||'Outros'; if(!groups.has(c))groups.set(c,[]); groups.get(c).push(t); });
+    el.innerHTML='<option value="">Criar orçamento vazio</option>'+[...groups.entries()].map(([cat,rows])=>`<optgroup label="${esc(cat)}">${rows.map(t=>`<option value="${esc(t.id)}">${esc(t.name)} — ${money(t.subtotal)}</option>`).join('')}</optgroup>`).join('');
+    if(active.some(t=>String(t.id)===String(cur))) el.value=cur;
+}
+function resolvedTemplateItems(t) {
+    return arr(t.items).map((x) => { const p=x.productId?productById(x.productId):null; const live=x.priceMode==='live'&&p; return normalizeDraftItem({...x,id:uuid(),unitPrice:live?num(p.price):num(x.unitPrice),unitCost:p?num(p.unitCostTotal??p.cost):num(x.unitCost),priceMode:'snapshot'}, {forTemplate:false}); });
+}
+function applyTemplateToActiveBudget(t) {
+    if (!t) return;
+    const option = activeOption();
+    if (!option) return;
+    option.items = resolvedTemplateItems(t);
+    option.name = t.name || option.name;
+    option.description = t.description || '';
+    option.imageUrl = t.imageUrl || '';
+    option.recommended = true;
+    budgetOptionsDraft.forEach((o) => { if (o.id !== option.id) o.recommended = false; });
+    document.getElementById('budgetValidUntil').value = addDays(document.getElementById('budgetIssuedAt').value || todayIso(), num(t.defaultValidDays) || 7);
+    document.getElementById('budgetDeadline').value = t.deadline || '';
+    document.getElementById('budgetWarrantyText').value = t.warrantyText || '';
+    document.getElementById('budgetPaymentTerms').value = t.paymentTerms || '';
+    document.getElementById('budgetIncludedServices').value = arr(t.includedServices).join('\n');
+    document.getElementById('budgetNotes').value = t.customerNotes || '';
+    document.getElementById('budgetInternalNotes').value = t.internalNotes || '';
+    document.getElementById('budgetTemplateSelect').value = t.id;
+    renderOptionTabs();
+    renderBudgetItems();
+    showToast(`Modelo ${t.name} carregado. O orçamento agora é independente.`, 'success');
+}
+function loadTemplateIntoBudget(t) {
+    if (!t) return;
+    const option = activeOption();
+    if (option?.items?.length) {
+        openBudgetConfirm({
+            title: 'Substituir itens da opção?',
+            message: `A opção "${option.name || 'Proposta'}" já possui itens. Carregar o modelo substituirá somente os itens e condições desta opção.`,
+            confirmText: 'Carregar modelo',
+            danger: false,
+            onConfirm: () => applyTemplateToActiveBudget(t)
+        });
         return;
     }
-
-    listEl.innerHTML = matches.map((p, i) => {
-        const stock = asNumber(p.qty);
-        const active = i === budgetProductAcIndex ? ' is-active' : '';
-        return `
-      <button type="button" class="budget-ac-item${active}" data-product-id="${escapeHtml(String(p.id))}">
-        <span class="budget-ac-item-title">${escapeHtml(p.name)}</span>
-        <span class="budget-ac-item-meta">SKU ${escapeHtml(p.sku || '—')} · ${formatCurrency(asNumber(p.price))} · Est. ${stock}</span>
-      </button>`;
-    }).join('');
-
-    listEl.hidden = false;
-    listEl.querySelectorAll('.budget-ac-item').forEach((btn, i) => {
-        btn.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            selectProductFromAc(btn.getAttribute('data-product-id'));
-        });
-        btn.addEventListener('mouseenter', () => {
-            budgetProductAcIndex = i;
-            listEl.querySelectorAll('.budget-ac-item').forEach((el, j) => {
-                el.classList.toggle('is-active', j === i);
-            });
-        });
-    });
-
-    selectedBudgetProductId = String(matches[0]?.id || '');
+    applyTemplateToActiveBudget(t);
 }
 
-function hideProductAcList() {
-    const listEl = document.getElementById('budgetProductResults');
-    if (listEl) listEl.hidden = true;
-}
-
-function selectProductFromAc(productId) {
-    const id = String(productId || '').trim();
-    if (!id) return;
-    const p = activeProducts().find((row) => String(row.id) === id);
-    if (!p) return;
-
-    const existing = budgetItemsDraft.find((item) => item.kind === 'product' && String(item.productId) === id);
-    if (existing) {
-        existing.qty = asNumber(existing.qty) + 1;
-    } else {
-        budgetItemsDraft.push({
-            kind: 'product',
-            productId: String(p.id),
-            sku: String(p.sku || ''),
-            name: String(p.name || 'Produto'),
-            qty: 1,
-            unitPrice: asNumber(p.price),
-            unitCost: asNumber(p.cost)
-        });
-    }
-
-    const search = document.getElementById('budgetProductSearch');
-    if (search) search.value = '';
+// ---------- Budget editor ----------
+function resetBudgetEditor() {
+    editingBudgetId = '';
+    selectedBudgetCustomerId = '';
     selectedBudgetProductId = '';
     budgetProductAcIndex = -1;
-    hideProductAcList();
-    renderDraftItems();
-    showToast(`${p.name} adicionado ao orçamento.`, 'success');
+    budgetCustomerAcIndex = -1;
+    budgetOptionsDraft = [];
+    const first = newOption('Proposta', true);
+    budgetOptionsDraft = [first];
+    activeBudgetOptionId = first.id;
+    document.getElementById('budgetCreateModalTitle').textContent = 'Novo orçamento';
+    document.getElementById('budgetEditorSubtitle').textContent = 'Crie vazio ou carregue um modelo.';
+    document.getElementById('budgetTemplateLoader').hidden = false;
+    document.getElementById('budgetSaveAsTemplateBtn').hidden = false;
+    ['budgetCustomerId','budgetCustomerName','budgetCustomerPhone','budgetCustomerEmail','budgetCustomerDoc','budgetCustomerSearch','budgetRejectionNote','budgetDeadline','budgetPaymentTerms','budgetWarrantyText','budgetIncludedServices','budgetNotes','budgetInternalNotes','budgetProductSearch'].forEach((id)=>{const el=document.getElementById(id);if(el)el.value='';});
+    ['budgetCustomerResults','budgetProductResults'].forEach((id)=>{const el=document.getElementById(id);if(el)el.hidden=true;});
+    document.getElementById('budgetSource').value='';
+    document.getElementById('budgetStatus').value='draft';
+    document.getElementById('budgetRejectionReason').value='';
+    document.getElementById('budgetIssuedAt').value=todayIso();
+    document.getElementById('budgetValidUntil').value=addDays(todayIso(),7);
+    document.getElementById('budgetTemplateSelect').value='';
+    toggleRejectionFields();
+    renderOptionTabs();
+    renderBudgetItems();
 }
-
-function renderCustomerAcList(term) {
-    const listEl = document.getElementById('budgetCustomerResults');
-    if (!listEl) return;
-    const matches = filterCustomers(term);
-    budgetCustomerAcIndex = matches.length ? 0 : -1;
-
-    if (!matches.length) {
-        listEl.innerHTML = `<div class="budget-ac-empty">Nenhum cliente encontrado. <a href="/clients">Cadastrar no CRM</a></div>`;
-        listEl.hidden = false;
+function openNewBudget() { resetBudgetEditor(); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
+function openEditBudget(b) {
+    if (!b) return;
+    if (b.status === 'converted') {
+        showToast('Orçamentos convertidos são somente leitura. Abrindo a pré-visualização.', 'info');
+        openBudgetPreview(b);
         return;
     }
-
-    listEl.innerHTML = matches.map((c, i) => {
-        const active = i === budgetCustomerAcIndex ? ' is-active' : '';
-        const meta = [c.phone, c.email, c.doc].filter(Boolean).join(' · ');
-        return `
-      <button type="button" class="budget-ac-item${active}" data-customer-id="${escapeHtml(String(c.id))}">
-        <span class="budget-ac-item-title">${escapeHtml(c.name)}</span>
-        <span class="budget-ac-item-meta">${escapeHtml(meta || 'Sem contato cadastrado')}</span>
-      </button>`;
-    }).join('');
-
-    listEl.hidden = false;
-    listEl.querySelectorAll('.budget-ac-item').forEach((btn, i) => {
-        btn.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            selectCustomerFromAc(btn.getAttribute('data-customer-id'));
-        });
-        btn.addEventListener('mouseenter', () => {
-            budgetCustomerAcIndex = i;
-            listEl.querySelectorAll('.budget-ac-item').forEach((el, j) => {
-                el.classList.toggle('is-active', j === i);
-            });
-        });
-    });
+    editingBudgetId = String(b.id);
+    selectedBudgetCustomerId = String(b.customerId || '');
+    selectedBudgetProductId = '';
+    budgetProductAcIndex = -1;
+    budgetCustomerAcIndex = -1;
+    ['budgetCustomerResults','budgetProductResults'].forEach((id)=>{const el=document.getElementById(id);if(el)el.hidden=true;});
+    document.getElementById('budgetProductSearch').value = '';
+    document.getElementById('budgetCreateModalTitle').textContent = `Editar ${b.code || 'orçamento'}`;
+    document.getElementById('budgetEditorSubtitle').textContent = `${statusLabel(b.status)} · ${sourceLabel(b.source)}`;
+    document.getElementById('budgetTemplateLoader').hidden = true;
+    document.getElementById('budgetSaveAsTemplateBtn').hidden = false;
+    document.getElementById('budgetCustomerId').value = b.customerId || '';
+    document.getElementById('budgetCustomerName').value = b.customerName || '';
+    document.getElementById('budgetCustomerPhone').value = b.customerPhone || '';
+    document.getElementById('budgetCustomerEmail').value = b.customerEmail || '';
+    document.getElementById('budgetCustomerDoc').value = b.customerDoc || '';
+    document.getElementById('budgetCustomerSearch').value = b.customerName || '';
+    document.getElementById('budgetSource').value = b.source || '';
+    document.getElementById('budgetStatus').value = b.status || 'draft';
+    document.getElementById('budgetRejectionReason').value = b.rejectionReason || '';
+    document.getElementById('budgetRejectionNote').value = b.rejectionNote || '';
+    document.getElementById('budgetIssuedAt').value = (b.issuedAt || todayIso()).slice(0,10);
+    document.getElementById('budgetValidUntil').value = (b.validUntil || addDays(todayIso(),7)).slice(0,10);
+    document.getElementById('budgetDeadline').value = b.deadline || '';
+    document.getElementById('budgetPaymentTerms').value = b.paymentTerms || '';
+    document.getElementById('budgetWarrantyText').value = b.warrantyText || '';
+    document.getElementById('budgetIncludedServices').value = arr(b.includedServices).join('\n');
+    document.getElementById('budgetNotes').value = b.notes || '';
+    document.getElementById('budgetInternalNotes').value = b.internalNotes || '';
+    fillTemplateSelect();
+    document.getElementById('budgetTemplateSelect').value = b.templateId || '';
+    budgetOptionsDraft = arr(b.options).length
+        ? arr(b.options).map((o)=>({id:o.id||uuid(),name:o.name||'Proposta',description:o.description||'',recommended:o.recommended===true,items:arr(o.items).map((x)=>normalizeDraftItem(x)),discount:normalizeAdjustment(o.discount),extra:normalizeAdjustment(o.extra)}))
+        : [{...newOption('Proposta', true),items:arr(b.items).map((x)=>normalizeDraftItem(x))}];
+    if (budgetOptionsDraft.length && !budgetOptionsDraft.some((o)=>o.recommended)) budgetOptionsDraft[0].recommended = true;
+    activeBudgetOptionId = String(b.selectedOptionId || budgetOptionsDraft.find(o=>o.recommended)?.id || budgetOptionsDraft[0]?.id);
+    toggleRejectionFields();
+    renderOptionTabs();
+    renderBudgetItems();
+    openBudgetModal('budgetCreateModal');
 }
-
-function hideCustomerAcList() {
-    const listEl = document.getElementById('budgetCustomerResults');
-    if (listEl) listEl.hidden = true;
-}
-
-function applyCustomerToForm(customer) {
-    if (!customer) return;
-    selectedBudgetCustomerId = String(customer.id || '');
-    const idEl = document.getElementById('budgetCustomerId');
-    const nameEl = document.getElementById('budgetCustomerName');
-    const phoneEl = document.getElementById('budgetCustomerPhone');
-    const emailEl = document.getElementById('budgetCustomerEmail');
-    const searchEl = document.getElementById('budgetCustomerSearch');
-    const selectedWrap = document.getElementById('budgetCustomerSelected');
-    const chipName = document.getElementById('budgetCustomerChipName');
-    const crmLink = document.getElementById('budgetCustomerCrmLink');
-    const acWrap = document.getElementById('budgetCustomerAcWrap');
-
-    if (idEl) idEl.value = selectedBudgetCustomerId;
-    if (nameEl) nameEl.value = String(customer.name || '');
-    if (phoneEl) phoneEl.value = String(customer.phone || '');
-    if (emailEl) emailEl.value = String(customer.email || '');
-    if (searchEl) searchEl.value = '';
-    if (chipName) chipName.textContent = String(customer.name || 'Cliente');
-    if (crmLink) crmLink.href = `/clients?client=${encodeURIComponent(selectedBudgetCustomerId)}`;
-    if (selectedWrap) selectedWrap.hidden = false;
-    if (acWrap) acWrap.style.display = 'none';
-    hideCustomerAcList();
-}
-
-function clearSelectedCustomer() {
-    selectedBudgetCustomerId = '';
-    const idEl = document.getElementById('budgetCustomerId');
-    const searchEl = document.getElementById('budgetCustomerSearch');
-    const selectedWrap = document.getElementById('budgetCustomerSelected');
-    const acWrap = document.getElementById('budgetCustomerAcWrap');
-    if (idEl) idEl.value = '';
-    if (searchEl) searchEl.value = '';
-    if (selectedWrap) selectedWrap.hidden = true;
-    if (acWrap) acWrap.style.display = '';
-}
-
-function selectCustomerFromAc(customerId) {
-    const c = customerList().find((row) => String(row.id) === String(customerId));
-    if (!c) {
-        showToast('Cliente não encontrado.', 'error');
-        return;
-    }
-    applyCustomerToForm(c);
-    showToast(`Cliente ${c.name} vinculado ao orçamento.`, 'success');
-}
-
-function renderDraftItems() {
-    const list = document.getElementById('budgetItemsList');
-    if (!list) return;
-    if (budgetItemsDraft.length === 0) {
-        list.innerHTML = '<div class="empty-state" style="padding:20px;"><div class="empty-icon">🧾</div><p>Nenhum item no orçamento.</p></div>';
-    } else {
-        list.innerHTML = budgetItemsDraft.map((item, index) => `
-            <div class="budget-items-row">
-                <input class="form-input" value="${escapeHtml(item.name)}" onchange="updateDraftItem(${index}, 'name', this.value)">
-                <input class="form-input" type="number" min="1" step="1" value="${asNumber(item.qty)}" onchange="updateDraftItem(${index}, 'qty', this.value)">
-                <input class="form-input" type="number" min="0" step="0.01" value="${asNumber(item.unitPrice)}" onchange="updateDraftItem(${index}, 'unitPrice', this.value)">
-                <span class="budget-items-total">${formatCurrency(asNumber(item.qty) * asNumber(item.unitPrice))}</span>
-                <button class="btn btn-ghost btn-sm" type="button" onclick="removeDraftItem(${index})">✕</button>
-            </div>
-        `).join('');
-    }
-    renderTotals();
-}
-
-function renderTotals() {
-    const totalsEl = document.getElementById('budgetTotalsBox');
-    if (!totalsEl) return;
-    const totals = budgetTotals();
-    totalsEl.innerHTML = `
-        <div class="cart-total-row"><span>Subtotal</span><span class="mono">${formatCurrency(totals.subtotal)}</span></div>
-        <div class="cart-total-row"><span>Desconto</span><span class="mono">- ${formatCurrency(totals.discount)}</span></div>
-        <div class="cart-total-row"><span>Acréscimo</span><span class="mono">+ ${formatCurrency(totals.extra)}</span></div>
-        <div class="divider"></div>
-        <div class="cart-total-row grand"><span>Total</span><span class="val">${formatCurrency(totals.total)}</span></div>
-    `;
-}
-
-function updateDraftItem(index, key, value) {
-    const item = budgetItemsDraft[index];
-    if (!item) return;
-    if (key === 'qty' || key === 'unitPrice') item[key] = Math.max(0, asNumber(value));
-    else item[key] = String(value || '').trim();
-    renderDraftItems();
-}
-
-function removeDraftItem(index) {
-    budgetItemsDraft.splice(index, 1);
-    renderDraftItems();
-}
-
-function addCustomItem() {
-    budgetItemsDraft.push({ kind: 'custom', productId: '', sku: '', name: 'Serviço personalizado', qty: 1, unitPrice: 0 });
-    renderDraftItems();
-}
-
-function addProductItem() {
-    const search = document.getElementById('budgetProductSearch');
-    const term = search?.value?.trim() || '';
-    if (selectedBudgetProductId) {
-        selectProductFromAc(selectedBudgetProductId);
-        return;
-    }
-    const byCode = findProductByCode(term);
-    if (byCode) {
-        selectProductFromAc(byCode.id);
-        return;
-    }
-    const matches = filterProducts(term);
-    if (matches.length === 1) {
-        selectProductFromAc(matches[0].id);
-        return;
-    }
-    if (matches.length > 1) {
-        renderProductAcList(term);
-        showToast('Selecione o produto na lista.', 'info');
-        return;
-    }
-    showToast('Busque e selecione um produto.', 'info');
-}
-
-function payloadFromDraft(status) {
-    const totals = budgetTotals();
-    return {
-        customerId: String(document.getElementById('budgetCustomerId')?.value || selectedBudgetCustomerId || '').trim(),
-        customerName: String(document.getElementById('budgetCustomerName')?.value || '').trim(),
-        customerPhone: String(document.getElementById('budgetCustomerPhone')?.value || '').trim(),
-        customerEmail: String(document.getElementById('budgetCustomerEmail')?.value || '').trim(),
-        validUntil: String(document.getElementById('budgetdate')?.value || '').trim(),
-        notes: String(document.getElementById('budgetNotes')?.value || '').trim(),
-        discount: totals.discount,
-        extra: totals.extra,
-        status: status === 'finalized' ? 'finalized' : 'draft',
-        items: budgetItemsDraft
-            .filter((item) => String(item.name || '').trim() && asNumber(item.qty) > 0)
-            .map((item) => ({
-                kind: item.kind === 'product' ? 'product' : 'custom',
-                productId: String(item.productId || ''),
-                sku: String(item.sku || ''),
-                name: String(item.name || '').trim(),
-                qty: asNumber(item.qty),
-                unitPrice: asNumber(item.unitPrice)
-            }))
+function budgetPayload() {
+    syncOptionHeader(); syncAdjustmentsFromUi();
+    const status=document.getElementById('budgetStatus').value; return {
+        customerId:document.getElementById('budgetCustomerId').value.trim(), customerName:document.getElementById('budgetCustomerName').value.trim(), customerPhone:document.getElementById('budgetCustomerPhone').value.trim(), customerEmail:document.getElementById('budgetCustomerEmail').value.trim(), customerDoc:document.getElementById('budgetCustomerDoc').value.trim(),
+        source:document.getElementById('budgetSource').value, status, rejectionReason:status==='rejected'?document.getElementById('budgetRejectionReason').value:'', rejectionNote:status==='rejected'?document.getElementById('budgetRejectionNote').value.trim():'',
+        issuedAt:document.getElementById('budgetIssuedAt').value, validUntil:document.getElementById('budgetValidUntil').value, deadline:document.getElementById('budgetDeadline').value.trim(), paymentTerms:document.getElementById('budgetPaymentTerms').value.trim(), warrantyText:document.getElementById('budgetWarrantyText').value.trim(), includedServices:document.getElementById('budgetIncludedServices').value.split('\n').map(x=>x.trim()).filter(Boolean), notes:document.getElementById('budgetNotes').value.trim(), internalNotes:document.getElementById('budgetInternalNotes').value.trim(),
+        templateId:document.getElementById('budgetTemplateSelect').value||'', selectedOptionId:activeBudgetOptionId, options:budgetOptionsDraft.map((o)=>({...clone(o),items:o.items.map((item)=>({...clone(item),priceMode:'snapshot'}))}))
     };
 }
-
-function openTemplateModal(budget) {
-    budgetCurrentRecord = budget;
-    const preview = document.getElementById('budgetTemplatePreview');
-    const modal = document.getElementById('budgetTemplateModal');
-    if (modal) modal.classList.add('open');
-    loadBudgetTemplatePreview(budget, preview);
+async function saveBudgetEditor() {
+    const payload=budgetPayload(); if(!payload.customerName)return showToast('Informe o nome do cliente.','error'); if(!payload.options.length||payload.options.every(o=>!o.items.length))return showToast('Adicione pelo menos um item.','error'); const emptyOption=payload.options.find(o=>!o.items.length); if(emptyOption)return showToast(`A opção \"${emptyOption.name||'sem nome'}\" está sem itens. Preencha ou exclua essa opção.`,'error'); if(payload.validUntil<payload.issuedAt)return showToast('A validade não pode ser anterior à emissão.','error');
+    try { const data=await api(editingBudgetId?`/api/budgets/${encodeURIComponent(editingBudgetId)}`:'/api/budgets',{method:editingBudgetId?'PATCH':'POST',body:JSON.stringify(payload)}); upsert('budgets',data.budget); if(data.customerCreated&&data.customer)upsert('customers',data.customer); closeBudgetModal('budgetCreateModal'); renderAll(); showToast('Orçamento salvo com sucesso.','success'); showNotificationStatus(data.notifications); }
+    catch(e){console.error(e);showToast(e.message,'error');}
 }
+function toggleRejectionFields(){document.getElementById('budgetRejectionFields').hidden=document.getElementById('budgetStatus').value!=='rejected';}
 
-function closeTemplateModal() {
-    const modal = document.getElementById('budgetTemplateModal');
-    if (modal) modal.classList.remove('open');
+// ---------- Cards/dashboard ----------
+function normalizedBudgetTotal(b){const opt=arr(b.options).find(o=>String(o.id)===String(b.selectedOptionId))||arr(b.options).find(o=>o.recommended)||arr(b.options)[0];return num(opt?.total??b.total);}
+function isFollowUpPending(b){if(!['sent','awaiting'].includes(b.status)||b.followUpDone)return false; const base=new Date(b.sentAt||b.updatedAt||b.createdAt||0).getTime(); return base>0&&Date.now()-base>=3*86400000;}
+function renderKpis(){const nowMonth=todayIso().slice(0,7);const list=budgets().filter(b=>String(b.issuedAt||b.createdAt||'').slice(0,7)===nowMonth);const approved=list.filter(b=>['approved','acquiring_parts','converted'].includes(b.status));const rejected=list.filter(b=>b.status==='rejected');const decided=approved.length+rejected.length;const conv=decided?approved.length/decided*100:0;const approvedValue=approved.reduce((s,b)=>s+normalizedBudgetTotal(b),0);const waiting=list.filter(b=>['sent','awaiting'].includes(b.status)).length;document.getElementById('budgetKpis').innerHTML=[['Orçamentos no mês',list.length,'Criados'],['Aprovados',approved.length,money(approvedValue)],['Aguardando',waiting,'Precisam de acompanhamento'],['Conversão',`${conv.toFixed(0)}%`,`${decided} decididos`],['Valor aprovado',money(approvedValue),'Não é lucro']].map(([l,v,s])=>`<div class="card budget-kpi"><div class="kpi-label">${l}</div><div class="kpi-value">${v}</div><div class="kpi-sub">${s}</div></div>`).join('');}
+
+function renderInsights(){
+    const nowMonth=todayIso().slice(0,7), list=budgets().filter(b=>String(b.issuedAt||b.createdAt||'').slice(0,7)===nowMonth);
+    const sourceCounts=new Map(), sourceValues=new Map();
+    list.forEach(b=>{const k=b.source||'other';sourceCounts.set(k,(sourceCounts.get(k)||0)+1);sourceValues.set(k,(sourceValues.get(k)||0)+normalizedBudgetTotal(b));});
+    const srcRows=[...sourceCounts.entries()].sort((a,b)=>b[1]-a[1]); const maxSrc=Math.max(1,...srcRows.map(x=>x[1]));
+    const srcEl=document.getElementById('budgetSourceSummary');
+    srcEl.innerHTML=srcRows.length?srcRows.map(([k,c])=>`<div class="budget-summary-row"><span>${esc(sourceLabel(k))}</span><strong>${c}</strong><span>${money(sourceValues.get(k)||0)}</span><div class="budget-summary-bar"><span style="width:${Math.max(5,c/maxSrc*100)}%"></span></div></div>`).join(''):'<div class="budget-summary-empty">Sem dados de origem neste mês.</div>';
+    const lossCounts=new Map(); list.filter(b=>b.status==='rejected').forEach(b=>{const k=b.rejectionReason||'other';lossCounts.set(k,(lossCounts.get(k)||0)+1);});
+    const lossRows=[...lossCounts.entries()].sort((a,b)=>b[1]-a[1]); const maxLoss=Math.max(1,...lossRows.map(x=>x[1])); const lossEl=document.getElementById('budgetLossSummary');
+    lossEl.innerHTML=lossRows.length?lossRows.map(([k,c])=>`<div class="budget-summary-row"><span>${esc(rejectionLabel(k))}</span><strong>${c}</strong><span></span><div class="budget-summary-bar"><span style="width:${Math.max(5,c/maxLoss*100)}%"></span></div></div>`).join(''):'<div class="budget-summary-empty">Nenhum orçamento recusado neste mês.</div>';
 }
-
-function budgetsForCustomer(customer) {
-    if (!customer) return [];
-    const budgets = asArray(window.appData?.budgets);
-    const cid = String(customer.id || '').trim();
-    const nameKey = String(customer.name || '').trim().toLowerCase();
-    return budgets.filter((b) => {
-        if (cid && String(b.customerId || '').trim() === cid) return true;
-        if (!b.customerId && nameKey && String(b.customerName || '').trim().toLowerCase() === nameKey) return true;
-        return false;
-    }).sort((a, b) => String(b.code || '').localeCompare(String(a.code || '')));
-}
-
-function renderSavedBudgets() {
-    const search = String(document.getElementById('budgetSearchInput')?.value || '').trim().toLowerCase();
-    const draftGrid = document.getElementById('budgetsDraftGrid');
-    const finalGrid = document.getElementById('budgetsFinalGrid');
-    if (!draftGrid || !finalGrid) return;
-    const list = asArray(window.appData?.budgets).filter((budget) => {
-        if (!search) return true;
-        return String(budget.code || '').toLowerCase().includes(search) ||
-            String(budget.customerName || '').toLowerCase().includes(search);
-    });
-    const drafts = list.filter((b) => String(b.status || 'draft') !== 'finalized');
-    const finalized = list.filter((b) => String(b.status || '') === 'finalized');
-
-    const renderCards = (budgets, allowFinalize) => budgets
-        .slice()
-        .sort((a, b) => String(b.code || '').localeCompare(String(a.code || '')))
-        .map((budget) => {
-            const bid = String(budget.id || '').trim();
-            const crmBtn = budget.customerId
-                ? `<a class="btn btn-ghost btn-sm" href="/clients?client=${encodeURIComponent(String(budget.customerId))}">CRM</a>`
-                : '';
-            const osBtn = budget.serviceOrderId
-                ? `<a class="btn btn-ghost btn-sm" href="/services">OS vinculada</a>`
-                : '';
-            return `
-            <div class="budget-card-item" data-budget-id="${escapeHtml(bid)}">
-                <div class="budget-card-head">
-                    <strong>${escapeHtml(budget.code || 'Orçamento')}</strong>
-                    <span class="badge ${budget.status === 'finalized' ? 'green' : ''}">${budget.status === 'finalized' ? 'Finalizado' : 'Rascunho'}</span>
-                </div>
-                <div class="budget-card-meta">
-                    <div>Cliente: ${escapeHtml(budget.customerName || 'Não informado')}</div>
-                    <div>Itens: ${asArray(budget.items).length}</div>
-                    <div>Validade: ${escapeHtml(budget.validUntil || budget.date || 'N/I')}</div>
-                    <div>Total: ${formatCurrency(asNumber(budget.total))}</div>
-                    ${budget.serviceOrderId ? '<div class="text-xs text-muted">Gerado a partir de ordem de serviço</div>' : ''}
-                </div>
-                <div class="budget-card-actions">
-                    ${crmBtn}
-                    ${osBtn}
-                    <button class="btn btn-ghost btn-sm" type="button" data-budget-action="template" data-budget-id="${escapeHtml(bid)}">Template</button>
-                    ${allowFinalize ? `<button class="btn btn-ghost btn-sm" type="button" data-budget-action="edit" data-budget-id="${escapeHtml(bid)}">Editar</button>` : ''}
-                    ${allowFinalize ? `<button class="btn btn-ghost btn-sm text-danger-btn" type="button" data-budget-action="delete" data-budget-id="${escapeHtml(bid)}">Excluir</button>` : ''}
-                    ${allowFinalize ? `<button class="btn btn-primary btn-sm" type="button" data-budget-action="finalize" data-budget-id="${escapeHtml(bid)}">Finalizar</button>` : ''}
-                </div>
-            </div>`;
-        }).join('');
-
-    draftGrid.innerHTML = drafts.length
-        ? renderCards(drafts, true)
-        : '<div class="empty-state" style="padding:24px;"><div class="empty-icon">📝</div><p>Nenhum orçamento salvo.</p></div>';
-    finalGrid.innerHTML = finalized.length
-        ? renderCards(finalized, false)
-        : '<div class="empty-state" style="padding:24px;"><div class="empty-icon">✅</div><p>Nenhum orçamento finalizado.</p></div>';
-}
-
-function upsertCustomerInAppData(customer) {
-    if (!customer || !customer.id) return;
-    if (!Array.isArray(window.appData.customers)) window.appData.customers = [];
-    const idx = window.appData.customers.findIndex((c) => String(c.id) === String(customer.id));
-    if (idx >= 0) window.appData.customers[idx] = customer;
-    else window.appData.customers.unshift(customer);
-}
-
-function applyBudgetSaveResponse(data, { wasEdit, status }) {
-    window.appData.budgets = asArray(window.appData.budgets);
-    if (wasEdit) {
-        window.appData.budgets = window.appData.budgets.map((b) =>
-            String(b.id) === String(data.budget.id) ? data.budget : b
-        );
-    } else {
-        window.appData.budgets.unshift(data.budget);
-    }
-    if (data.cashFlowEntry) {
-        if (!Array.isArray(window.appData.cashFlowEntries)) window.appData.cashFlowEntries = [];
-        window.appData.cashFlowEntries.unshift(data.cashFlowEntry);
-    }
-    if (data.customerCreated && data.customer) {
-        upsertCustomerInAppData(data.customer);
-        showToast(`Cliente "${data.customer.name}" cadastrado no CRM.`, 'success');
-    }
-    renderSavedBudgets();
-    const msg = wasEdit
-        ? 'Orçamento atualizado!'
-        : (status === 'finalized' ? 'Orçamento finalizado!' : 'Orçamento salvo!');
-    showToast(msg, 'success');
-    if (status === 'finalized') showNotificationStatus(data.notifications);
-    openTemplateModal(data.budget);
-}
-
-async function saveBudget(status) {
-    const payload = payloadFromDraft(status);
-    if (payload.items.length === 0) {
-        showToast('Adicione ao menos um item ao orçamento.', 'error');
-        return false;
-    }
-    const wasEdit = Boolean(editingBudgetId);
-    const url = wasEdit
-        ? `/api/budgets/${encodeURIComponent(editingBudgetId)}`
-        : '/api/budgets';
-    const method = wasEdit ? 'PATCH' : 'POST';
-
+function filteredBudgets(){const q=String(document.getElementById('budgetSearchInput')?.value||'').toLowerCase(),st=document.getElementById('budgetStatusFilter')?.value||'',src=document.getElementById('budgetSourceFilter')?.value||'',month=document.getElementById('budgetMonthFilter')?.value||'';return budgets().filter(b=>{const hay=`${b.code} ${b.customerName} ${arr(b.options).flatMap(o=>arr(o.items).map(i=>i.name)).join(' ')}`.toLowerCase();return(!q||hay.includes(q))&&(!st||b.status===st)&&(!src||b.source===src)&&(!month||String(b.issuedAt||b.createdAt||'').slice(0,7)===month);}).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));}
+function renderBudgetCards(){const list=filteredBudgets(),el=document.getElementById('budgetsGrid');document.getElementById('budgetResultCount').textContent=`${list.length} resultado(s)`;if(!list.length){el.innerHTML='<div class="empty-state">Nenhum orçamento encontrado.</div>';return;}el.innerHTML=list.map(b=>{const total=normalizedBudgetTotal(b),opts=arr(b.options),margin=num((opts.find(o=>String(o.id)===String(b.selectedOptionId))||opts.find(o=>o.recommended)||opts[0])?.margin??b.margin);const follow=isFollowUpPending(b),reply=b.customerResponse;return `<article class="budget-card-item${reply?' has-customer-reply':''}"><div class="budget-card-head"><div><div class="budget-card-code">${esc(b.code||'Orçamento')}</div><div class="budget-card-client">${esc(b.customerName||'Sem cliente')}</div></div><span class="budget-status status-${esc(b.status||'draft')}">${esc(statusLabel(b.status))}</span></div><div class="budget-card-meta"><span>${esc(sourceLabel(b.source))}</span><span>Emissão ${dateBr(b.issuedAt||b.createdAt)}</span><span>Validade ${dateBr(b.validUntil)}</span>${opts.length>1?`<span>${opts.length} opções</span>`:''}</div>${reply?`<div class="budget-customer-live">${reply.finalized?'✓ Cliente finalizou':'● Cliente está preenchendo'} · ${esc(opts.find(o=>String(o.id)===String(reply.selectedOptionId))?.name||'opção em análise')}</div>`:''}${b.status==='rejected'?`<div class="budget-card-loss">Motivo: ${esc(rejectionLabel(b.rejectionReason))}${b.rejectionNote?` · ${esc(b.rejectionNote)}`:''}</div>`:''}${follow?'<div class="budget-card-followup">● Follow-up pendente há mais de 3 dias</div>':''}<div class="budget-card-values"><div class="budget-card-value"><small>Total</small><strong>${money(total)}</strong></div><div class="budget-card-value"><small>Lucro bruto</small><strong>${money(b.profit||0)}</strong></div><div class="budget-card-value"><small>Margem</small><strong class="${margin<10?'margin-low':''}">${margin.toFixed(1)}%</strong></div></div><div class="budget-card-actions"><button class="btn btn-primary btn-sm" data-action="share" data-id="${esc(b.id)}">Link do cliente</button>${reply?`<button class="btn btn-ghost btn-sm" data-action="response" data-id="${esc(b.id)}">Ver respostas</button>`:''}<button class="btn btn-ghost btn-sm" data-action="preview" data-id="${esc(b.id)}">Visualizar</button>${b.status!=='converted'?`<button class="btn btn-ghost btn-sm" data-action="edit" data-id="${esc(b.id)}">Editar</button>`:''}<button class="btn btn-ghost btn-sm" data-action="duplicate" data-id="${esc(b.id)}">Duplicar</button>${follow?`<button class="btn btn-ghost btn-sm" data-action="followup" data-id="${esc(b.id)}">Follow-up feito</button>`:''}${['approved','acquiring_parts'].includes(b.status)?`<button class="btn btn-primary btn-sm" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>`:''}${b.status!=='converted'?`<button class="btn btn-danger-soft btn-sm" data-action="delete" data-id="${esc(b.id)}">Excluir</button>`:''}</div></article>`;}).join('');
+    el.querySelectorAll('[data-action]').forEach(btn=>btn.onclick=()=>handleBudgetAction(btn.dataset.action,btn.dataset.id));}
+function renderAll(){renderKpis();renderInsights();renderBudgetCards();renderTemplateList();fillTemplateSelect();}
+async function executeDuplicateBudget() {
+    if (!duplicateBudgetId) return;
+    const updatePrices = document.getElementById('duplicateUpdatePrices').checked;
+    const keepCustomer = document.getElementById('duplicateKeepCustomer').checked;
+    const id = duplicateBudgetId;
+    const btn = document.getElementById('confirmDuplicateBtn');
+    btn.disabled = true;
     try {
-        const res = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify(payload)
-        });
-        const data = await parseJsonResponse(res);
-        if (!res.ok || data.error) {
-            showToast(data.message || 'Erro ao salvar orçamento.', 'error');
-            return false;
-        }
-        if (!data.budget?.id) {
-            showToast('Resposta inválida ao salvar orçamento.', 'error');
-            return false;
-        }
-        editingBudgetId = '';
-        applyBudgetSaveResponse(data, { wasEdit, status });
-        return true;
+        const data = await api(`/api/budgets/${encodeURIComponent(id)}/duplicate`, { method:'POST', body:JSON.stringify({updatePrices, keepCustomer, validDays:7}) });
+        upsert('budgets', data.budget);
+        closeBudgetModal('budgetDuplicateModal');
+        duplicateBudgetId = '';
+        renderAll();
+        showToast('Orçamento duplicado.', 'success');
+        openEditBudget(data.budget);
     } catch (e) {
-        console.error(e);
-        showToast('Erro ao salvar orçamento.', 'error');
-        return false;
+        showToast(e.message, 'error');
+    } finally {
+        btn.disabled = false;
     }
 }
-
-async function deleteBudgetById(id) {
-    const budget = asArray(window.appData?.budgets).find((b) => String(b.id) === String(id));
-    if (!budget) return;
-    if (String(budget.status || '') === 'finalized') {
-        showToast('Orçamentos finalizados não podem ser excluídos.', 'error');
-        return;
-    }
-    const label = budget.code || 'este orçamento';
-    if (!confirm(`Excluir ${label} permanentemente?`)) return;
-
-    try {
-        const res = await fetch(`/api/budgets/${encodeURIComponent(id)}`, {
-            method: 'DELETE',
-            credentials: 'same-origin'
-        });
-        const data = await parseJsonResponse(res);
-        if (!res.ok || data.error) {
-            showToast(data.message || 'Erro ao excluir orçamento.', 'error');
-            return;
-        }
-        window.appData.budgets = asArray(window.appData.budgets).filter((b) => String(b.id) !== String(id));
-        if (Array.isArray(window.appData.cashFlowEntries)) {
-            window.appData.cashFlowEntries = window.appData.cashFlowEntries.filter(
-                (e) => String(e.budgetId || '') !== String(id)
-            );
-        }
-        if (editingBudgetId === id) editingBudgetId = '';
-        renderSavedBudgets();
-        showToast(data.message || 'Orçamento excluído.', 'success');
-    } catch (e) {
-        console.error(e);
-        showToast('Erro ao excluir orçamento.', 'error');
-    }
+function openDuplicateBudgetModal(b) {
+    duplicateBudgetId = String(b.id || '');
+    document.getElementById('duplicateBudgetCode').textContent = `${b.code || 'Orçamento'} · ${b.customerName || 'Sem cliente'}`;
+    document.getElementById('duplicateKeepPrices').checked = true;
+    document.getElementById('duplicateUpdatePrices').checked = false;
+    document.getElementById('duplicateKeepCustomer').checked = true;
+    openBudgetModal('budgetDuplicateModal');
 }
-
-function openEditBudgetById(id) {
-    const budget = asArray(window.appData?.budgets).find((b) => String(b.id) === String(id));
-    if (!budget) return;
-    if (String(budget.status || '') === 'finalized') {
-        showToast('Orçamentos finalizados não podem ser editados.', 'error');
-        return;
+async function handleBudgetAction(action,id){
+    const b=budgets().find(x=>String(x.id)===String(id));
+    if(!b)return;
+    if(action==='share'){
+        try{const data=await api(`/api/budgets/${encodeURIComponent(id)}/public-link`,{method:'POST',body:JSON.stringify({})});if(data.budget)upsert('budgets',data.budget);await copyBudgetLink(data.url);renderBudgetCards();showToast('Link do cliente copiado.','success');}catch(e){showToast(e.message,'error');}return;
     }
-    openEditBudgetModal(budget);
-}
-
-function openEditBudgetModal(budget) {
-    editingBudgetId = String(budget.id || '');
-    budgetItemsDraft = asArray(budget.items).map((item) => ({
-        kind: item.kind === 'product' ? 'product' : 'custom',
-        productId: String(item.productId || ''),
-        sku: String(item.sku || ''),
-        name: String(item.name || ''),
-        qty: asNumber(item.qty),
-        unitPrice: asNumber(item.unitPrice),
-        unitCost: asNumber(item.unitCost)
-    }));
-
-    const titleEl = document.getElementById('budgetCreateModalTitle');
-    if (titleEl) titleEl.textContent = `Editar orçamento · ${budget.code || ''}`;
-
-    const discountInput = document.getElementById('budgetDiscountInput');
-    const extraInput = document.getElementById('budgetExtraInput');
-    const date = document.getElementById('budgetdate');
-    const notes = document.getElementById('budgetNotes');
-    const productSearch = document.getElementById('budgetProductSearch');
-
-    if (discountInput) discountInput.value = String(asNumber(budget.discount));
-    if (extraInput) extraInput.value = String(asNumber(budget.extra));
-    if (date) date.value = String(budget.validUntil || '').slice(0, 10);
-    if (notes) notes.value = String(budget.notes || '');
-    if (productSearch) productSearch.value = '';
-
-    if (budget.customerId) {
-        const c = customerList().find((row) => String(row.id) === String(budget.customerId));
-        if (c) {
-            applyCustomerToForm(c);
-        } else {
-            clearSelectedCustomer();
-            const nameEl = document.getElementById('budgetCustomerName');
-            const phoneEl = document.getElementById('budgetCustomerPhone');
-            const emailEl = document.getElementById('budgetCustomerEmail');
-            if (nameEl) nameEl.value = String(budget.customerName || '');
-            if (phoneEl) phoneEl.value = String(budget.customerPhone || '');
-            if (emailEl) emailEl.value = String(budget.customerEmail || '');
-            if (document.getElementById('budgetCustomerId')) {
-                document.getElementById('budgetCustomerId').value = String(budget.customerId);
+    if(action==='response')return showCustomerResponse(b);
+    if(action==='preview')return openBudgetPreview(b);
+    if(action==='edit')return openEditBudget(b);
+    if(action==='delete'){
+        openBudgetConfirm({
+            title:'Excluir orçamento',
+            message:`Excluir ${b.code || 'este orçamento'} de ${b.customerName || 'sem cliente'}? Esta ação não pode ser desfeita.`,
+            confirmText:'Excluir orçamento',
+            danger:true,
+            onConfirm:async()=>{
+                try{await api(`/api/budgets/${encodeURIComponent(id)}`,{method:'DELETE'});window.appData.budgets=budgets().filter(x=>String(x.id)!==String(id));renderAll();showToast('Orçamento excluído.','success');}
+                catch(e){showToast(e.message,'error');}
             }
-        }
-    } else {
-        clearSelectedCustomer();
-        const nameEl = document.getElementById('budgetCustomerName');
-        const phoneEl = document.getElementById('budgetCustomerPhone');
-        const emailEl = document.getElementById('budgetCustomerEmail');
-        if (nameEl) nameEl.value = String(budget.customerName || '');
-        if (phoneEl) phoneEl.value = String(budget.customerPhone || '');
-        if (emailEl) emailEl.value = String(budget.customerEmail || '');
-    }
-
-    renderDraftItems();
-    const createModal = document.getElementById('budgetCreateModal');
-    if (createModal) createModal.classList.add('open');
-}
-
-async function finalizeById(id) {
-    try {
-        const res = await fetch(`/api/budgets/${encodeURIComponent(id)}/finalize`, {
-            method: 'PATCH',
-            credentials: 'same-origin'
         });
-        const data = await parseJsonResponse(res);
-        if (!res.ok || data.error) {
-            showToast(data.message || 'Erro ao finalizar orçamento.', 'error');
-            return;
-        }
-        if (!data.budget?.id) {
-            showToast('Resposta inválida ao finalizar orçamento.', 'error');
-            return;
-        }
-        window.appData.budgets = asArray(window.appData.budgets).map((item) =>
-            String(item.id) === String(data.budget.id) ? data.budget : item
-        );
-        if (data.cashFlowEntry) {
-            if (!Array.isArray(window.appData.cashFlowEntries)) window.appData.cashFlowEntries = [];
-            const exists = window.appData.cashFlowEntries.some((e) => String(e.id) === String(data.cashFlowEntry.id));
-            if (!exists) window.appData.cashFlowEntries.unshift(data.cashFlowEntry);
-        }
-        renderSavedBudgets();
-        showToast('Orçamento finalizado com sucesso.', 'success');
-        showNotificationStatus(data.notifications);
-        openTemplateModal(data.budget);
-    } catch (e) {
-        console.error(e);
-        showToast('Erro ao finalizar orçamento.', 'error');
+        return;
     }
+    if(action==='duplicate')return openDuplicateBudgetModal(b);
+    if(action==='followup'){
+        try{const data=await api(`/api/budgets/${encodeURIComponent(id)}/follow-up`,{method:'PATCH',body:JSON.stringify({done:true})});upsert('budgets',data.budget);renderAll();showToast('Follow-up registrado.','success');}
+        catch(e){showToast(e.message,'error');}
+        return;
+    }
+    if(action==='convert')return openConvertModal(b);
 }
 
-function openTemplateById(id) {
-    const budget = asArray(window.appData?.budgets).find((item) => String(item.id) === String(id));
-    if (!budget) return;
-    openTemplateModal(budget);
-}
+function showCustomerResponse(b){const r=b.customerResponse||{},o=arr(b.options).find(x=>String(x.id)===String(r.selectedOptionId)),choices=r.choices||{};const selected=arr(o?.items).filter(i=>choices[i.id]?.included!==false).map(i=>`<li>${esc(i.name)} · qtd. ${num(choices[i.id]?.qty||i.qty)}</li>`).join('');const removed=arr(o?.items).filter(i=>choices[i.id]?.included===false).map(i=>esc(i.name)).join(', ');const requested=arr(r.requestedItems).map(i=>`<li><strong>${esc(i.name)}</strong>${i.details?` — ${esc(i.details)}`:''}</li>`).join('');let modal=document.getElementById('budgetCustomerResponseModal');if(!modal){modal=document.createElement('div');modal.id='budgetCustomerResponseModal';modal.className='pdv-modal-overlay budget-modal-overlay';document.body.appendChild(modal);}modal.innerHTML=`<div class="pdv-modal-card small-modal-card"><div class="pdv-modal-header"><div class="pdv-modal-title">Resposta de ${esc(r.customerName||b.customerName)}</div><button class="pdv-modal-close" type="button">✕</button></div><div class="pdv-modal-body customer-response-body"><span class="budget-customer-live">${r.finalized?'✓ Finalizado pelo cliente':'● Preenchimento em andamento'}</span><h4>${esc(o?.name||'Opção selecionada')}</h4><p>${esc(o?.description||'')}</p><strong>Itens mantidos</strong><ul>${selected||'<li>Nenhum</li>'}</ul>${removed?`<strong>Itens removidos</strong><p>${removed}</p>`:''}${requested?`<strong>Itens solicitados</strong><ul>${requested}</ul>`:''}${r.notes?`<strong>Observações</strong><p>${esc(r.notes)}</p>`:''}</div></div>`;modal.querySelector('.pdv-modal-close').onclick=()=>closeBudgetModal(modal.id);modal.onclick=e=>{if(e.target===modal)closeBudgetModal(modal.id)};openBudgetModal(modal.id);}
 
-function generatePdf() {
-    if (!budgetCurrentRecord) return;
-    printBudgetTemplatePdf(budgetCurrentRecord);
-}
+// ---------- Preview/share ----------
+function openBudgetPreview(b){budgetCurrentRecord=b;openBudgetModal('budgetTemplateModal');loadBudgetTemplatePreview(b,document.getElementById('budgetTemplatePreview'));}
+function closeBudgetPreview(){closeBudgetModal('budgetTemplateModal');}
+function showNotificationStatus(n){if(!n)return;if(n.email?.sent)showToast('Email enviado automaticamente.','success');if(n.whatsapp?.sent)showToast('WhatsApp enviado automaticamente.','success');}
+async function openWhatsappForBudget(){if(!budgetCurrentRecord)return;let phone=String(budgetCurrentRecord.customerPhone||'').replace(/\D/g,'');if(phone&&!phone.startsWith('55'))phone='55'+phone;if(!phone)return showToast('Cliente sem WhatsApp cadastrado.','error');const popup=window.open('about:blank','_blank');if(!popup)return showToast('Permita pop-ups para abrir o WhatsApp.','error');try{const data=await api('/api/budgets/template',{method:'POST',body:JSON.stringify({kind:'whatsapp',budget:budgetCurrentRecord})});popup.location.href=`https://wa.me/${phone}?text=${encodeURIComponent(data.html||'')}`;}catch(e){try{popup.close();}catch(_){}showToast(e.message,'error');}}
+function generatePdf(){if(budgetCurrentRecord)printBudgetTemplatePdf(budgetCurrentRecord);}function downloadImage(){if(budgetCurrentRecord)downloadBudgetTemplateImage(budgetCurrentRecord);}
 
-function downloadImage() {
-    if (!budgetCurrentRecord) return;
-    downloadBudgetTemplateImage(budgetCurrentRecord);
+// ---------- Save as template ----------
+function openSaveCurrentBudgetAsTemplate() {
+    syncOptionHeader();
+    syncAdjustmentsFromUi();
+    const o = activeOption();
+    if (!o || !o.items?.length) return showToast('Adicione itens à opção antes de salvá-la como modelo.', 'error');
+    const baseName = (o.name && o.name !== 'Proposta') ? o.name : 'InfoCore Gamer';
+    document.getElementById('saveTemplateFromBudgetName').value = baseName;
+    document.getElementById('saveTemplateFromBudgetCategory').value = 'PC Gamer';
+    document.getElementById('saveTemplateFromBudgetValidDays').value = 7;
+    openBudgetModal('budgetSaveTemplateModal');
+    setTimeout(()=>document.getElementById('saveTemplateFromBudgetName')?.focus(),80);
 }
-
-async function copyText(value, okMessage) {
+async function saveCurrentBudgetAsTemplate() {
+    syncOptionHeader();
+    syncAdjustmentsFromUi();
+    const o = activeOption();
+    if (!o || !o.items?.length) return showToast('A opção atual está sem itens.', 'error');
+    const name = document.getElementById('saveTemplateFromBudgetName').value.trim();
+    const category = document.getElementById('saveTemplateFromBudgetCategory').value.trim() || 'Outros';
+    const defaultValidDays = Math.min(90, Math.max(1, Math.trunc(num(document.getElementById('saveTemplateFromBudgetValidDays').value) || 7)));
+    if (!name) return showToast('Informe o nome do modelo.', 'error');
+    const payload = {
+        name,
+        category,
+        description: o.description || '',
+        active: true,
+        defaultValidDays,
+        deadline: document.getElementById('budgetDeadline').value.trim(),
+        warrantyText: document.getElementById('budgetWarrantyText').value.trim(),
+        paymentTerms: document.getElementById('budgetPaymentTerms').value.trim(),
+        includedServices: document.getElementById('budgetIncludedServices').value.split('\n').map(x=>x.trim()).filter(Boolean),
+        customerNotes: document.getElementById('budgetNotes').value.trim(),
+        internalNotes: document.getElementById('budgetInternalNotes').value.trim(),
+        items: o.items.map((item)=>({...clone(item), priceMode:item.productId ? 'live' : 'snapshot'}))
+    };
+    const btn = document.getElementById('confirmSaveTemplateBtn');
+    btn.disabled = true;
     try {
-        await navigator.clipboard.writeText(value);
-        showToast(okMessage, 'success');
-    } catch (e) {
-        console.error(e);
-        showToast('Não foi possível copiar automaticamente.', 'error');
+        const data = await api('/api/budget-templates', {method:'POST', body:JSON.stringify(payload)});
+        upsert('budgetTemplates', data.template);
+        closeBudgetModal('budgetSaveTemplateModal');
+        renderTemplateList();
+        fillTemplateSelect();
+        showToast('Modelo criado a partir da opção atual.', 'success');
+    } catch(e) {
+        showToast(e.message, 'error');
+    } finally {
+        btn.disabled = false;
     }
 }
 
-function showNotificationStatus(notifications) {
-    if (!notifications || typeof notifications !== 'object') return;
-    const email = notifications.email;
-    const whatsapp = notifications.whatsapp;
-    if (email?.sent) showToast('Email enviado automaticamente.', 'success');
-    else if (email && !email.skipped) showToast(`Email: ${email.reason || 'falha no envio'}`, 'error');
-    if (whatsapp?.sent) showToast('WhatsApp enviado automaticamente.', 'success');
-    else if (whatsapp && !whatsapp.skipped) showToast(`WhatsApp: ${whatsapp.reason || 'falha no envio'}`, 'error');
-}
+// ---------- Convert sale ----------
+function openConvertModal(b){convertBudgetId=String(b.id);const select=document.getElementById('convertOptionSelect');select.innerHTML=arr(b.options).map(o=>`<option value="${esc(o.id)}"${String(o.id)===String(b.selectedOptionId)?' selected':''}>${esc(o.name)} — ${money(o.total)}</option>`).join('');document.getElementById('convertPayment').value='money';document.getElementById('convertCashReceived').value='';document.getElementById('convertAllowStock').checked=false;document.getElementById('convertPaymentConfirmed').checked=false;toggleCashReceived();openBudgetModal('budgetConvertModal');}
+function toggleCashReceived(){const show=document.getElementById('convertPayment').value==='money';document.getElementById('convertCashReceivedField').hidden=!show;}
+async function confirmConvert(){if(!convertBudgetId)return;const paymentConfirmed=document.getElementById('convertPaymentConfirmed').checked;if(!paymentConfirmed)return showToast('Confirme que o pagamento já foi recebido/aprovado antes de registrar a venda.','error');const id=convertBudgetId;const payload={optionId:document.getElementById('convertOptionSelect').value,payment:document.getElementById('convertPayment').value,cashReceived:document.getElementById('convertCashReceived').value,paymentConfirmed:true,allowInsufficientStock:document.getElementById('convertAllowStock').checked};const btn=document.getElementById('confirmConvertBtn');btn.disabled=true;try{const data=await api(`/api/budgets/${encodeURIComponent(id)}/convert-sale`,{method:'POST',body:JSON.stringify(payload)});if(data.budget)upsert('budgets',data.budget);closeBudgetModal('budgetConvertModal');renderAll();showToast(`Venda ${data.saleCode||''} criada com sucesso.`,'success');}catch(e){if(e.data?.stockInsufficient&&!payload.allowInsufficientStock)showToast(`${e.message} Marque a opção de permitir estoque insuficiente apenas se tiver certeza.`,'error');else showToast(e.message,'error');}finally{btn.disabled=false;}}
 
-function moveAcIndex(listEl, delta) {
-    const items = listEl ? [...listEl.querySelectorAll('.budget-ac-item')] : [];
-    if (!items.length) return -1;
-    let idx = budgetProductAcIndex;
-    if (listEl.id === 'budgetCustomerResults') idx = budgetCustomerAcIndex;
-    idx = (idx + delta + items.length) % items.length;
-    items.forEach((el, i) => el.classList.toggle('is-active', i === idx));
-    if (listEl.id === 'budgetCustomerResults') budgetCustomerAcIndex = idx;
-    else budgetProductAcIndex = idx;
-    return idx;
-}
-
-function bindProductSearch() {
-    const input = document.getElementById('budgetProductSearch');
-    const listEl = document.getElementById('budgetProductResults');
-    if (!input) return;
-
-    input.addEventListener('input', () => renderProductAcList(input.value));
-    input.addEventListener('focus', () => renderProductAcList(input.value));
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            if (listEl && !listEl.hidden) moveAcIndex(listEl, 1);
-            else renderProductAcList(input.value);
-            return;
-        }
-        if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (listEl && !listEl.hidden) moveAcIndex(listEl, -1);
-            return;
-        }
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            if (listEl && !listEl.hidden && budgetProductAcIndex >= 0) {
-                const btn = listEl.querySelectorAll('.budget-ac-item')[budgetProductAcIndex];
-                if (btn) selectProductFromAc(btn.getAttribute('data-product-id'));
-            } else {
-                addProductItem();
-            }
-            return;
-        }
-        if (e.key === 'Escape') hideProductAcList();
+// ---------- Events ----------
+function bindAutocompleteInput(inputId,resultId,context){
+    const input=document.getElementById(inputId),results=document.getElementById(resultId);
+    if(!input||!results)return;
+    const render=()=>context==='customer'?renderCustomerResults(input.value):renderProductResults(input.value,context);
+    input.addEventListener('input',render);
+    input.addEventListener('focus',render);
+    input.addEventListener('keydown',(e)=>{
+        if(e.key==='Escape'){results.hidden=true;return;}
+        const buttons=[...results.querySelectorAll('.budget-ac-item')];
+        if(!buttons.length)return;
+        const getIndex=()=>context==='customer'?budgetCustomerAcIndex:(context==='template'?templateProductAcIndex:budgetProductAcIndex);
+        const setIndex=(idx)=>{
+            const safe=Math.max(0,Math.min(buttons.length-1,idx));
+            if(context==='customer')budgetCustomerAcIndex=safe;else if(context==='template')templateProductAcIndex=safe;else budgetProductAcIndex=safe;
+            buttons.forEach((b,i)=>b.classList.toggle('is-active',i===safe));
+            buttons[safe]?.scrollIntoView({block:'nearest'});
+        };
+        if(e.key==='ArrowDown'){e.preventDefault();setIndex(getIndex()+1);return;}
+        if(e.key==='ArrowUp'){e.preventDefault();setIndex(getIndex()-1);return;}
+        if(e.key==='Enter'){e.preventDefault();const btn=buttons[Math.max(0,getIndex())];if(btn)btn.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));}
     });
 }
-
-function bindCustomerSearch() {
-    const input = document.getElementById('budgetCustomerSearch');
-    const listEl = document.getElementById('budgetCustomerResults');
-    const clearBtn = document.getElementById('budgetCustomerClearBtn');
-    if (!input) return;
-
-    input.addEventListener('input', () => renderCustomerAcList(input.value));
-    input.addEventListener('focus', () => renderCustomerAcList(input.value));
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            if (listEl && !listEl.hidden) moveAcIndex(listEl, 1);
-            else renderCustomerAcList(input.value);
-            return;
-        }
-        if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (listEl && !listEl.hidden) moveAcIndex(listEl, -1);
-            return;
-        }
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            if (listEl && !listEl.hidden && budgetCustomerAcIndex >= 0) {
-                const btn = listEl.querySelectorAll('.budget-ac-item')[budgetCustomerAcIndex];
-                if (btn) selectCustomerFromAc(btn.getAttribute('data-customer-id'));
-            }
-            return;
-        }
-        if (e.key === 'Escape') hideCustomerAcList();
-    });
-
-    if (clearBtn) clearBtn.addEventListener('click', clearSelectedCustomer);
+function bindEvents(){
+    document.getElementById('templateUploadImageBtn').onclick=uploadTemplateImage; document.getElementById('templateImageUrl').oninput=(e)=>updateTemplateImagePreview(e.target.value.trim());
+    document.getElementById('openCreateBudgetModalBtn').onclick=openNewBudget; document.getElementById('closeCreateBudgetModalBtn').onclick=()=>closeBudgetModal('budgetCreateModal'); document.getElementById('cancelCreateBudgetBtn').onclick=()=>closeBudgetModal('budgetCreateModal'); document.getElementById('budgetSaveBtn').onclick=saveBudgetEditor; document.getElementById('budgetSaveAsTemplateBtn').onclick=openSaveCurrentBudgetAsTemplate;
+    document.getElementById('budgetLoadTemplateBtn').onclick=()=>{const t=templates().find(x=>String(x.id)===String(document.getElementById('budgetTemplateSelect').value));if(t)loadTemplateIntoBudget(t);};
+    document.getElementById('addBudgetOptionBtn').onclick=()=>{syncOptionHeader();syncAdjustmentsFromUi();const o=newOption(`Opção ${budgetOptionsDraft.length+1}`);budgetOptionsDraft.push(o);activeBudgetOptionId=o.id;renderOptionTabs();renderBudgetItems();};
+    document.getElementById('duplicateBudgetOptionBtn').onclick=()=>{syncOptionHeader();syncAdjustmentsFromUi();const o=activeOption();if(!o)return;const c=clone(o);c.id=uuid();c.name=`${o.name} (cópia)`;c.recommended=false;c.items=c.items.map(x=>({...x,id:uuid()}));budgetOptionsDraft.push(c);activeBudgetOptionId=c.id;renderOptionTabs();renderBudgetItems();};
+    document.getElementById('removeBudgetOptionBtn').onclick=()=>{if(budgetOptionsDraft.length<=1)return showToast('O orçamento precisa ter pelo menos uma opção.','error');const i=budgetOptionsDraft.findIndex(o=>String(o.id)===String(activeBudgetOptionId));budgetOptionsDraft.splice(i,1);if(!budgetOptionsDraft.some(o=>o.recommended))budgetOptionsDraft[0].recommended=true;activeBudgetOptionId=budgetOptionsDraft[Math.max(0,i-1)]?.id||budgetOptionsDraft[0].id;renderOptionTabs();renderBudgetItems();};
+    document.getElementById('budgetOptionName').onchange=()=>{const o=activeOption();if(o){o.name=document.getElementById('budgetOptionName').value.trim()||'Proposta';renderOptionTabs();}};
+    document.getElementById('budgetOptionRecommended').onchange=()=>{const o=activeOption();if(!o)return;const checked=document.getElementById('budgetOptionRecommended').checked;if(checked)budgetOptionsDraft.forEach(x=>x.recommended=x.id===o.id);else o.recommended=false;if(!budgetOptionsDraft.some(x=>x.recommended))o.recommended=true;renderOptionTabs();};
+    ['budgetDiscountType','budgetDiscountValue','budgetExtraType','budgetExtraValue'].forEach(id=>document.getElementById(id).addEventListener('change',syncAdjustmentsFromUi));
+    document.getElementById('budgetAddProductBtn').onclick=()=>{if(selectedBudgetProductId)addProductToContext(selectedBudgetProductId,'budget');else showToast('Selecione um produto.','info');}; document.getElementById('budgetAddCustomBtn').onclick=()=>{activeOption().items.push(normalizeDraftItem({kind:'custom',name:'Serviço personalizado',qty:1,unitPrice:0,condition:'na'}));renderBudgetItems();};
+    document.getElementById('budgetStatus').onchange=toggleRejectionFields; document.getElementById('budgetIssuedAt').onchange=()=>{const issue=document.getElementById('budgetIssuedAt').value;const valid=document.getElementById('budgetValidUntil');if(valid.value<issue)valid.value=addDays(issue,7);};
+    ['budgetSearchInput','budgetStatusFilter','budgetSourceFilter','budgetMonthFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='budgetSearchInput'?'input':'change',renderBudgetCards));
+    document.getElementById('budgetsGrid').onclick=()=>{};
+    document.getElementById('openTemplatesBtn').onclick=()=>{renderTemplateList();if(!editingTemplateId&&templates()[0])loadTemplateEditor(templates()[0]);else if(!templates().length)resetTemplateEditor();openBudgetModal('budgetTemplatesModal');}; document.getElementById('closeTemplatesBtn').onclick=()=>closeBudgetModal('budgetTemplatesModal'); document.getElementById('newTemplateBtn').onclick=resetTemplateEditor; document.getElementById('templateSearchInput').oninput=renderTemplateList; document.getElementById('saveTemplateBtn').onclick=saveTemplate;
+    document.getElementById('templateAddCustomBtn').onclick=()=>{templateItemsDraft.push(normalizeDraftItem({kind:'custom',name:'Serviço personalizado',qty:1,unitPrice:0,condition:'na',priceMode:'snapshot'},{forTemplate:true}));renderTemplateItems();};
+    document.getElementById('templateAddProductBtn').onclick=()=>{if(selectedTemplateProductId)addProductToContext(selectedTemplateProductId,'template');else{document.getElementById('templateProductSearch').focus();showToast('Pesquise e selecione um produto ou serviço.','info');}};
+    document.getElementById('deleteTemplateBtn').onclick=()=>{if(!editingTemplateId)return;const id=editingTemplateId;const t=templates().find(x=>String(x.id)===String(id));openBudgetConfirm({title:'Excluir modelo',message:`Excluir o modelo \"${t?.name||'selecionado'}\"? Orçamentos já criados não serão alterados.`,confirmText:'Excluir modelo',danger:true,onConfirm:async()=>{try{await api(`/api/budget-templates/${encodeURIComponent(id)}`,{method:'DELETE'});window.appData.budgetTemplates=templates().filter(x=>String(x.id)!==String(id));resetTemplateEditor();showToast('Modelo excluído.','success');}catch(e){showToast(e.message,'error');}}});};
+    document.getElementById('duplicateTemplateBtn').onclick=async()=>{if(!editingTemplateId)return;try{const data=await api(`/api/budget-templates/${encodeURIComponent(editingTemplateId)}/duplicate`,{method:'POST',body:JSON.stringify({})});upsert('budgetTemplates',data.template);loadTemplateEditor(data.template);showToast('Modelo duplicado.','success');}catch(e){showToast(e.message,'error');}};
+    document.getElementById('closeConvertBtn').onclick=()=>closeBudgetModal('budgetConvertModal'); document.getElementById('cancelConvertBtn').onclick=()=>closeBudgetModal('budgetConvertModal'); document.getElementById('convertPayment').onchange=toggleCashReceived; document.getElementById('confirmConvertBtn').onclick=confirmConvert;
+    document.getElementById('closeDuplicateBtn').onclick=()=>{duplicateBudgetId='';closeBudgetModal('budgetDuplicateModal');}; document.getElementById('cancelDuplicateBtn').onclick=()=>{duplicateBudgetId='';closeBudgetModal('budgetDuplicateModal');}; document.getElementById('confirmDuplicateBtn').onclick=executeDuplicateBudget;
+    document.getElementById('closeSaveTemplateBtn').onclick=()=>closeBudgetModal('budgetSaveTemplateModal'); document.getElementById('cancelSaveTemplateBtn').onclick=()=>closeBudgetModal('budgetSaveTemplateModal'); document.getElementById('confirmSaveTemplateBtn').onclick=saveCurrentBudgetAsTemplate;
+    const cancelConfirm=()=>{pendingBudgetConfirm=null;closeBudgetModal('budgetConfirmModal');}; document.getElementById('closeBudgetConfirmBtn').onclick=cancelConfirm; document.getElementById('cancelBudgetConfirmBtn').onclick=cancelConfirm; document.getElementById('confirmBudgetConfirmBtn').onclick=async()=>{const action=pendingBudgetConfirm;pendingBudgetConfirm=null;closeBudgetModal('budgetConfirmModal');if(action){try{await action();}catch(e){console.error(e);showToast(e.message||'Erro na operação.','error');}}};
+    document.getElementById('closeBudgetTemplateModalBtn').onclick=closeBudgetPreview; document.getElementById('budgetTemplateDoneBtn').onclick=closeBudgetPreview; document.getElementById('budgetGeneratePdfBtn').onclick=generatePdf; document.getElementById('budgetDownloadImageBtn').onclick=downloadImage; document.getElementById('budgetOpenWhatsappBtn').onclick=openWhatsappForBudget;
+    document.getElementById('budgetCopyWhatsappBtn').onclick=async()=>{if(!budgetCurrentRecord)return;try{await copyBudgetTemplateText('whatsapp',budgetCurrentRecord);showToast('Texto do WhatsApp copiado.','success');}catch(e){showToast(e.message||'Erro ao copiar.','error');}}; document.getElementById('budgetCopyEmailBtn').onclick=async()=>{if(!budgetCurrentRecord)return;try{await copyBudgetTemplateText('email',budgetCurrentRecord);showToast('Email copiado.','success');}catch(e){showToast(e.message||'Erro ao copiar.','error');}};
+    bindAutocompleteInput('budgetCustomerSearch','budgetCustomerResults','customer'); bindAutocompleteInput('budgetProductSearch','budgetProductResults','budget'); bindAutocompleteInput('templateProductSearch','templateProductResults','template');
+    document.addEventListener('click',(e)=>{[['budgetCustomerAcWrap','budgetCustomerResults'],['budgetProductAcWrap','budgetProductResults'],['templateProductAcWrap','templateProductResults']].forEach(([wrap,list])=>{const w=document.getElementById(wrap);if(w&&!w.contains(e.target))document.getElementById(list).hidden=true;});});
+    document.addEventListener('keydown',(e)=>{if(e.key==='Escape'&&document.querySelector('.budget-modal-overlay.open')){e.preventDefault();closeTopBudgetModal();return;}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'&&document.getElementById('budgetCreateModal').classList.contains('open')){e.preventDefault();saveBudgetEditor();}});
+    ['budgetConvertModal','budgetTemplateModal','budgetDuplicateModal','budgetSaveTemplateModal','budgetConfirmModal'].forEach(id=>document.getElementById(id)?.addEventListener('click',(e)=>{if(e.target.id===id)closeBudgetModal(id);}));
 }
 
-function bindEvents() {
-    const openCreateBtn = document.getElementById('openCreateBudgetModalBtn');
-    const createModal = document.getElementById('budgetCreateModal');
-    const closeCreateBtn = document.getElementById('closeCreateBudgetModalBtn');
-    const cancelCreateBtn = document.getElementById('cancelCreateBudgetBtn');
-    const addProductBtn = document.getElementById('budgetAddProductBtn');
-    const addCustomBtn = document.getElementById('budgetAddCustomBtn');
-    const saveDraftBtn = document.getElementById('budgetPageSaveDraftBtn');
-    const saveFinalBtn = document.getElementById('budgetPageSaveFinalBtn');
-    const searchInput = document.getElementById('budgetSearchInput');
-    const discountInput = document.getElementById('budgetDiscountInput');
-    const extraInput = document.getElementById('budgetExtraInput');
-    const closeBtn = document.getElementById('closeBudgetTemplateModalBtn');
-    const doneBtn = document.getElementById('budgetTemplateDoneBtn');
-    const modal = document.getElementById('budgetTemplateModal');
-    const copyWhatsappBtn = document.getElementById('budgetCopyWhatsappBtn');
-    const copyEmailBtn = document.getElementById('budgetCopyEmailBtn');
-    const downloadImageBtn = document.getElementById('budgetDownloadImageBtn');
-    const generatePdfBtn = document.getElementById('budgetGeneratePdfBtn');
-
-    const closeCreateModal = () => {
-        editingBudgetId = '';
-        if (createModal) createModal.classList.remove('open');
-        hideProductAcList();
-        hideCustomerAcList();
-    };
-
-    const openCreateModal = () => {
-        editingBudgetId = '';
-        const titleEl = document.getElementById('budgetCreateModalTitle');
-        if (titleEl) titleEl.textContent = 'Criar orçamento';
-        budgetItemsDraft = [];
-        clearSelectedCustomer();
-        const customerName = document.getElementById('budgetCustomerName');
-        const customerPhone = document.getElementById('budgetCustomerPhone');
-        const customerEmail = document.getElementById('budgetCustomerEmail');
-        const date = document.getElementById('budgetdate');
-        const notes = document.getElementById('budgetNotes');
-        const discountInputReset = document.getElementById('budgetDiscountInput');
-        const extraInputReset = document.getElementById('budgetExtraInput');
-        const productSearch = document.getElementById('budgetProductSearch');
-        if (customerName) customerName.value = '';
-        if (customerPhone) customerPhone.value = '';
-        if (customerEmail) customerEmail.value = '';
-        if (date) date.value = new Date().toISOString().slice(0, 10);
-        if (notes) notes.value = '';
-        if (discountInputReset) discountInputReset.value = '0';
-        if (extraInputReset) extraInputReset.value = '0';
-        if (productSearch) productSearch.value = '';
-        renderDraftItems();
-        if (createModal) createModal.classList.add('open');
-        setTimeout(() => document.getElementById('budgetCustomerSearch')?.focus(), 80);
-    };
-
-    if (openCreateBtn) openCreateBtn.addEventListener('click', openCreateModal);
-    if (closeCreateBtn) closeCreateBtn.addEventListener('click', closeCreateModal);
-    if (cancelCreateBtn) cancelCreateBtn.addEventListener('click', closeCreateModal);
-    if (createModal) createModal.addEventListener('click', (e) => { if (e.target === createModal) closeCreateModal(); });
-    if (addProductBtn) addProductBtn.addEventListener('click', addProductItem);
-    if (addCustomBtn) addCustomBtn.addEventListener('click', addCustomItem);
-    if (saveDraftBtn) saveDraftBtn.addEventListener('click', async () => {
-        const ok = await saveBudget('draft');
-        if (ok) closeCreateModal();
-    });
-    if (saveFinalBtn) saveFinalBtn.addEventListener('click', async () => {
-        const ok = await saveBudget('finalized');
-        if (ok) closeCreateModal();
-    });
-    if (searchInput) searchInput.addEventListener('input', renderSavedBudgets);
-
-    const onBudgetCardClick = (e) => {
-        const btn = e.target.closest('[data-budget-action]');
-        if (!btn) return;
-        const id = String(btn.getAttribute('data-budget-id') || '').trim();
-        const action = String(btn.getAttribute('data-budget-action') || '').trim();
-        if (!id) return;
-        if (action === 'template') openTemplateById(id);
-        else if (action === 'edit') openEditBudgetById(id);
-        else if (action === 'delete') deleteBudgetById(id);
-        else if (action === 'finalize') finalizeById(id);
-    };
-    document.getElementById('budgetsDraftGrid')?.addEventListener('click', onBudgetCardClick);
-    document.getElementById('budgetsFinalGrid')?.addEventListener('click', onBudgetCardClick);
-    if (discountInput) discountInput.addEventListener('input', renderTotals);
-    if (extraInput) extraInput.addEventListener('input', renderTotals);
-    if (closeBtn) closeBtn.addEventListener('click', closeTemplateModal);
-    if (doneBtn) doneBtn.addEventListener('click', closeTemplateModal);
-    if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeTemplateModal(); });
-    if (copyWhatsappBtn) copyWhatsappBtn.addEventListener('click', async () => {
-        if (!budgetCurrentRecord) return;
-        try {
-            await copyBudgetTemplateText('whatsapp', budgetCurrentRecord);
-            showToast('Template WhatsApp copiado.', 'success');
-        } catch (e) {
-            console.error(e);
-            showToast('Não foi possível copiar o template.', 'error');
-        }
-    });
-    if (copyEmailBtn) copyEmailBtn.addEventListener('click', async () => {
-        if (!budgetCurrentRecord) return;
-        try {
-            await copyBudgetTemplateText('email', budgetCurrentRecord);
-            showToast('Template de email copiado.', 'success');
-        } catch (e) {
-            console.error(e);
-            showToast('Não foi possível copiar o template.', 'error');
-        }
-    });
-    if (downloadImageBtn) downloadImageBtn.addEventListener('click', downloadImage);
-    if (generatePdfBtn) generatePdfBtn.addEventListener('click', generatePdf);
-
-    bindProductSearch();
-    bindCustomerSearch();
-
-    document.addEventListener('click', (e) => {
-        const pWrap = document.getElementById('budgetProductAcWrap');
-        const cWrap = document.getElementById('budgetCustomerAcWrap');
-        if (pWrap && !pWrap.contains(e.target)) hideProductAcList();
-        if (cWrap && !cWrap.contains(e.target)) hideCustomerAcList();
-    });
-}
-
-async function ensureBudgetCustomers() {
-    window.appData = window.appData || {};
-    if (Array.isArray(window.appData.customers) && window.appData.customers.length) return;
-    try {
-        const res = await fetch('/api/customers', { credentials: 'same-origin' });
-        const data = await res.json();
-        if (!res.ok || data.error) return;
-        window.appData.customers = asArray(data.customers);
-    } catch (e) {
-        console.error(e);
-    }
-}
-
-function openCreateModalWithOptionalCustomer(customerId) {
-    const openCreateBtn = document.getElementById('openCreateBudgetModalBtn');
-    if (openCreateBtn) openCreateBtn.click();
-    if (!customerId) return;
-    const c = customerList().find((row) => String(row.id) === String(customerId));
-    if (c) applyCustomerToForm(c);
-}
-
-function initBudgetsPage() {
-    updateTopbarTitle('Orçamentos');
-    markNavActive('/budgets');
-    ensureBudgetCustomers().then(() => {
-        renderDraftItems();
-        renderSavedBudgets();
-        bindEvents();
-
-        const params = new URLSearchParams(window.location.search);
-        const preCustomer = params.get('customer');
-        if (preCustomer) openCreateModalWithOptionalCustomer(preCustomer);
-        const openBudgetId = params.get('open');
-        if (openBudgetId) {
-            setTimeout(() => openEditBudgetById(openBudgetId), 120);
-        }
-    });
-}
-
-function bootBudgets() {
-    whenAppReady(() => initBudgetsPage());
-}
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootBudgets);
-} else {
-    bootBudgets();
-}
+function initBudgetsPage(){document.querySelectorAll('.budget-modal-overlay').forEach((m)=>{m.classList.remove('open');m.setAttribute('aria-hidden','true');m.hidden=true;});syncBudgetModalLock();updateTopbarTitle('Orçamentos');markNavActive('/budgets');document.getElementById('budgetMonthFilter').value=todayIso().slice(0,7);fillTemplateSelect();renderAll();bindEvents();setInterval(async()=>{if(document.hidden||document.querySelector('.budget-modal-overlay.open'))return;try{const data=await api('/api/budgets');window.appData.budgets=data.budgets;renderAll();}catch(_){}},4000);const params=new URLSearchParams(location.search);const customerId=params.get('customer');if(customerId){openNewBudget();const c=customers().find(x=>String(x.id)===String(customerId));if(c)applyCustomer(c);}const openId=params.get('open');if(openId){const b=budgets().find(x=>String(x.id)===String(openId));if(b)setTimeout(()=>openEditBudget(b),100);}}
+function bootBudgets(){whenAppReady(()=>initBudgetsPage());}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootBudgets);else bootBudgets();

@@ -4,58 +4,16 @@
       <div style="width:44px;height:44px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;padding:4px;flex-shrink:0;">
         <img src="{{logoUrl}}" alt="InfoCore" style="display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;">
       </div>
-      <div>
-        <div style="font-size:.92rem;font-weight:800;color:#0f172a;">InfoCore System</div>
-        <div style="font-size:.68rem;color:#64748b;">Orçamento comercial</div>
-      </div>
+      <div><div style="font-size:.92rem;font-weight:800;">InfoCore System</div><div style="font-size:.68rem;color:#64748b;">Orçamento comercial</div></div>
     </div>
-    <div style="text-align:right;flex-shrink:0;">
-      {{statusBadgeHtml}}
-      <div style="font-size:.9rem;font-weight:800;color:#0f172a;margin-top:4px;">{{code}}</div>
-      <div style="font-size:.65rem;color:#64748b;">Emitido em {{issuedAt}}</div>
-    </div>
+    <div style="text-align:right;">{{statusBadgeHtml}}<div style="font-size:.9rem;font-weight:800;margin-top:4px;">{{code}}</div><div style="font-size:.65rem;color:#64748b;">Emitido em {{issuedAt}}</div></div>
   </div>
-
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
-    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;">
-      <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;color:#64748b;">Cliente</div>
-      <div style="font-weight:700;font-size:.72rem;">{{customerName}}</div>
-      <div style="font-size:.68rem;color:#475569;"><strong>Tel:</strong> {{customerPhone}}</div>
-    </div>
-    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;">
-      <div style="font-size:.62rem;font-weight:700;text-transform:uppercase;color:#64748b;">Condições</div>
-      <div style="font-size:.68rem;color:#475569;"><strong>Validade:</strong> {{date}}</div>
-      <div style="font-size:.68rem;color:#475569;"><strong>Obs:</strong> {{notes}}</div>
-    </div>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;"><div style="font-size:.62rem;font-weight:700;text-transform:uppercase;color:#64748b;">Cliente</div><div style="font-weight:700;font-size:.72rem;">{{customerName}}</div><div style="font-size:.68rem;color:#475569;"><strong>Tel:</strong> {{customerPhone}}</div></div>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;"><div style="font-size:.62rem;font-weight:700;text-transform:uppercase;color:#64748b;">Condições</div><div style="font-size:.68rem;color:#475569;"><strong>Validade:</strong> {{date}}</div><div style="font-size:.64rem;color:#475569;line-height:1.35;">{{conditionLinesHtml}}</div></div>
   </div>
-
-  <table style="width:100%;border-collapse:collapse;margin-top:6px;border:1px solid #e2e8f0;font-size:.68rem;">
-    <thead>
-      <tr style="background:#0f172a;color:#fff;">
-        <th style="padding:4px 6px;text-align:left;">Item</th>
-        <th style="padding:4px;text-align:center;width:32px;">Qtd</th>
-        <th style="padding:4px 6px;text-align:right;">Unit.</th>
-        <th style="padding:4px 6px;text-align:right;">Total</th>
-      </tr>
-    </thead>
-    <tbody>{{itemsRowsHtml}}</tbody>
-  </table>
-
-  <div style="margin-top:6px;display:flex;justify-content:flex-end;">
-    <div style="min-width:180px;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;font-size:.68rem;">
-      <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><strong>{{subtotal}}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Desconto</span><strong>- {{discount}}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Acréscimo</span><strong>+ {{extra}}</strong></div>
-      <div style="border-top:1px solid #e2e8f0;margin:4px 0;"></div>
-      <div style="display:flex;justify-content:space-between;font-weight:800;"><span>Total</span><span>{{total}}</span></div>
-    </div>
-  </div>
-
-  <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-    <div>
-      <div style="border-top:1px solid #94a3b8;padding-top:4px;font-size:.65rem;color:#64748b;">Assinatura do cliente</div>
-      <div style="font-size:.6rem;color:#475569;margin-top:3px;line-height:1.25;">{{signatureTerms}}</div>
-    </div>
-    <div style="border-top:1px solid #94a3b8;padding-top:4px;font-size:.65rem;color:#64748b;">Assinatura do responsável</div>
-  </div>
+  {{optionsHtml}}
+  {{includedServicesHtml}}
+  <div style="margin-top:6px;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;"><strong style="font-size:.62rem;color:#64748b;text-transform:uppercase;">Observações</strong><div style="font-size:.65rem;color:#475569;white-space:pre-wrap;">{{notes}}</div></div>
+  <div style="margin-top:9px;display:grid;grid-template-columns:1fr 1fr;gap:12px;"><div><div style="border-top:1px solid #94a3b8;padding-top:4px;font-size:.65rem;color:#64748b;">Assinatura do cliente</div><div style="font-size:.6rem;color:#475569;margin-top:3px;">{{signatureTerms}}</div></div><div style="border-top:1px solid #94a3b8;padding-top:4px;font-size:.65rem;color:#64748b;">Assinatura do responsável</div></div>
 </div>
