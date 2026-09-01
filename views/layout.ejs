@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <%- include('reusable/head') %>
-  <link rel="stylesheet" href="/css/<%= body %>.css?v=9">
+  <link rel="stylesheet" href="/css/<%= body %>.css?v=10">
   <style>
     html.app-is-loading, html.app-is-loading body { overflow: hidden; }
     html.app-is-loading .app { opacity: 0; pointer-events: none; }
@@ -73,12 +73,12 @@
   </script>
   <script src="/js/shared.js?v=3"></script>
   <% if (body === 'budgets' || body === 'pdv') { %>
-  <script src="/js/budget-templates.js?v=4"></script>
+  <script src="/js/budget-templates.js?v=5"></script>
   <% } %>
   <% if (body === 'service-work') { %>
   <script src="/js/service-templates.js?v=1"></script>
   <% } %>
-  <script src="/js/<%= body %>.js?v=11"></script>
+  <script src="/js/<%= body %>.js?v=12"></script>
   <% if (body === 'pdv') { %>
   <script src="/js/pdv-service.js?v=6"></script>
   <% } %>

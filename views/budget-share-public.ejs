@@ -1,70 +1,213 @@
+<%
+  const brandName = configs.storeName || configs.name || 'InfoCore';
+  const publicTitle = budget.title || 'Sua configuração personalizada';
+  const firstPublicOption = Array.isArray(budget.options) ? budget.options[0] : null;
+  const socialImage = firstPublicOption && firstPublicOption.imageUrl ? firstPublicOption.imageUrl : '';
+%>
 <!doctype html>
 <html lang="pt-BR">
 
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#08090d">
-  <title>Escolha seu orçamento — <%= configs.storeName || configs.name || 'InfoCore' %></title>
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Uma proposta personalizada preparada pela <%= brandName %>.">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:title" content="<%= publicTitle %> — <%= brandName %>">
+  <meta property="og:description" content="Conheça a configuração, desempenho e condições da sua proposta personalizada.">
+  <% if (socialImage) { %><meta property="og:image" content="<%= socialImage %>"><% } %>
+  <title><%= publicTitle %> — <%= brandName %></title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/budget-share-public.css?v=2">
+  <link rel="stylesheet" href="/css/budget-share-public.css?v=3">
   <link rel="icon" href="/img/logo_bg.ico" type="image/x-icon">
-
 </head>
 
 <body>
-  <main class="share-shell">
-    <header class="share-header"><img src="/public/img/logo_bg.png" alt="">
-      <div><span><%= configs.storeName || configs.name || 'InfoCore' %></span><small>Proposta interativa · <%= budget.code %></small></div>
-      <div class="save-state" id="saveState">Salvo</div>
+  <a class="skip-link" href="#proposalContent">Ir para a proposta</a>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <main class="share-shell" id="proposalContent">
+    <header class="share-header" aria-label="Cabeçalho da proposta">
+      <a class="brand" href="#proposalContent" aria-label="Início da proposta <%= brandName %>">
+        <span class="brand-logo"><img src="/img/logo_bg.png" alt="" width="42" height="42"></span>
+        <span class="brand-copy">
+          <strong><%= brandName %></strong>
+          <small>Proposta <%= budget.code || 'personalizada' %></small>
+        </span>
+      </a>
+      <div class="save-state" id="saveState" role="status" aria-live="polite" data-state="saved">
+        <span class="save-dot" aria-hidden="true"></span>
+        <span id="saveStateText">Salvo</span>
+      </div>
     </header>
-    <section class="share-hero">
-      <div><span class="eyebrow">FEITO PARA VOCÊ</span>
-        <h1>Olá, <%= budget.customerName || 'cliente' %>.</h1>
-        <p>Compare as opções, personalize peças e conte exatamente o que você precisa. Suas escolhas são salvas automaticamente.</p>
-      </div><% if (budget.validUntil) { %><div class="validity"><small>Válido até</small><strong><%= String(budget.validUntil).split('-').reverse().join('/') %></strong></div><% } %>
-    </section>
-    <section>
-      <div class="section-heading">
-        <div><span>01</span>
-          <h2>Escolha a proposta</h2>
+
+    <section class="share-hero" aria-labelledby="proposalTitle" data-reveal>
+      <div class="hero-copy">
+        <span class="eyebrow"><span aria-hidden="true">✦</span> PREPARADO PARA VOCÊ</span>
+        <h1 id="proposalTitle">Olá, <span><%= budget.customerName || 'cliente' %></span>.</h1>
+        <p><%= budget.intro || 'Uma configuração pensada para o seu uso, com desempenho, componentes e condições apresentados de forma simples.' %></p>
+        <div class="hero-meta">
+          <span class="meta-pill"><span aria-hidden="true">#</span> <%= budget.code || 'PROPOSTA' %></span>
+          <% if (budget.validUntil) { %>
+            <span class="meta-pill"><span aria-hidden="true">◷</span> Válido até <time datetime="<%= budget.validUntil %>"><%= String(budget.validUntil).slice(0, 10).split('-').reverse().join('/') %></time></span>
+          <% } %>
         </div>
-        <p>Você pode mudar de ideia quando quiser.</p>
+        <div class="highlight-list" id="highlightList" aria-label="Destaques da configuração"></div>
       </div>
-      <div class="option-grid" id="optionGrid"></div>
+
+      <div class="hero-gallery" id="heroGallery" aria-label="Fotos da configuração"></div>
     </section>
-    <section id="customizeSection">
+
+    <nav class="journey-nav" aria-label="Etapas da proposta" data-reveal>
+      <a href="#optionsSection"><span>01</span> Configuração</a>
+      <a href="#performanceSection"><span>02</span> Desempenho</a>
+      <a href="#customizeSection"><span>03</span> Personalização</a>
+      <a href="#summaryCard"><span>04</span> Finalização</a>
+    </nav>
+
+    <section id="optionsSection" class="proposal-section" aria-labelledby="optionsTitle" data-reveal>
       <div class="section-heading">
-        <div><span>02</span>
-          <h2>Personalize os itens</h2>
+        <div class="section-heading-copy">
+          <span class="section-number">01</span>
+          <div>
+            <p class="section-kicker">SUA PROPOSTA</p>
+            <h2 id="optionsTitle">Escolha a configuração</h2>
+          </div>
         </div>
-        <p>Retire peças ou altere quantidades.</p>
+        <p id="optionsHint">Compare as opções e selecione a que combina com você.</p>
       </div>
-      <div class="custom-card">
-        <div id="itemList"></div><button class="add-request" id="addRequestBtn" type="button">+ Pedir outra peça ou serviço</button>
-        <div id="requestList"></div><label class="notes-label">Observações para a equipe<textarea id="notes" rows="4" placeholder="Ex.: prefiro gabinete branco, preciso de mais armazenamento..."></textarea></label>
-      </div>
+      <div class="option-grid" id="optionGrid" role="radiogroup" aria-labelledby="optionsTitle"></div>
     </section>
-    <section>
+
+    <section id="capabilitiesSection" class="proposal-section" aria-labelledby="capabilitiesTitle" hidden data-reveal>
       <div class="section-heading">
-        <div><span>03</span>
-          <h2>Revise e finalize</h2>
+        <div class="section-heading-copy">
+          <span class="section-number">02</span>
+          <div>
+            <p class="section-kicker">FEITO PARA O SEU DIA A DIA</p>
+            <h2 id="capabilitiesTitle">O que você pode fazer</h2>
+          </div>
         </div>
+        <p>Capacidades previstas para esta configuração.</p>
       </div>
-      <div class="summary-card">
-        <div><small>Sua seleção estimada</small><strong id="summaryTotal">R$ 0,00</strong>
-          <div id="summaryPayments" class="summary-payments"></div>
-          <p id="summaryText"></p>
-        </div><button class="finish-btn" id="finishBtn" type="button">Finalizar minhas escolhas</button><a class="whatsapp-btn" id="whatsappBtn" hidden target="_blank" rel="noopener">Avisar que finalizei no WhatsApp <span>↗</span></a><small class="optional-note">O aviso pelo WhatsApp é opcional. Suas respostas já ficam disponíveis para a loja.</small>
-      </div>
+      <div class="capability-grid" id="useCaseGrid"></div>
     </section>
+
+    <section id="performanceSection" class="proposal-section" aria-labelledby="performanceTitle" hidden data-reveal>
+      <div class="section-heading">
+        <div class="section-heading-copy">
+          <span class="section-number">03</span>
+          <div>
+            <p class="section-kicker">DESEMPENHO EM JOGOS</p>
+            <h2 id="performanceTitle">FPS que você pode esperar</h2>
+          </div>
+        </div>
+        <p>Estimativas por resolução e qualidade gráfica.</p>
+      </div>
+      <div class="game-grid" id="gameGrid"></div>
+      <p class="performance-note" id="performanceNote"></p>
+    </section>
+
+    <div class="proposal-workspace">
+      <div class="proposal-main-column">
+        <section id="customizeSection" class="proposal-section" aria-labelledby="customizeTitle" data-reveal>
+          <div class="section-heading compact">
+            <div class="section-heading-copy">
+              <span class="section-number">04</span>
+              <div>
+                <p class="section-kicker">COMPONENTES</p>
+                <h2 id="customizeTitle">Personalize os itens</h2>
+              </div>
+            </div>
+            <p>Retire itens ou ajuste as quantidades.</p>
+          </div>
+          <div class="custom-card">
+            <div class="item-list" id="itemList" aria-live="polite"></div>
+            <button class="add-request" id="addRequestBtn" type="button">
+              <span aria-hidden="true">＋</span>
+              <span><strong>Pedir outra peça ou serviço</strong><small>Conte o que gostaria de adicionar ou alterar.</small></span>
+            </button>
+            <div class="request-list" id="requestList"></div>
+            <label class="notes-label" for="notes">
+              <span>Observações para a equipe</span>
+              <small>Preferências de cor, armazenamento, acessórios ou qualquer outro detalhe.</small>
+              <textarea id="notes" rows="4" maxlength="3000" placeholder="Ex.: prefiro gabinete branco e preciso de mais armazenamento..."></textarea>
+            </label>
+          </div>
+        </section>
+
+        <section id="conditionsSection" class="proposal-section" aria-labelledby="conditionsTitle" hidden data-reveal>
+          <div class="section-heading compact">
+            <div class="section-heading-copy">
+              <span class="section-number">05</span>
+              <div>
+                <p class="section-kicker">TUDO BEM EXPLICADO</p>
+                <h2 id="conditionsTitle">Condições da proposta</h2>
+              </div>
+            </div>
+          </div>
+          <div class="conditions-card" id="conditionsCard"></div>
+        </section>
+      </div>
+
+      <aside class="summary-card" id="summaryCard" aria-labelledby="summaryTitle" data-reveal>
+        <span class="summary-kicker">RESUMO DA SUA ESCOLHA</span>
+        <h2 id="summaryTitle">Revise e finalize</h2>
+        <div class="summary-option" id="summaryOption"></div>
+        <div class="summary-total-row">
+          <span>Total estimado</span>
+          <strong id="summaryTotal" aria-live="polite">R$ 0,00</strong>
+        </div>
+        <div class="summary-breakdown" id="summaryBreakdown"></div>
+        <div id="summaryPayments" class="summary-payments"></div>
+        <p class="summary-text" id="summaryText"></p>
+        <button class="finish-btn" id="finishBtn" type="button">Finalizar minhas escolhas <span aria-hidden="true">→</span></button>
+        <p class="finish-feedback" id="finishFeedback" role="status" aria-live="polite"></p>
+        <a class="whatsapp-btn" id="whatsappBtn" hidden target="_blank" rel="noopener noreferrer">Avisar no WhatsApp <span aria-hidden="true">↗</span></a>
+        <small class="optional-note">O WhatsApp é opcional. Quando a finalização for confirmada, suas respostas já estarão disponíveis para a loja.</small>
+      </aside>
+    </div>
+
+    <footer class="share-footer" data-reveal>
+      <div class="footer-brand"><img src="/img/logo_bg.png" alt="" width="34" height="34"><span><strong><%= brandName %></strong><small>Proposta preparada com atenção a cada detalhe.</small></span></div>
+      <p>Valores e disponibilidade respeitam a validade informada nesta proposta.</p>
+    </footer>
   </main>
+
+  <div class="mobile-checkout" id="mobileCheckout" aria-label="Resumo e finalização">
+    <div><small>Total estimado</small><strong id="mobileSummaryTotal">R$ 0,00</strong></div>
+    <button id="mobileFinishBtn" type="button">Finalizar <span aria-hidden="true">→</span></button>
+  </div>
+
+  <div class="gallery-lightbox" id="galleryLightbox" role="dialog" aria-modal="true" aria-labelledby="lightboxTitle" aria-hidden="true" hidden>
+    <div class="lightbox-backdrop" data-lightbox-close></div>
+    <div class="lightbox-dialog" role="document">
+      <div class="lightbox-toolbar">
+        <div><strong id="lightboxTitle">Foto da configuração</strong><span id="lightboxCounter"></span></div>
+        <button class="lightbox-close" type="button" data-lightbox-close aria-label="Fechar galeria">×</button>
+      </div>
+      <figure>
+        <img id="lightboxImage" alt="" decoding="async">
+        <figcaption id="lightboxCaption"></figcaption>
+      </figure>
+      <button class="lightbox-nav lightbox-prev" id="lightboxPrev" type="button" aria-label="Foto anterior">‹</button>
+      <button class="lightbox-nav lightbox-next" id="lightboxNext" type="button" aria-label="Próxima foto">›</button>
+    </div>
+  </div>
+
+  <div class="sr-only" id="pageAnnouncements" role="status" aria-live="polite"></div>
+
   <script id="publicBudgetData" type="application/json">
-    <%- JSON.stringify({budget,response,token,apiBase:typeof publicApiBase!=='undefined'?publicApiBase:'/api/public/budgets',storeName:configs.storeName||configs.name||'InfoCore',storePhone:configs.whatsapp||configs.phone||configs.telephone||configs.storePhone||''}).replace(/</g,'\\u003c') %>
+    <%- JSON.stringify({budget,response,token,apiBase:typeof publicApiBase!=='undefined'?publicApiBase:'/api/public/budgets',storeName:brandName,storePhone:configs.whatsapp||configs.phone||configs.telephone||configs.storePhone||''}).replace(/</g,'\\u003c') %>
   </script>
-  <script src="/js/budget-share-public.js?v=4"></script>
+  <script src="/js/budget-share-public.js?v=5"></script>
 </body>
 
 </html>

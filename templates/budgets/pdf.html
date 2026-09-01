@@ -1,8 +1,66 @@
 <style>
+  #budgetPrintArea {
+    width: 200mm;
+    max-width: 100%;
+    margin: 0 auto;
+    padding: 0;
+    color: #0f172a;
+    background: #fff;
+    box-sizing: border-box;
+  }
+  .budget-print-copy {
+    min-height: 133mm;
+    box-sizing: border-box;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .budget-print-copy-label {
+    margin: 0 0 3px;
+    color: #64748b;
+    font: 800 8px/1.2 Inter, Segoe UI, Arial, sans-serif;
+    letter-spacing: .08em;
+    text-align: right;
+  }
+  .budget-print-cut {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 7mm;
+    color: #64748b;
+    font: 700 8px/1 Inter, Segoe UI, Arial, sans-serif;
+    letter-spacing: .08em;
+    white-space: nowrap;
+  }
+  .budget-print-cut::before,
+  .budget-print-cut::after {
+    content: "";
+    flex: 1;
+    border-top: 1px dashed #94a3b8;
+  }
   @media print {
-    @page { size: A4 portrait; margin: 8mm; }
+    @page { size: A4 portrait; margin: 5mm; }
     html, body { margin:0; padding:0; background:#fff; }
-    #budgetPrintArea { width:100% !important; max-width:none !important; padding:0 !important; }
+    #budgetPrintArea { width:100%; max-width:none; }
+    #budgetPrintArea.budget-print-area--multipage .budget-print-copy {
+      min-height: 0;
+      break-after: page;
+      page-break-after: always;
+    }
+    #budgetPrintArea.budget-print-area--multipage .budget-print-copy:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    #budgetPrintArea.budget-print-area--multipage .budget-print-cut { display:none; }
   }
 </style>
-<div id="budgetPrintArea" style="font-family:Inter,Segoe UI,Arial,sans-serif;max-width:780px;margin:0 auto;color:#0f172a;background:#fff;padding:6px 8px;box-sizing:border-box;">{{voucherHtml}}</div>
+<main id="budgetPrintArea" aria-label="Orçamento em duas vias">
+  <section class="budget-print-copy" data-budget-copy="store">
+    <div class="budget-print-copy-label">VIA DA LOJA</div>
+    {{voucherHtml}}
+  </section>
+  <div class="budget-print-cut" aria-hidden="true"><span>&#9986; LINHA DE CORTE</span></div>
+  <section class="budget-print-copy" data-budget-copy="customer">
+    <div class="budget-print-copy-label">VIA DO CLIENTE</div>
+    {{voucherHtml}}
+  </section>
+</main>

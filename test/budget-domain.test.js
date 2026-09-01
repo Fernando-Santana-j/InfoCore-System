@@ -90,3 +90,87 @@ test('aggregate stock requirement ignores fractional quantity', () => {
   ]);
   assert.equal(grouped.get('p1'), 3);
 });
+
+test('option presentation preserves a safe legacy image URL', () => {
+  const p = d.normalizeOptionPresentation({ imageUrl: '/uploads/legacy-pc.webp' });
+  assert.equal(p.imageUrl, '/uploads/legacy-pc.webp');
+  assert.deepEqual(p.gallery, []);
+});
+
+test('option presentation falls back to first gallery image and rejects unsafe URLs', () => {
+  const p = d.normalizeOptionPresentation({
+    imageUrl: 'javascript:alert(1)',
+    gallery: [
+      { id: 'bad', url: 'data:image/png;base64,abc' },
+      { id: 'cover', url: '/img/pc.webp', alt: ' PC pronto ', caption: ' Gabinete montado ' },
+      { id: 'remote', url: 'https://cdn.example.com/pc-2.webp' }
+    ]
+  });
+  assert.equal(p.imageUrl, '/img/pc.webp');
+  assert.deepEqual(p.gallery, [
+    { id: 'cover', url: '/img/pc.webp', alt: 'PC pronto', caption: 'Gabinete montado' },
+    { id: 'remote', url: 'https://cdn.example.com/pc-2.webp', alt: '', caption: '' }
+  ]);
+});
+
+test('option presentation applies collection and text limits', () => {
+  const p = d.normalizeOptionPresentation({
+    gallery: Array.from({ length: 10 }, (_, i) => ({ id: `photo-${i}`, url: `/public/pc-${i}.webp` })),
+    useCases: Array.from({ length: 14 }, (_, i) => ({ id: `task-${i}`, title: `Tarefa ${i}`, description: 'x'.repeat(700) })),
+    highlights: Array.from({ length: 14 }, (_, i) => `Destaque ${i}`),
+    performanceNote: 'n'.repeat(1200)
+  });
+  assert.equal(p.gallery.length, 8);
+  assert.equal(p.useCases.length, 12);
+  assert.equal(p.useCases[0].description.length, 600);
+  assert.equal(p.highlights.length, 12);
+  assert.equal(p.performanceNote.length, 1000);
+});
+
+test('game presentation is limited and FPS values stay between zero and one thousand', () => {
+  const games = Array.from({ length: 22 }, (_, i) => ({
+    id: `game-${i}`,
+    name: `Jogo ${i}`,
+    resolution: '1080p',
+    quality: 'Alto',
+    fpsMin: i === 0 ? 1400 : 90,
+    fpsMax: i === 0 ? -20 : 120,
+    note: 'Estimativa'
+  }));
+  const p = d.normalizeOptionPresentation({ games });
+  assert.equal(p.games.length, 20);
+  assert.equal(p.games[0].fpsMin, 0);
+  assert.equal(p.games[0].fpsMax, 1000);
+});
+
+test('blank maximum FPS falls back to minimum and non-string highlights are ignored', () => {
+  const p = d.normalizeOptionPresentation({
+    games: [{ name: 'Jogo', fpsMin: '60', fpsMax: '' }],
+    highlights: [' Compacto ', { text: 'não permitido' }, '', 'Silencioso']
+  });
+  assert.equal(p.games[0].fpsMin, 60);
+  assert.equal(p.games[0].fpsMax, 60);
+  assert.deepEqual(p.highlights, ['Compacto', 'Silencioso']);
+});
+
+test('computed options and templates expose the same normalized presentation contract', () => {
+  const input = {
+    imageUrl: '',
+    gallery: [{ id: 'cover', url: '/uploads/cover.webp', alt: 'PC', caption: '' }],
+    useCases: [{ id: 'work', title: 'Edição de vídeo', description: 'Projetos em Full HD' }],
+    games: [{ id: 'game', name: 'Jogo teste', resolution: '1440p', quality: 'Ultra', fpsMin: 75, fpsMax: 110, note: '' }],
+    highlights: ['Silencioso'],
+    performanceNote: 'FPS estimado conforme configuração.',
+    items: [{ name: 'CPU', qty: 1, unitPrice: 100 }]
+  };
+  const option = d.computeOption(input);
+  const template = d.normalizeTemplate({ id: 'tpl', name: 'PC', ...input });
+  for (const normalized of [option, template]) {
+    assert.equal(normalized.imageUrl, '/uploads/cover.webp');
+    assert.equal(normalized.gallery.length, 1);
+    assert.equal(normalized.useCases[0].title, 'Edição de vídeo');
+    assert.equal(normalized.games[0].fpsMax, 110);
+    assert.deepEqual(normalized.highlights, ['Silencioso']);
+    assert.equal(normalized.performanceNote, 'FPS estimado conforme configuração.');
+  }
+});

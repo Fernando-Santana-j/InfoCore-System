@@ -1629,7 +1629,7 @@ function budgetTemplateData(budget, req, options = {}) {
         normalized.paymentTerms ? `Pagamento: ${normalized.paymentTerms}` : '',
         normalized.warrantyText ? `Garantia: ${normalized.warrantyText}` : ''
     ].filter(Boolean).join(' | ');
-    const signatureTerms = 'Ao assinar, declaro que recebi e conferi as condições deste orçamento.';
+    const signatureTerms = 'Ao assinar, concordo que a máquina ou equipamento foi entregue e que o problema foi solucionado.';
     return {
         code: scalar(normalized.code || 'ORC'),
         customerName: scalar(normalized.customerName || 'Não informado'),
@@ -2183,6 +2183,81 @@ function publicBudgetResponse(row = {}) {
     };
 }
 
+function customerBudgetResponse(row = {}) {
+    const response = publicBudgetResponse(row);
+    delete response.customerPhone;
+    return response;
+}
+
+function publicBudgetOption(option = {}) {
+    const normalized = budgetDomain.computeOption(option);
+    return {
+        id: String(normalized.id || ''),
+        name: String(normalized.name || ''),
+        description: String(normalized.description || ''),
+        imageUrl: String(normalized.imageUrl || ''),
+        gallery: Array.isArray(normalized.gallery) ? normalized.gallery : [],
+        useCases: Array.isArray(normalized.useCases) ? normalized.useCases : [],
+        games: Array.isArray(normalized.games) ? normalized.games : [],
+        highlights: Array.isArray(normalized.highlights) ? normalized.highlights : [],
+        performanceNote: String(normalized.performanceNote || ''),
+        recommended: normalized.recommended === true,
+        items: (normalized.items || []).map((item) => ({
+            id: String(item.id || ''),
+            name: String(item.name || ''),
+            qty: Number(item.qty) || 0,
+            unitPrice: Number(item.unitPrice) || 0,
+            total: Number(item.total) || 0,
+            discount: item.discount && typeof item.discount === 'object'
+                ? { type: item.discount.type, value: Number(item.discount.value) || 0, amount: Number(item.discount.amount) || 0 }
+                : { type: 'fixed', value: 0, amount: 0 },
+            condition: String(item.condition || ''),
+            warranty: String(item.warranty || ''),
+            note: String(item.note || '')
+        })),
+        subtotal: Number(normalized.subtotal) || 0,
+        discount: normalized.discount && typeof normalized.discount === 'object'
+            ? { type: normalized.discount.type, value: Number(normalized.discount.value) || 0, amount: Number(normalized.discount.amount) || 0 }
+            : { type: 'fixed', value: 0, amount: 0 },
+        extra: normalized.extra && typeof normalized.extra === 'object'
+            ? { type: normalized.extra.type, value: Number(normalized.extra.value) || 0, amount: Number(normalized.extra.amount) || 0 }
+            : { type: 'fixed', value: 0, amount: 0 },
+        total: Number(normalized.total) || 0,
+        cardPayments: normalized.cardPayments
+    };
+}
+
+/** Lista explícita de campos liberados para o link do cliente. */
+function publicBudgetView(budget = {}) {
+    const options = (Array.isArray(budget.options) ? budget.options : []).map(publicBudgetOption);
+    const selected = selectBudgetOption(options, budget.selectedOptionId);
+    return {
+        id: String(budget.id || ''),
+        code: String(budget.code || ''),
+        title: String(budget.title || ''),
+        customerName: String(budget.customerName || ''),
+        notes: String(budget.notes || ''),
+        issuedAt: String(budget.issuedAt || ''),
+        validUntil: String(budget.validUntil || ''),
+        paymentTerms: String(budget.paymentTerms || ''),
+        deadline: String(budget.deadline || ''),
+        warrantyText: String(budget.warrantyText || ''),
+        includedServices: Array.isArray(budget.includedServices)
+            ? budget.includedServices.map((item) => String(item || '')).filter(Boolean)
+            : [],
+        options,
+        selectedOptionId: selected?.id || '',
+        recommendedOptionId: (options.find((option) => option.recommended) || selected || options[0] || {}).id || ''
+    };
+}
+
+function setPrivateShareHeaders(res) {
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+}
+
 async function findBudgetByPublicToken(token) {
     const clean = String(token || '').trim();
     if (!/^[a-f0-9-]{32,64}$/i.test(clean)) return null;
@@ -2207,17 +2282,19 @@ app.get('/p/escolha/:token', async (req,res)=>{
     if(!showcase||showcase.status==='closed')return res.status(404).send('<!doctype html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px"><h1>Link encerrado ou inválido</h1></body></html>');
     const configs=await getConfigsSafe(); if(!configs.storePhone)configs.storePhone=whatsappClient.getStatus()?.phone||'';
     const responseSnap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();
-    const budget={id:showcase.id,code:'SELEÇÃO',customerName:showcase.customerName,customerPhone:showcase.customerPhone,validUntil:'',options:showcase.options,recommendedOptionId:showcase.options.find(o=>o.recommended)?.id||showcase.options[0]?.id||''};
-    return res.render('budget-share-public',{layout:false,budget,configs,response:publicBudgetResponse(responseSnap.exists?responseSnap.data():{}),token:req.params.token,publicApiBase:'/api/public/showcases'});
+    const budget=publicBudgetView({id:showcase.id,code:'SELEÇÃO',title:showcase.title,customerName:showcase.customerName,validUntil:'',options:showcase.options,recommendedOptionId:showcase.options.find(o=>o.recommended)?.id||showcase.options[0]?.id||''});
+    setPrivateShareHeaders(res);
+    return res.render('budget-share-public',{layout:false,budget,configs,response:customerBudgetResponse(responseSnap.exists?responseSnap.data():{}),token:req.params.token,publicApiBase:'/api/public/showcases'});
 });
 
-app.get('/api/public/showcases/:token',async(req,res)=>{const s=await findShowcaseByToken(req.params.token);if(!s)return res.status(404).json({error:true,message:'Link não encontrado.'});const snap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(s.id).get();return res.json({error:false,response:publicBudgetResponse(snap.exists?snap.data():{})});});
+app.get('/api/public/showcases/:token',async(req,res)=>{setPrivateShareHeaders(res);const s=await findShowcaseByToken(req.params.token);if(!s)return res.status(404).json({error:true,message:'Link não encontrado.'});const snap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(s.id).get();return res.json({error:false,response:customerBudgetResponse(snap.exists?snap.data():{})});});
 app.put('/api/public/showcases/:token/response',async(req,res)=>{
+    setPrivateShareHeaders(res);
     const showcase=await findShowcaseByToken(req.params.token);if(!showcase||showcase.status==='closed')return res.status(404).json({error:true,message:'Link não encontrado.'});
     const body=req.body||{},option=showcase.options.find(o=>String(o.id)===String(body.selectedOptionId||''));if(!option)return res.status(400).json({error:true,message:'Selecione uma opção válida.'});
     const ids=new Set((option.items||[]).map(i=>String(i.id))),choices={};Object.entries(body.choices&&typeof body.choices==='object'?body.choices:{}).forEach(([id,v])=>{if(ids.has(String(id)))choices[id]={included:v?.included!==false,qty:Math.min(99,Math.max(0,Math.trunc(Number(v?.qty)||0)))}});
     const payload={showcaseId:showcase.id,selectedOptionId:option.id,selectedOptionName:option.name,choices,requestedItems:(Array.isArray(body.requestedItems)?body.requestedItems:[]).map(x=>({name:String(x?.name||'').trim().slice(0,120),details:String(x?.details||'').trim().slice(0,500)})).filter(x=>x.name).slice(0,20),notes:String(body.notes||'').trim().slice(0,3000),customerName:String(body.customerName||showcase.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||showcase.customerPhone||'').trim().slice(0,30),finalized:body.finalized===true,updatedAt:FieldValue.serverTimestamp()};if(payload.finalized)payload.finalizedAt=FieldValue.serverTimestamp();
-    await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).set(payload,{merge:true});await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(showcase.id).set({customerResponse:payload,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();return res.json({error:false,response:publicBudgetResponse(fresh.data()||{})});
+    await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).set(payload,{merge:true});await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(showcase.id).set({customerResponse:payload,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();return res.json({error:false,response:customerBudgetResponse(fresh.data()||{})});
 });
 
 app.get('/p/orcamento/:token', async (req, res) => {
@@ -2226,17 +2303,20 @@ app.get('/p/orcamento/:token', async (req, res) => {
     const configs = await getConfigsSafe();
     if (!configs.storePhone) configs.storePhone = whatsappClient.getStatus()?.phone || '';
     const responseSnap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
-    return res.render('budget-share-public', { layout: false, budget, configs, response: publicBudgetResponse(responseSnap.exists ? responseSnap.data() : {}), token: req.params.token });
+    setPrivateShareHeaders(res);
+    return res.render('budget-share-public', { layout: false, budget: publicBudgetView(budget), configs, response: customerBudgetResponse(responseSnap.exists ? responseSnap.data() : {}), token: req.params.token });
 });
 
 app.get('/api/public/budgets/:token', async (req, res) => {
+    setPrivateShareHeaders(res);
     const budget = await findBudgetByPublicToken(req.params.token);
     if (!budget) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
     const snap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
-    return res.json({ error: false, response: publicBudgetResponse(snap.exists ? snap.data() : {}) });
+    return res.json({ error: false, response: customerBudgetResponse(snap.exists ? snap.data() : {}) });
 });
 
 app.put('/api/public/budgets/:token/response', async (req, res) => {
+    setPrivateShareHeaders(res);
     const budget = await findBudgetByPublicToken(req.params.token);
     if (!budget) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
     const body = req.body || {};
@@ -2254,7 +2334,7 @@ app.put('/api/public/budgets/:token/response', async (req, res) => {
     await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).set(payload, { merge: true });
     await firestore.collection(BUDGETS_COLLECTION).doc(budget.id).set({ customerResponse: payload, customerResponseUpdatedAt: FieldValue.serverTimestamp(), status: finalized ? 'awaiting' : (budget.status === 'draft' ? 'sent' : budget.status), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     const fresh = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
-    return res.json({ error: false, response: publicBudgetResponse(fresh.data() || {}) });
+    return res.json({ error: false, response: customerBudgetResponse(fresh.data() || {}) });
 });
 
 
@@ -2471,9 +2551,13 @@ const storage = multer.diskStorage({
     },
     filename: function (req, file, cb) {
         const codigo = require('crypto').randomBytes(42).toString('hex');
-        const originalName = file.originalname;
-        const extension = originalName.substr(originalName.lastIndexOf('.'));
-        const fileName = codigo + extension;
+        const extensions = {
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/gif': '.gif',
+            'image/webp': '.webp'
+        };
+        const fileName = codigo + (extensions[String(file.mimetype || '').toLowerCase()] || '.img');
         cb(null, `${fileName}`)
     }
 });
@@ -2485,6 +2569,15 @@ const upload = multer({
     fileFilter(req, file, cb) {
         if (imageMime.test(file.mimetype)) cb(null, true);
         else cb(new Error('Use uma imagem JPG, PNG, GIF ou WebP.'));
+    }
+});
+
+const budgetImageUpload = multer({
+    storage,
+    limits: { fileSize: 8 * 1024 * 1024 },
+    fileFilter(req, file, cb) {
+        if (/^image\/(jpeg|png|webp)$/i.test(file.mimetype)) cb(null, true);
+        else cb(new Error('Use uma imagem JPG, PNG ou WebP.'));
     }
 });
 
@@ -2503,6 +2596,38 @@ function uploadProductImageIfMultipart(req, res, next) {
         return uploadProductImage(req, res, next);
     }
     next();
+}
+
+function uploadBudgetImage(req, res, next) {
+    budgetImageUpload.single('image')(req, res, (err) => {
+        if (err) {
+            const message = err.code === 'LIMIT_FILE_SIZE'
+                ? 'A imagem deve ter no máximo 8 MB.'
+                : (err.message || 'Upload inválido.');
+            return res.status(400).json({ error: true, message });
+        }
+        next();
+    });
+}
+
+function validateBudgetImageSignature(req, res, next) {
+    if (!req.file?.path) return next();
+    try {
+        const fd = fs.openSync(req.file.path, 'r');
+        const head = Buffer.alloc(12);
+        fs.readSync(fd, head, 0, head.length, 0);
+        fs.closeSync(fd);
+        const mime = String(req.file.mimetype || '').toLowerCase();
+        const jpeg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+        const png = head.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]));
+        const webp = head.subarray(0, 4).toString('ascii') === 'RIFF' && head.subarray(8, 12).toString('ascii') === 'WEBP';
+        const valid = (mime === 'image/jpeg' && jpeg) || (mime === 'image/png' && png) || (mime === 'image/webp' && webp);
+        if (valid) return next();
+    } catch (error) {
+        console.error('Falha ao validar imagem do orçamento:', error);
+    }
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: true, message: 'O conteúdo do arquivo não corresponde a uma imagem válida.' });
 }
 
 
@@ -2714,7 +2839,9 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         if (scope === 'budgets') {
             const [products, budgetRows, customers, budgetTemplates] = await Promise.all([
                 loadProductsFromDb(),
-                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+                // Uma falha do Firestore deve chegar ao tratamento do bootstrap;
+                // retornar [] aqui faria a interface parecer apenas "sem orçamentos".
+                db.findAll({ colecao: BUDGETS_COLLECTION }),
                 loadCustomersNormalized(),
                 loadBudgetTemplatesNormalized()
             ]);
@@ -3025,7 +3152,12 @@ app.get('/api/budgets/:id/customer-response', verifyLogin, async (req, res) => {
     return res.json({ error: false, response: publicBudgetResponse(snap.exists ? snap.data() : {}) });
 });
 
-app.post('/api/budget-templates/image', verifyLogin, uploadProductImage, (req, res) => {
+app.post('/api/budget-templates/image', verifyLogin, uploadBudgetImage, validateBudgetImageSignature, (req, res) => {
+    if (!req.file) return res.status(400).json({ error: true, message: 'Selecione uma imagem.' });
+    return res.json({ error: false, imageUrl: `/uploads/${req.file.filename}` });
+});
+
+app.post('/api/budgets/image', verifyLogin, uploadBudgetImage, validateBudgetImageSignature, (req, res) => {
     if (!req.file) return res.status(400).json({ error: true, message: 'Selecione uma imagem.' });
     return res.json({ error: false, imageUrl: `/uploads/${req.file.filename}` });
 });
@@ -3034,7 +3166,10 @@ app.get('/api/budget-showcases',verifyLogin,async(_req,res)=>{const rows=await d
 app.post('/api/budget-showcases',verifyLogin,async(req,res)=>{
     const body=req.body||{},ids=[...new Set((Array.isArray(body.templateIds)?body.templateIds:[]).map(String))].slice(0,12);if(!ids.length)return res.status(400).json({error:true,message:'Selecione ao menos um modelo.'});
     const templates=[];for(const id of ids){const snap=await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();if(snap.exists&&snap.data()?.active!==false)templates.push(normalizeBudgetTemplate({id,...snap.data()}));}if(!templates.length)return res.status(400).json({error:true,message:'Nenhum modelo válido selecionado.'});
-    const id=randomUUID(),token=randomUUID(),options=templates.map((t,i)=>budgetDomain.computeOption({id:randomUUID(),name:t.name,description:t.description,imageUrl:t.imageUrl,recommended:i===0,items:t.items},i));
+    const id=randomUUID(),token=randomUUID(),options=templates.map((t,i)=>budgetDomain.computeOption({
+        id:randomUUID(),name:t.name,description:t.description,imageUrl:t.imageUrl,gallery:t.gallery,useCases:t.useCases,
+        games:t.games,highlights:t.highlights,performanceNote:t.performanceNote,recommended:i===0,items:t.items
+    },i));
     const payload={id,token,title:String(body.title||'Seleção de orçamentos').trim().slice(0,120),customerName:String(body.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||'').trim().slice(0,30),templateIds:ids,options,status:'open',createdAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp()};await db.create(BUDGET_SHOWCASES_COLLECTION,id,payload);const snap=await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id).get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...snap.data()}),url:`${req.protocol}://${req.get('host')}/p/escolha/${token}`});
 });
 app.patch('/api/budget-showcases/:id',verifyLogin,async(req,res)=>{const id=String(req.params.id||''),status=req.body?.status==='closed'?'closed':'open';const ref=firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id),snap=await ref.get();if(!snap.exists)return res.status(404).json({error:true,message:'Link não encontrado.'});await ref.set({status,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await ref.get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...fresh.data()})});});
@@ -3522,6 +3657,11 @@ async function buildBudgetTemplatePayload(body, existing = null) {
     if (!rawItems.length) return { error: true, message: 'Adicione ao menos 1 item ao modelo.' };
     const maps = await loadProductCostMaps();
     const enriched = await enrichBudgetItemsWithCost(rawItems, maps);
+    const presentationInput = {};
+    for (const key of ['imageUrl', 'gallery', 'useCases', 'games', 'highlights', 'performanceNote']) {
+        presentationInput[key] = Object.prototype.hasOwnProperty.call(body || {}, key) ? body[key] : existing?.[key];
+    }
+    const presentation = budgetDomain.normalizeOptionPresentation(presentationInput);
     const now = FieldValue.serverTimestamp();
     return {
         error: false,
@@ -3529,7 +3669,7 @@ async function buildBudgetTemplatePayload(body, existing = null) {
             id: existing?.id || randomUUID(),
             name,
             description: String(body?.description || '').trim(),
-            imageUrl: String(body?.imageUrl || existing?.imageUrl || '').trim().slice(0, 1000),
+            ...presentation,
             category: String(body?.category || 'Outros').trim() || 'Outros',
             active: body?.active !== false,
             internalNotes: String(body?.internalNotes || '').trim(),
@@ -3620,7 +3760,13 @@ app.post('/api/budgets/:id/save-as-template', verifyLogin, async (req, res) => {
         if (!option) return res.status(400).json({ error: true, message: 'Opção do orçamento não encontrada.' });
         const built = await buildBudgetTemplatePayload({
             name: String(req.body?.name || `${budget.code} - ${option.name}`).trim(),
-            description: String(req.body?.description || '').trim(),
+            description: String(req.body?.description || option.description || '').trim(),
+            imageUrl: option.imageUrl,
+            gallery: option.gallery,
+            useCases: option.useCases,
+            games: option.games,
+            highlights: option.highlights,
+            performanceNote: option.performanceNote,
             category: String(req.body?.category || 'Outros').trim(),
             active: true,
             customerNotes: budget.notes,

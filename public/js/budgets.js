@@ -13,6 +13,8 @@ let templateProductAcIndex = -1;
 let convertBudgetId = '';
 let duplicateBudgetId = '';
 let pendingBudgetConfirm = null;
+let budgetRefreshErrorShown = false;
+let templatePresentationDraft = null;
 
 const BUDGET_STATUS_LABELS = {
     draft: 'Rascunho', sent: 'Enviado', awaiting: 'Aguardando cliente', approved: 'Aprovado',
@@ -132,7 +134,57 @@ function cardPaymentTotals(total) {
 }
 function newOption(name = 'Proposta', recommended = null) {
     const isRecommended = recommended == null ? budgetOptionsDraft.length === 0 : recommended === true;
-    return { id: uuid(), name, description: '', recommended: isRecommended, items: [], discount: { type: 'fixed', value: 0 }, extra: { type: 'fixed', value: 0 } };
+    return {
+        id: uuid(), name, description: '', imageUrl: '', gallery: [], useCases: [], games: [], highlights: [], performanceNote: '',
+        recommended: isRecommended, items: [], discount: { type: 'fixed', value: 0 }, extra: { type: 'fixed', value: 0 }
+    };
+}
+
+function safeBudgetMediaUrl(value) {
+    const raw = String(value || '').trim().slice(0, 1000);
+    if (!raw || /[\u0000-\u001f\u007f\\]/.test(raw)) return '';
+    if (/^\/(?:uploads|img|public)(?:\/|$)/i.test(raw)) return raw.split(/[?#]/, 1)[0].split('/').includes('..') ? '' : raw;
+    if (!/^https?:\/\//i.test(raw)) return '';
+    try { const parsed = new URL(raw); return parsed.hostname ? raw : ''; } catch { return ''; }
+}
+function normalizeGalleryDraft(raw, legacyImageUrl = '') {
+    const rows = arr(raw).slice(0, 8).map((entry) => {
+        const row = entry && typeof entry === 'object' ? entry : { url: entry };
+        const url = safeBudgetMediaUrl(row.url);
+        return url ? { id: String(row.id || uuid()), url, alt: String(row.alt || '').slice(0, 160), caption: String(row.caption || '').slice(0, 300) } : null;
+    }).filter(Boolean);
+    const legacy = safeBudgetMediaUrl(legacyImageUrl);
+    if (legacy && !rows.some((photo) => photo.url === legacy)) rows.unshift({ id: uuid(), url: legacy, alt: '', caption: '' });
+    return rows.slice(0, 8);
+}
+function normalizeUseCasesDraft(raw) {
+    return arr(raw).slice(0, 12).map((entry) => {
+        const row = entry && typeof entry === 'object' ? entry : { title: entry };
+        return { id: String(row.id || uuid()), title: String(row.title || '').slice(0, 120), description: String(row.description || '').slice(0, 600) };
+    });
+}
+function normalizeGamesDraft(raw) {
+    const fpsValue = (value) => value == null || String(value).trim() === '' ? '' : Math.min(1000, Math.max(0, Math.round(num(value))));
+    return arr(raw).slice(0, 20).map((entry) => {
+        const row = entry && typeof entry === 'object' ? entry : {};
+        return {
+            id: String(row.id || uuid()), name: String(row.name || '').slice(0, 120), resolution: String(row.resolution || '1080p').slice(0, 40),
+            quality: String(row.quality || 'Alto').slice(0, 40), fpsMin: fpsValue(row.fpsMin),
+            fpsMax: fpsValue(row.fpsMax), note: String(row.note || '').slice(0, 500)
+        };
+    });
+}
+function optionDraftFromRow(row = {}, { refreshCost = false } = {}) {
+    const gallery = normalizeGalleryDraft(row.gallery, row.imageUrl);
+    return {
+        id: row.id || uuid(), name: String(row.name || 'Proposta'), description: String(row.description || '').slice(0, 1200),
+        imageUrl: safeBudgetMediaUrl(row.imageUrl) || gallery[0]?.url || '', gallery,
+        useCases: normalizeUseCasesDraft(row.useCases), games: normalizeGamesDraft(row.games),
+        highlights: arr(row.highlights).map((x) => String(x || '').trim().slice(0, 160)).filter(Boolean).slice(0, 12),
+        performanceNote: String(row.performanceNote || '').slice(0, 1000), recommended: row.recommended === true,
+        items: arr(row.items).map((item) => normalizeDraftItem(item, { refreshCost })),
+        discount: normalizeAdjustment(row.discount), extra: normalizeAdjustment(row.extra)
+    };
 }
 
 function activeOption() { return budgetOptionsDraft.find((x) => String(x.id) === String(activeBudgetOptionId)) || budgetOptionsDraft[0] || null; }
@@ -237,9 +289,137 @@ function renderOptionTabs() {
 function syncOptionHeader(renderOnly = false) {
     const o = activeOption(); if (!o) return;
     const name = document.getElementById('budgetOptionName'); const rec = document.getElementById('budgetOptionRecommended');
-    if (!renderOnly) { if (name) o.name = name.value.trim() || o.name; if (rec) o.recommended = rec.checked; }
+    const description = document.getElementById('budgetOptionDescription');
+    const highlights = document.getElementById('budgetOptionHighlights');
+    const performanceNote = document.getElementById('budgetOptionPerformanceNote');
+    if (!renderOnly) {
+        if (name) o.name = name.value.trim() || o.name;
+        if (rec) o.recommended = rec.checked;
+        if (description) o.description = description.value.trim().slice(0, 1200);
+        if (highlights) o.highlights = highlights.value.split('\n').map((x) => x.trim().slice(0, 160)).filter(Boolean).slice(0, 12);
+        if (performanceNote) o.performanceNote = performanceNote.value.trim().slice(0, 1000);
+    }
     if (name) name.value = o.name || '';
     if (rec) rec.checked = o.recommended === true;
+    if (description) description.value = o.description || '';
+    if (highlights) highlights.value = arr(o.highlights).join('\n');
+    if (performanceNote) performanceNote.value = o.performanceNote || '';
+    if (renderOnly) renderBudgetPresentationEditor();
+}
+
+function renderBudgetPresentationEditor() {
+    const option = activeOption(); if (!option) return;
+    option.gallery = normalizeGalleryDraft(option.gallery, option.imageUrl);
+    option.useCases = normalizeUseCasesDraft(option.useCases);
+    option.games = normalizeGamesDraft(option.games);
+    option.imageUrl = safeBudgetMediaUrl(option.imageUrl) || option.gallery[0]?.url || '';
+    const coverIndex = option.gallery.findIndex((photo) => photo.url === option.imageUrl);
+    if (coverIndex > 0) option.gallery.unshift(option.gallery.splice(coverIndex, 1)[0]);
+
+    const galleryCount = document.getElementById('budgetGalleryCount');
+    if (galleryCount) galleryCount.textContent = `${option.gallery.length}/8`;
+    const gallery = document.getElementById('budgetGalleryEditor');
+    if (gallery) gallery.innerHTML = option.gallery.length ? option.gallery.map((photo, index) => `
+      <article class="budget-gallery-item${index === 0 ? ' is-cover' : ''}" data-photo-id="${esc(photo.id)}">
+        ${index === 0 ? '<span class="budget-cover-chip">CAPA</span>' : ''}
+        <img src="${esc(photo.url)}" alt="${esc(photo.alt || photo.caption || `Foto ${index + 1} do PC`)}" loading="lazy" decoding="async">
+        <input class="form-input budget-photo-caption" maxlength="300" value="${esc(photo.caption)}" placeholder="Legenda da foto">
+        <input class="form-input budget-photo-alt" maxlength="160" value="${esc(photo.alt)}" placeholder="Descrição acessível">
+        <div class="budget-gallery-actions">
+          ${index ? '<button class="btn btn-ghost" type="button" data-gallery-action="cover">Usar como capa</button>' : ''}
+          <button class="btn btn-danger-soft" type="button" data-gallery-action="remove">Remover</button>
+        </div>
+      </article>`).join('') : '<div class="budget-rich-empty">Nenhuma foto adicionada. Você pode enviar arquivos ou colar uma URL.</div>';
+
+    const useCases = document.getElementById('budgetUseCasesEditor');
+    if (useCases) useCases.innerHTML = option.useCases.length ? option.useCases.map((item, index) => `
+      <div class="budget-rich-row use-case" data-usecase-id="${esc(item.id)}">
+        <input class="form-input budget-usecase-title" maxlength="120" value="${esc(item.title)}" placeholder="Ex.: Edição de vídeo">
+        <input class="form-input budget-usecase-description" maxlength="600" value="${esc(item.description)}" placeholder="Detalhes, programas e nível de uso">
+        <button class="btn btn-danger-soft budget-rich-remove" type="button" data-usecase-action="remove" aria-label="Remover tarefa ${index + 1}">×</button>
+      </div>`).join('') : '<div class="budget-rich-empty">Adicione tarefas como estudos, trabalho, edição, streaming ou projetos 3D.</div>';
+
+    const games = document.getElementById('budgetGamesEditor');
+    if (games) games.innerHTML = option.games.length ? option.games.map((game, index) => `
+      <div class="budget-rich-row game" data-game-id="${esc(game.id)}">
+        <input class="form-input budget-game-name" maxlength="120" value="${esc(game.name)}" placeholder="Jogo">
+        <input class="form-input budget-game-resolution" maxlength="40" value="${esc(game.resolution)}" placeholder="1080p">
+        <input class="form-input budget-game-quality" maxlength="40" value="${esc(game.quality)}" placeholder="Alto">
+        <input class="form-input budget-game-fps-min" type="number" min="0" max="1000" value="${game.fpsMin === '' ? '' : game.fpsMin}" placeholder="FPS mín.">
+        <input class="form-input budget-game-fps-max" type="number" min="0" max="1000" value="${game.fpsMax === '' ? '' : game.fpsMax}" placeholder="FPS máx.">
+        <input class="form-input budget-game-note" maxlength="500" value="${esc(game.note)}" placeholder="DLSS/FSR, ray tracing, observações...">
+        <button class="btn btn-danger-soft budget-rich-remove" type="button" data-game-action="remove" aria-label="Remover jogo ${index + 1}">×</button>
+      </div>`).join('') : '<div class="budget-rich-empty">Adicione os jogos que o cliente quer rodar e uma estimativa de FPS.</div>';
+}
+
+function syncRichRowInput(event) {
+    const option = activeOption(); if (!option) return;
+    const useCaseRow = event.target.closest('[data-usecase-id]');
+    if (useCaseRow) {
+        const item = option.useCases.find((row) => String(row.id) === String(useCaseRow.dataset.usecaseId));
+        if (!item) return;
+        if (event.target.classList.contains('budget-usecase-title')) item.title = event.target.value.slice(0, 120);
+        if (event.target.classList.contains('budget-usecase-description')) item.description = event.target.value.slice(0, 600);
+        return;
+    }
+    const gameRow = event.target.closest('[data-game-id]');
+    if (!gameRow) return;
+    const game = option.games.find((row) => String(row.id) === String(gameRow.dataset.gameId));
+    if (!game) return;
+    if (event.target.classList.contains('budget-game-name')) game.name = event.target.value.slice(0, 120);
+    else if (event.target.classList.contains('budget-game-resolution')) game.resolution = event.target.value.slice(0, 40);
+    else if (event.target.classList.contains('budget-game-quality')) game.quality = event.target.value.slice(0, 40);
+    else if (event.target.classList.contains('budget-game-fps-min')) game.fpsMin = event.target.value === '' ? '' : Math.min(1000, Math.max(0, Math.round(num(event.target.value))));
+    else if (event.target.classList.contains('budget-game-fps-max')) game.fpsMax = event.target.value === '' ? '' : Math.min(1000, Math.max(0, Math.round(num(event.target.value))));
+    else if (event.target.classList.contains('budget-game-note')) game.note = event.target.value.slice(0, 500);
+}
+
+async function optimizeBudgetImage(file) {
+    if (!file || typeof createImageBitmap !== 'function') return file;
+    try {
+        const bitmap = await createImageBitmap(file);
+        const maxSide = 1920;
+        const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+        canvas.getContext('2d', { alpha: false }).drawImage(bitmap, 0, 0, width, height);
+        bitmap.close?.();
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', .84));
+        if (!blob || blob.size >= file.size) return file;
+        const basename = String(file.name || 'pc').replace(/\.[^.]+$/, '').slice(0, 80);
+        return typeof File === 'function' ? new File([blob], `${basename}.webp`, { type: 'image/webp' }) : blob;
+    } catch (_) { return file; }
+}
+
+async function uploadBudgetGalleryFiles() {
+    const option = activeOption(); const input = document.getElementById('budgetGalleryFiles');
+    const status = document.getElementById('budgetGalleryUploadStatus'); const button = document.getElementById('budgetUploadGalleryBtn');
+    if (!option || !input?.files?.length) return;
+    const room = Math.max(0, 8 - option.gallery.length);
+    const files = [...input.files].slice(0, room);
+    if (!room) { input.value = ''; return showToast('Esta opção já possui o limite de 8 fotos.', 'info'); }
+    button.disabled = true; status.textContent = `Otimizando e enviando ${files.length} foto(s)…`;
+    let uploaded = 0;
+    try {
+        for (const file of files) {
+            if (!/^image\/(?:jpeg|png|webp)$/i.test(file.type)) throw new Error(`Formato inválido: ${file.name}`);
+            const optimized = await optimizeBudgetImage(file);
+            const fd = new FormData(); fd.append('image', optimized, optimized.name || file.name);
+            const res = await fetch('/api/budgets/image', { method: 'POST', credentials: 'same-origin', body: fd });
+            const data = await jsonResponse(res);
+            if (!res.ok || data.error) throw new Error(data.message || `Falha ao enviar ${file.name}.`);
+            option.gallery.push({ id: uuid(), url: data.imageUrl, alt: '', caption: '' }); uploaded++;
+            if (!option.imageUrl) option.imageUrl = data.imageUrl;
+        }
+        status.textContent = `${uploaded} foto(s) enviada(s) e pronta(s) para o link.`;
+        renderBudgetPresentationEditor();
+        showToast('Fotos adicionadas à proposta.', 'success');
+    } catch (error) {
+        status.textContent = error.message || 'Não foi possível enviar as fotos.';
+        showToast(status.textContent, 'error');
+        renderBudgetPresentationEditor();
+    } finally { input.value = ''; button.disabled = false; }
 }
 function renderBudgetItems() {
     const option = activeOption(); const el = document.getElementById('budgetItemsList'); if (!el || !option) return;
@@ -328,6 +508,7 @@ function syncAdjustmentsFromUi() {
 // ---------- Template editor ----------
 function resetTemplateEditor() {
     editingTemplateId = ''; templateItemsDraft = []; selectedTemplateProductId = ''; templateProductAcIndex = -1;
+    templatePresentationDraft = { gallery: [], useCases: [], games: [], highlights: [], performanceNote: '' };
     const search = document.getElementById('templateProductSearch'); if (search) search.value = '';
     const results = document.getElementById('templateProductResults'); if (results) results.hidden = true;
     ['templateId','templateName','templateCategory','templateDescription','templateImageUrl','templateDeadline','templateWarranty','templatePaymentTerms','templateIncludedServices','templateCustomerNotes','templateInternalNotes'].forEach((id) => { const el=document.getElementById(id); if(el) el.value=''; });
@@ -340,6 +521,10 @@ function loadTemplateEditor(t) {
     document.getElementById('templateDescription').value = t.description || ''; document.getElementById('templateImageUrl').value=t.imageUrl||''; updateTemplateImagePreview(t.imageUrl); document.getElementById('templateValidDays').value = num(t.defaultValidDays) || 7; document.getElementById('templateDeadline').value = t.deadline || '';
     document.getElementById('templateWarranty').value = t.warrantyText || ''; document.getElementById('templatePaymentTerms').value = t.paymentTerms || ''; document.getElementById('templateIncludedServices').value = arr(t.includedServices).join('\n');
     document.getElementById('templateCustomerNotes').value = t.customerNotes || ''; document.getElementById('templateInternalNotes').value = t.internalNotes || ''; document.getElementById('templateActive').checked = t.active !== false;
+    templatePresentationDraft = {
+        gallery: normalizeGalleryDraft(t.gallery, t.imageUrl), useCases: normalizeUseCasesDraft(t.useCases), games: normalizeGamesDraft(t.games),
+        highlights: arr(t.highlights).map((x) => String(x || '')).filter(Boolean), performanceNote: String(t.performanceNote || '')
+    };
     templateItemsDraft = arr(t.items).map((x) => normalizeDraftItem(x, { forTemplate: true, refreshCost: true })); document.getElementById('deleteTemplateBtn').hidden = false; document.getElementById('duplicateTemplateBtn').hidden = false; renderTemplateItems(); renderTemplateList();
 }
 function renderTemplateItems() {
@@ -358,11 +543,13 @@ function renderTemplateList() {
     fillTemplateSelect();
 }
 function templatePayload() {
+    const presentation = templatePresentationDraft || { gallery: [], useCases: [], games: [], highlights: [], performanceNote: '' };
     return {
         name: document.getElementById('templateName').value.trim(), category: document.getElementById('templateCategory').value.trim() || 'Outros', description: document.getElementById('templateDescription').value.trim(), imageUrl:document.getElementById('templateImageUrl').value.trim(),
         defaultValidDays: Math.max(1, num(document.getElementById('templateValidDays').value) || 7), deadline: document.getElementById('templateDeadline').value.trim(), warrantyText: document.getElementById('templateWarranty').value.trim(),
         paymentTerms: document.getElementById('templatePaymentTerms').value.trim(), includedServices: document.getElementById('templateIncludedServices').value.split('\n').map((x)=>x.trim()).filter(Boolean),
         customerNotes: document.getElementById('templateCustomerNotes').value.trim(), internalNotes: document.getElementById('templateInternalNotes').value.trim(), active: document.getElementById('templateActive').checked,
+        gallery: clone(presentation.gallery), useCases: clone(presentation.useCases), games: clone(presentation.games), highlights: clone(presentation.highlights), performanceNote: presentation.performanceNote,
         items: templateItemsDraft.map(clone)
     };
 }
@@ -387,7 +574,12 @@ function applyTemplateToActiveBudget(t) {
     option.items = resolvedTemplateItems(t);
     option.name = t.name || option.name;
     option.description = t.description || '';
-    option.imageUrl = t.imageUrl || '';
+    option.gallery = normalizeGalleryDraft(t.gallery, t.imageUrl);
+    option.imageUrl = safeBudgetMediaUrl(t.imageUrl) || option.gallery[0]?.url || '';
+    option.useCases = normalizeUseCasesDraft(t.useCases);
+    option.games = normalizeGamesDraft(t.games);
+    option.highlights = arr(t.highlights).map((x) => String(x || '').trim()).filter(Boolean).slice(0, 12);
+    option.performanceNote = String(t.performanceNote || '');
     option.recommended = true;
     budgetOptionsDraft.forEach((o) => { if (o.id !== option.id) o.recommended = false; });
     document.getElementById('budgetValidUntil').value = addDays(document.getElementById('budgetIssuedAt').value || todayIso(), num(t.defaultValidDays) || 7);
@@ -485,7 +677,7 @@ function openEditBudget(b) {
     fillTemplateSelect();
     document.getElementById('budgetTemplateSelect').value = b.templateId || '';
     budgetOptionsDraft = arr(b.options).length
-        ? arr(b.options).map((o)=>({id:o.id||uuid(),name:o.name||'Proposta',description:o.description||'',recommended:o.recommended===true,items:arr(o.items).map((x)=>normalizeDraftItem(x)),discount:normalizeAdjustment(o.discount),extra:normalizeAdjustment(o.extra)}))
+        ? arr(b.options).map((o)=>optionDraftFromRow(o))
         : [{...newOption('Proposta', true),items:arr(b.items).map((x)=>normalizeDraftItem(x))}];
     if (budgetOptionsDraft.length && !budgetOptionsDraft.some((o)=>o.recommended)) budgetOptionsDraft[0].recommended = true;
     activeBudgetOptionId = String(b.selectedOptionId || budgetOptionsDraft.find(o=>o.recommended)?.id || budgetOptionsDraft[0]?.id);
@@ -526,8 +718,10 @@ function renderInsights(){
     const lossRows=[...lossCounts.entries()].sort((a,b)=>b[1]-a[1]); const maxLoss=Math.max(1,...lossRows.map(x=>x[1])); const lossEl=document.getElementById('budgetLossSummary');
     lossEl.innerHTML=lossRows.length?lossRows.map(([k,c])=>`<div class="budget-summary-row"><span>${esc(rejectionLabel(k))}</span><strong>${c}</strong><span></span><div class="budget-summary-bar"><span style="width:${Math.max(5,c/maxLoss*100)}%"></span></div></div>`).join(''):'<div class="budget-summary-empty">Nenhum orçamento recusado neste mês.</div>';
 }
+function budgetFiltersActive(){return ['budgetSearchInput','budgetStatusFilter','budgetSourceFilter','budgetMonthFilter'].some((id)=>String(document.getElementById(id)?.value||'').trim());}
+function clearBudgetFilters(){['budgetSearchInput','budgetStatusFilter','budgetSourceFilter','budgetMonthFilter'].forEach((id)=>{const el=document.getElementById(id);if(el)el.value='';});renderBudgetCards();}
 function filteredBudgets(){const q=String(document.getElementById('budgetSearchInput')?.value||'').toLowerCase(),st=document.getElementById('budgetStatusFilter')?.value||'',src=document.getElementById('budgetSourceFilter')?.value||'',month=document.getElementById('budgetMonthFilter')?.value||'';return budgets().filter(b=>{const hay=`${b.code} ${b.customerName} ${arr(b.options).flatMap(o=>arr(o.items).map(i=>i.name)).join(' ')}`.toLowerCase();return(!q||hay.includes(q))&&(!st||b.status===st)&&(!src||b.source===src)&&(!month||String(b.issuedAt||b.createdAt||'').slice(0,7)===month);}).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));}
-function renderBudgetCards(){const list=filteredBudgets(),el=document.getElementById('budgetsGrid');document.getElementById('budgetResultCount').textContent=`${list.length} resultado(s)`;if(!list.length){el.innerHTML='<div class="empty-state">Nenhum orçamento encontrado.</div>';return;}el.innerHTML=list.map(b=>{const total=normalizedBudgetTotal(b),opts=arr(b.options),margin=num((opts.find(o=>String(o.id)===String(b.selectedOptionId))||opts.find(o=>o.recommended)||opts[0])?.margin??b.margin);const follow=isFollowUpPending(b),reply=b.customerResponse;return `<article class="budget-card-item${reply?' has-customer-reply':''}"><div class="budget-card-head"><div><div class="budget-card-code">${esc(b.code||'Orçamento')}</div><div class="budget-card-client">${esc(b.customerName||'Sem cliente')}</div></div><span class="budget-status status-${esc(b.status||'draft')}">${esc(statusLabel(b.status))}</span></div><div class="budget-card-meta"><span>${esc(sourceLabel(b.source))}</span><span>Emissão ${dateBr(b.issuedAt||b.createdAt)}</span><span>Validade ${dateBr(b.validUntil)}</span>${opts.length>1?`<span>${opts.length} opções</span>`:''}</div>${reply?`<div class="budget-customer-live">${reply.finalized?'✓ Cliente finalizou':'● Cliente está preenchendo'} · ${esc(opts.find(o=>String(o.id)===String(reply.selectedOptionId))?.name||'opção em análise')}</div>`:''}${b.status==='rejected'?`<div class="budget-card-loss">Motivo: ${esc(rejectionLabel(b.rejectionReason))}${b.rejectionNote?` · ${esc(b.rejectionNote)}`:''}</div>`:''}${follow?'<div class="budget-card-followup">● Follow-up pendente há mais de 3 dias</div>':''}<div class="budget-card-values"><div class="budget-card-value"><small>Total</small><strong>${money(total)}</strong></div><div class="budget-card-value"><small>Lucro bruto</small><strong>${money(b.profit||0)}</strong></div><div class="budget-card-value"><small>Margem</small><strong class="${margin<10?'margin-low':''}">${margin.toFixed(1)}%</strong></div></div><div class="budget-card-actions"><button class="btn btn-primary btn-sm" data-action="share" data-id="${esc(b.id)}">Link do cliente</button>${reply?`<button class="btn btn-ghost btn-sm" data-action="response" data-id="${esc(b.id)}">Ver respostas</button>`:''}<button class="btn btn-ghost btn-sm" data-action="preview" data-id="${esc(b.id)}">Visualizar</button>${b.status!=='converted'?`<button class="btn btn-ghost btn-sm" data-action="edit" data-id="${esc(b.id)}">Editar</button>`:''}<button class="btn btn-ghost btn-sm" data-action="duplicate" data-id="${esc(b.id)}">Duplicar</button>${follow?`<button class="btn btn-ghost btn-sm" data-action="followup" data-id="${esc(b.id)}">Follow-up feito</button>`:''}${['approved','acquiring_parts'].includes(b.status)?`<button class="btn btn-primary btn-sm" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>`:''}${b.status!=='converted'?`<button class="btn btn-danger-soft btn-sm" data-action="delete" data-id="${esc(b.id)}">Excluir</button>`:''}</div></article>`;}).join('');
+function renderBudgetCards(){const all=budgets(),list=filteredBudgets(),hasFilters=budgetFiltersActive(),el=document.getElementById('budgetsGrid'),clearBtn=document.getElementById('clearBudgetFiltersBtn');if(clearBtn)clearBtn.hidden=!hasFilters;document.getElementById('budgetResultCount').textContent=hasFilters?`${list.length} de ${all.length} orçamento(s)`:`${all.length} orçamento(s)`;if(!list.length){el.innerHTML=all.length&&hasFilters?'<div class="empty-state">Nenhum orçamento corresponde aos filtros.<br><button class="btn btn-ghost btn-sm" type="button" data-clear-budget-filters>Limpar filtros</button></div>':'<div class="empty-state">Nenhum orçamento cadastrado.</div>';el.querySelector('[data-clear-budget-filters]')?.addEventListener('click',clearBudgetFilters);return;}el.innerHTML=list.map(b=>{const total=normalizedBudgetTotal(b),opts=arr(b.options),margin=num((opts.find(o=>String(o.id)===String(b.selectedOptionId))||opts.find(o=>o.recommended)||opts[0])?.margin??b.margin);const follow=isFollowUpPending(b),reply=b.customerResponse;return `<article class="budget-card-item${reply?' has-customer-reply':''}"><div class="budget-card-head"><div><div class="budget-card-code">${esc(b.code||'Orçamento')}</div><div class="budget-card-client">${esc(b.customerName||'Sem cliente')}</div></div><span class="budget-status status-${esc(b.status||'draft')}">${esc(statusLabel(b.status))}</span></div><div class="budget-card-meta"><span>${esc(sourceLabel(b.source))}</span><span>Emissão ${dateBr(b.issuedAt||b.createdAt)}</span><span>Validade ${dateBr(b.validUntil)}</span>${opts.length>1?`<span>${opts.length} opções</span>`:''}</div>${reply?`<div class="budget-customer-live">${reply.finalized?'✓ Cliente finalizou':'● Cliente está preenchendo'} · ${esc(opts.find(o=>String(o.id)===String(reply.selectedOptionId))?.name||'opção em análise')}</div>`:''}${b.status==='rejected'?`<div class="budget-card-loss">Motivo: ${esc(rejectionLabel(b.rejectionReason))}${b.rejectionNote?` · ${esc(b.rejectionNote)}`:''}</div>`:''}${follow?'<div class="budget-card-followup">● Follow-up pendente há mais de 3 dias</div>':''}<div class="budget-card-values"><div class="budget-card-value"><small>Total</small><strong>${money(total)}</strong></div><div class="budget-card-value"><small>Lucro bruto</small><strong>${money(b.profit||0)}</strong></div><div class="budget-card-value"><small>Margem</small><strong class="${margin<10?'margin-low':''}">${margin.toFixed(1)}%</strong></div></div><div class="budget-card-actions"><button class="btn btn-primary btn-sm" data-action="share" data-id="${esc(b.id)}">Link do cliente</button>${reply?`<button class="btn btn-ghost btn-sm" data-action="response" data-id="${esc(b.id)}">Ver respostas</button>`:''}<button class="btn btn-ghost btn-sm" data-action="preview" data-id="${esc(b.id)}">Visualizar</button>${b.status!=='converted'?`<button class="btn btn-ghost btn-sm" data-action="edit" data-id="${esc(b.id)}">Editar</button>`:''}<button class="btn btn-ghost btn-sm" data-action="duplicate" data-id="${esc(b.id)}">Duplicar</button>${follow?`<button class="btn btn-ghost btn-sm" data-action="followup" data-id="${esc(b.id)}">Follow-up feito</button>`:''}${['approved','acquiring_parts'].includes(b.status)?`<button class="btn btn-primary btn-sm" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>`:''}${b.status!=='converted'?`<button class="btn btn-danger-soft btn-sm" data-action="delete" data-id="${esc(b.id)}">Excluir</button>`:''}</div></article>`;}).join('');
     el.querySelectorAll('[data-action]').forEach(btn=>btn.onclick=()=>handleBudgetAction(btn.dataset.action,btn.dataset.id));}
 function renderAll(){renderKpis();renderInsights();renderBudgetCards();renderTemplateList();fillTemplateSelect();}
 async function executeDuplicateBudget() {
@@ -625,6 +819,12 @@ async function saveCurrentBudgetAsTemplate() {
         name,
         category,
         description: o.description || '',
+        imageUrl: o.imageUrl || '',
+        gallery: clone(o.gallery || []),
+        useCases: clone(o.useCases || []),
+        games: clone(o.games || []),
+        highlights: clone(o.highlights || []),
+        performanceNote: o.performanceNote || '',
         active: true,
         defaultValidDays,
         deadline: document.getElementById('budgetDeadline').value.trim(),
@@ -688,10 +888,25 @@ function bindEvents(){
     document.getElementById('removeBudgetOptionBtn').onclick=()=>{if(budgetOptionsDraft.length<=1)return showToast('O orçamento precisa ter pelo menos uma opção.','error');const i=budgetOptionsDraft.findIndex(o=>String(o.id)===String(activeBudgetOptionId));budgetOptionsDraft.splice(i,1);if(!budgetOptionsDraft.some(o=>o.recommended))budgetOptionsDraft[0].recommended=true;activeBudgetOptionId=budgetOptionsDraft[Math.max(0,i-1)]?.id||budgetOptionsDraft[0].id;renderOptionTabs();renderBudgetItems();};
     document.getElementById('budgetOptionName').onchange=()=>{const o=activeOption();if(o){o.name=document.getElementById('budgetOptionName').value.trim()||'Proposta';renderOptionTabs();}};
     document.getElementById('budgetOptionRecommended').onchange=()=>{const o=activeOption();if(!o)return;const checked=document.getElementById('budgetOptionRecommended').checked;if(checked)budgetOptionsDraft.forEach(x=>x.recommended=x.id===o.id);else o.recommended=false;if(!budgetOptionsDraft.some(x=>x.recommended))o.recommended=true;renderOptionTabs();};
+    document.getElementById('budgetOptionDescription').oninput=(event)=>{const option=activeOption();if(option)option.description=event.target.value.slice(0,1200);};
+    document.getElementById('budgetOptionHighlights').oninput=(event)=>{const option=activeOption();if(option)option.highlights=event.target.value.split('\n').map((x)=>x.trim().slice(0,160)).filter(Boolean).slice(0,12);};
+    document.getElementById('budgetOptionPerformanceNote').oninput=(event)=>{const option=activeOption();if(option)option.performanceNote=event.target.value.slice(0,1000);};
+    document.getElementById('budgetUploadGalleryBtn').onclick=()=>document.getElementById('budgetGalleryFiles').click();
+    document.getElementById('budgetGalleryFiles').onchange=uploadBudgetGalleryFiles;
+    document.getElementById('budgetAddGalleryUrlBtn').onclick=()=>{const option=activeOption(),input=document.getElementById('budgetGalleryUrl');if(!option||!input)return;const url=safeBudgetMediaUrl(input.value);if(!url)return showToast('Informe uma URL http(s) válida para a imagem.','error');if(option.gallery.length>=8)return showToast('Esta opção já possui o limite de 8 fotos.','info');if(option.gallery.some((photo)=>photo.url===url))return showToast('Esta foto já está na galeria.','info');option.gallery.push({id:uuid(),url,alt:'',caption:''});if(!option.imageUrl)option.imageUrl=url;input.value='';renderBudgetPresentationEditor();};
+    document.getElementById('budgetGalleryEditor').addEventListener('input',(event)=>{const option=activeOption(),row=event.target.closest('[data-photo-id]');if(!option||!row)return;const photo=option.gallery.find((item)=>String(item.id)===String(row.dataset.photoId));if(!photo)return;if(event.target.classList.contains('budget-photo-caption'))photo.caption=event.target.value.slice(0,300);if(event.target.classList.contains('budget-photo-alt'))photo.alt=event.target.value.slice(0,160);});
+    document.getElementById('budgetGalleryEditor').addEventListener('click',(event)=>{const button=event.target.closest('[data-gallery-action]'),option=activeOption();if(!button||!option)return;const row=button.closest('[data-photo-id]'),index=option.gallery.findIndex((item)=>String(item.id)===String(row?.dataset.photoId));if(index<0)return;if(button.dataset.galleryAction==='cover'){const [photo]=option.gallery.splice(index,1);option.gallery.unshift(photo);option.imageUrl=photo.url;}else if(button.dataset.galleryAction==='remove'){option.gallery.splice(index,1);option.imageUrl=option.gallery[0]?.url||'';}renderBudgetPresentationEditor();});
+    document.getElementById('budgetAddUseCaseBtn').onclick=()=>{const option=activeOption();if(!option)return;if(option.useCases.length>=12)return showToast('Limite de 12 tarefas por opção.','info');option.useCases.push({id:uuid(),title:'',description:''});renderBudgetPresentationEditor();document.querySelector('#budgetUseCasesEditor [data-usecase-id]:last-child input')?.focus();};
+    document.getElementById('budgetUseCasesEditor').addEventListener('input',syncRichRowInput);
+    document.getElementById('budgetUseCasesEditor').addEventListener('click',(event)=>{const button=event.target.closest('[data-usecase-action="remove"]'),option=activeOption();if(!button||!option)return;const id=button.closest('[data-usecase-id]')?.dataset.usecaseId;option.useCases=option.useCases.filter((row)=>String(row.id)!==String(id));renderBudgetPresentationEditor();});
+    document.getElementById('budgetAddGameBtn').onclick=()=>{const option=activeOption();if(!option)return;if(option.games.length>=20)return showToast('Limite de 20 jogos por opção.','info');option.games.push({id:uuid(),name:'',resolution:'1080p',quality:'Alto',fpsMin:'',fpsMax:'',note:''});renderBudgetPresentationEditor();document.querySelector('#budgetGamesEditor [data-game-id]:last-child input')?.focus();};
+    document.getElementById('budgetGamesEditor').addEventListener('input',syncRichRowInput);
+    document.getElementById('budgetGamesEditor').addEventListener('click',(event)=>{const button=event.target.closest('[data-game-action="remove"]'),option=activeOption();if(!button||!option)return;const id=button.closest('[data-game-id]')?.dataset.gameId;option.games=option.games.filter((row)=>String(row.id)!==String(id));renderBudgetPresentationEditor();});
     ['budgetDiscountType','budgetDiscountValue','budgetExtraType','budgetExtraValue'].forEach(id=>document.getElementById(id).addEventListener('change',syncAdjustmentsFromUi));
     document.getElementById('budgetAddProductBtn').onclick=()=>{if(selectedBudgetProductId)addProductToContext(selectedBudgetProductId,'budget');else showToast('Selecione um produto.','info');}; document.getElementById('budgetAddCustomBtn').onclick=()=>{activeOption().items.push(normalizeDraftItem({kind:'custom',name:'Serviço personalizado',qty:1,unitPrice:0,condition:'na'}));renderBudgetItems();};
     document.getElementById('budgetStatus').onchange=toggleRejectionFields; document.getElementById('budgetIssuedAt').onchange=()=>{const issue=document.getElementById('budgetIssuedAt').value;const valid=document.getElementById('budgetValidUntil');if(valid.value<issue)valid.value=addDays(issue,7);};
     ['budgetSearchInput','budgetStatusFilter','budgetSourceFilter','budgetMonthFilter'].forEach(id=>document.getElementById(id).addEventListener(id==='budgetSearchInput'?'input':'change',renderBudgetCards));
+    document.getElementById('clearBudgetFiltersBtn').onclick=clearBudgetFilters;
     document.getElementById('budgetsGrid').onclick=()=>{};
     document.getElementById('openTemplatesBtn').onclick=()=>{renderTemplateList();if(!editingTemplateId&&templates()[0])loadTemplateEditor(templates()[0]);else if(!templates().length)resetTemplateEditor();openBudgetModal('budgetTemplatesModal');}; document.getElementById('closeTemplatesBtn').onclick=()=>closeBudgetModal('budgetTemplatesModal'); document.getElementById('newTemplateBtn').onclick=resetTemplateEditor; document.getElementById('templateSearchInput').oninput=renderTemplateList; document.getElementById('saveTemplateBtn').onclick=saveTemplate;
     document.getElementById('templateAddCustomBtn').onclick=()=>{templateItemsDraft.push(normalizeDraftItem({kind:'custom',name:'Serviço personalizado',qty:1,unitPrice:0,condition:'na',priceMode:'snapshot'},{forTemplate:true}));renderTemplateItems();};
@@ -710,6 +925,24 @@ function bindEvents(){
     ['budgetConvertModal','budgetTemplateModal','budgetDuplicateModal','budgetSaveTemplateModal','budgetConfirmModal'].forEach(id=>document.getElementById(id)?.addEventListener('click',(e)=>{if(e.target.id===id)closeBudgetModal(id);}));
 }
 
-function initBudgetsPage(){document.querySelectorAll('.budget-modal-overlay').forEach((m)=>{m.classList.remove('open');m.setAttribute('aria-hidden','true');m.hidden=true;});syncBudgetModalLock();updateTopbarTitle('Orçamentos');markNavActive('/budgets');document.getElementById('budgetMonthFilter').value=todayIso().slice(0,7);fillTemplateSelect();renderAll();bindEvents();setInterval(async()=>{if(document.hidden||document.querySelector('.budget-modal-overlay.open'))return;try{const data=await api('/api/budgets');window.appData.budgets=data.budgets;renderAll();}catch(_){}},4000);const params=new URLSearchParams(location.search);const customerId=params.get('customer');if(customerId){openNewBudget();const c=customers().find(x=>String(x.id)===String(customerId));if(c)applyCustomer(c);}const openId=params.get('open');if(openId){const b=budgets().find(x=>String(x.id)===String(openId));if(b)setTimeout(()=>openEditBudget(b),100);}}
+function initBudgetsPage(){
+    document.querySelectorAll('.budget-modal-overlay').forEach((modal)=>{modal.classList.remove('open');modal.setAttribute('aria-hidden','true');modal.hidden=true;});
+    syncBudgetModalLock(); updateTopbarTitle('Orçamentos'); markNavActive('/budgets');
+    // O histórico começa sem filtro. O mês atual continua restrito aos KPIs/insights.
+    document.getElementById('budgetMonthFilter').value='';
+    fillTemplateSelect(); renderAll(); bindEvents();
+    setInterval(async()=>{
+        if(document.hidden||document.querySelector('.budget-modal-overlay.open'))return;
+        try{
+            const data=await api('/api/budgets'); window.appData.budgets=data.budgets; budgetRefreshErrorShown=false; renderAll();
+        }catch(error){
+            console.error('Falha ao atualizar orçamentos:',error);
+            if(!budgetRefreshErrorShown){showToast('Não foi possível atualizar a lista de orçamentos. Os dados atuais foram mantidos.','warning');budgetRefreshErrorShown=true;}
+        }
+    },4000);
+    const params=new URLSearchParams(location.search),customerId=params.get('customer');
+    if(customerId){openNewBudget();const customer=customers().find((row)=>String(row.id)===String(customerId));if(customer)applyCustomer(customer);}
+    const openId=params.get('open');if(openId){const budget=budgets().find((row)=>String(row.id)===String(openId));if(budget)setTimeout(()=>openEditBudget(budget),100);}
+}
 function bootBudgets(){whenAppReady(()=>initBudgetsPage());}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootBudgets);else bootBudgets();

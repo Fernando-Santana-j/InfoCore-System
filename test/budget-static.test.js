@@ -6,6 +6,36 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
+function readFunction(source, name) {
+  const match = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(source);
+  assert.ok(match, `Função ${name} não encontrada`);
+  const paramsOpen = source.indexOf('(', match.index);
+  let paramsDepth = 0;
+  let paramsClose = -1;
+  for (let i = paramsOpen; i < source.length; i += 1) {
+    if (source[i] === '(') paramsDepth += 1;
+    if (source[i] === ')') {
+      paramsDepth -= 1;
+      if (paramsDepth === 0) {
+        paramsClose = i;
+        break;
+      }
+    }
+  }
+  assert.notEqual(paramsClose, -1, `Parâmetros da função ${name} não foram encerrados`);
+  const open = source.indexOf('{', paramsClose);
+  assert.notEqual(open, -1, `Corpo da função ${name} não encontrado`);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(match.index, i + 1);
+    }
+  }
+  assert.fail(`Corpo da função ${name} não foi encerrado`);
+}
+
 test('budget page has no duplicate ids and JS static ids exist', () => {
   const view = read('views/budgets.ejs');
   const js = read('public/js/budgets.js');
@@ -153,8 +183,8 @@ test('budget UI avoids native browser confirm/prompt dialogs', () => {
 
 test('budget assets are cache-busted after modal regression fix', () => {
   const layout = read('views/layout.ejs');
-  assert.match(layout, /\/css\/<%= body %>\.css\?v=9/);
-  assert.match(layout, /\/js\/<%= body %>\.js\?v=11/);
+  assert.match(layout, /\/css\/<%= body %>\.css\?v=10/);
+  assert.match(layout, /\/js\/<%= body %>\.js\?v=12/);
 });
 
 test('budget server forces quote snapshots and conversion only after approval', () => {
@@ -216,4 +246,157 @@ test('budget copy flow has a fallback for local HTTP installations', () => {
   assert.match(js, /window\.isSecureContext/);
   assert.match(js, /document\.execCommand\('copy'\)/);
   assert.match(js, /writeBudgetTextToClipboard/);
+});
+
+test('budget history starts unfiltered and can clear every history filter', () => {
+  const view = read('views/budgets.ejs');
+  const js = read('public/js/budgets.js');
+  const init = readFunction(js, 'initBudgetsPage');
+  const clear = readFunction(js, 'clearBudgetFilters');
+
+  assert.match(view, /id=["']budgetMonthFilter["']/);
+  assert.match(view, /id=["']clearBudgetFiltersBtn["']/);
+  assert.match(view, /id=["']clearBudgetFiltersBtn["'][^>]*>[\s\S]*?Limpar filtros\s*<\/button>/);
+  assert.match(init, /getElementById\(["']budgetMonthFilter["']\)\.value\s*=\s*(["'])\1/);
+  assert.doesNotMatch(init, /budgetMonthFilter[^;\n]*(?:todayIso|slice\(\s*0\s*,\s*7\s*\))/);
+  for (const id of ['budgetSearchInput', 'budgetStatusFilter', 'budgetSourceFilter', 'budgetMonthFilter']) {
+    assert.match(clear, new RegExp(`["']${id}["']`), `${id} não é limpo`);
+  }
+  assert.match(js, /getElementById\(["']clearBudgetFiltersBtn["']\)\.onclick\s*=\s*clearBudgetFilters/);
+});
+
+test('budget bootstrap does not turn a database failure into an empty history', () => {
+  const server = read('index.js');
+  const budgetScope = server.match(/if\s*\(scope\s*===\s*["']budgets["']\)\s*\{[\s\S]*?return\s+res\.json\(\{\s*configs,\s*products,\s*budgets,\s*customers,\s*budgetTemplates\s*\}\);[\s\S]*?\n\s*\}/)?.[0] || '';
+
+  assert.ok(budgetScope, 'Bootstrap específico de orçamentos não encontrado');
+  assert.match(budgetScope, /db\.findAll\(\{\s*colecao:\s*BUDGETS_COLLECTION\s*\}\)/);
+  assert.doesNotMatch(budgetScope, /db\.findAll\(\{\s*colecao:\s*BUDGETS_COLLECTION\s*\}\)\.catch\(/);
+});
+
+test('budget editor exposes and persists the rich public-presentation fields', () => {
+  const view = read('views/budgets.ejs');
+  const js = read('public/js/budgets.js');
+  const optionFactory = readFunction(js, 'newOption');
+  const optionHydrator = readFunction(js, 'optionDraftFromRow');
+  const optionSync = readFunction(js, 'syncOptionHeader');
+  const payload = readFunction(js, 'budgetPayload');
+  const requiredIds = [
+    'budgetOptionDescription',
+    'budgetGalleryFiles',
+    'budgetGalleryUrl',
+    'budgetGalleryEditor',
+    'budgetAddUseCaseBtn',
+    'budgetUseCasesEditor',
+    'budgetAddGameBtn',
+    'budgetGamesEditor',
+    'budgetOptionHighlights',
+    'budgetOptionPerformanceNote'
+  ];
+
+  for (const id of requiredIds) {
+    assert.match(view, new RegExp(`id=["']${id}["']`), `Campo rico ausente: ${id}`);
+  }
+  for (const field of ['description', 'imageUrl', 'gallery', 'useCases', 'games', 'highlights', 'performanceNote']) {
+    assert.match(optionFactory, new RegExp(`\\b${field}\\b`), `Nova opção não inicializa ${field}`);
+    assert.match(optionHydrator, new RegExp(`\\b${field}\\b`), `Edição não recupera ${field}`);
+  }
+  assert.match(optionSync, /budgetOptionDescription/);
+  assert.match(optionSync, /budgetOptionHighlights/);
+  assert.match(optionSync, /budgetOptionPerformanceNote/);
+  assert.match(payload, /options\s*:\s*budgetOptionsDraft\.map/);
+});
+
+test('budget image upload is authenticated, size-limited and image-only', () => {
+  const server = read('index.js');
+  const view = read('views/budgets.ejs');
+  const uploadMiddleware = readFunction(server, 'uploadBudgetImage');
+  const signatureMiddleware = readFunction(server, 'validateBudgetImageSignature');
+  const templateFileInput = view.match(/<input\b[^>]*\bid=["']templateImageFile["'][^>]*>/)?.[0] || '';
+
+  assert.ok(templateFileInput, 'Seletor de imagem do modelo não encontrado');
+  assert.match(templateFileInput, /accept=["']image\/jpeg,image\/png,image\/webp["']/);
+  assert.doesNotMatch(templateFileInput, /image\/gif/);
+  assert.match(server, /const\s+budgetImageUpload\s*=\s*multer\s*\(\s*\{/);
+  assert.match(server, /limits\s*:\s*\{\s*fileSize\s*:\s*8\s*\*\s*1024\s*\*\s*1024\s*\}/);
+  assert.match(server, /\^image\\\/\(jpeg\|png\|webp\)\$/i);
+  assert.match(uploadMiddleware, /budgetImageUpload\.single\(["']image["']\)/);
+  assert.match(signatureMiddleware, /image\/jpeg/);
+  assert.match(signatureMiddleware, /image\/png/);
+  assert.match(signatureMiddleware, /image\/webp/);
+  assert.match(signatureMiddleware, /fs\.unlink\(req\.file\.path/);
+  assert.match(server, /app\.post\(["']\/api\/budgets\/image["']\s*,\s*verifyLogin\s*,\s*uploadBudgetImage\s*,\s*validateBudgetImageSignature\s*,/);
+  assert.match(server, /imageUrl\s*:\s*`\/uploads\/\$\{req\.file\.filename\}`/);
+});
+
+test('public budget projection is an explicit allowlist and drops internal fields', () => {
+  const vm = require('node:vm');
+  const server = read('index.js');
+  const budgetDomain = require('../lib/budget-domain');
+  const projectionSource = [
+    readFunction(server, 'publicBudgetOption'),
+    readFunction(server, 'publicBudgetView')
+  ].join('\n');
+  const context = {
+    budgetDomain,
+    selectBudgetOption: budgetDomain.bestOption,
+    input: {
+      id: 'budget-public-id',
+      code: 'ORC-PUBLICO',
+      customerName: 'Cliente público',
+      customerPhone: '79999999999',
+      customerEmail: 'interno@example.com',
+      customerDoc: 'documento-interno',
+      internalNotes: 'segredo-do-orcamento',
+      source: 'origem-interna',
+      publicToken: 'token-interno',
+      saleId: 'venda-interna',
+      serviceOrderId: 'os-interna',
+      costTotal: 600,
+      profit: 400,
+      margin: 40,
+      options: [{
+        id: 'option-public-id',
+        name: 'PC público',
+        recommended: true,
+        internalNotes: 'segredo-da-opcao',
+        costTotal: 600,
+        profit: 400,
+        margin: 40,
+        items: [{
+          id: 'item-public-id',
+          kind: 'product',
+          productId: 'produto-interno',
+          sku: 'sku-interno',
+          name: 'Processador',
+          qty: 1,
+          unitPrice: 1000,
+          unitCost: 600,
+          lineCost: 600,
+          specialOrder: true,
+          priceMode: 'snapshot'
+        }]
+      }]
+    },
+    output: null
+  };
+
+  vm.runInNewContext(`${projectionSource}\noutput = publicBudgetView(input);`, context);
+  const output = JSON.parse(JSON.stringify(context.output));
+  const serialized = JSON.stringify(output);
+  const forbiddenKeys = [
+    'customerPhone', 'customerEmail', 'customerDoc', 'internalNotes', 'source', 'publicToken',
+    'saleId', 'serviceOrderId', 'costTotal', 'profit', 'margin', 'unitCost', 'lineCost',
+    'productId', 'sku', 'kind', 'specialOrder', 'priceMode'
+  ];
+
+  assert.equal(output.code, 'ORC-PUBLICO');
+  assert.equal(output.options[0].items[0].name, 'Processador');
+  for (const key of forbiddenKeys) {
+    assert.doesNotMatch(serialized, new RegExp(`"${key}"\\s*:`), `Projeção pública expõe ${key}`);
+  }
+  assert.doesNotMatch(readFunction(server, 'publicBudgetView'), /\.\.\.\s*budget\b/);
+  assert.doesNotMatch(readFunction(server, 'publicBudgetOption'), /\.\.\.\s*(?:option|normalized)\b/);
+  assert.match(server, /budget\s*:\s*publicBudgetView\(budget\)/);
+  assert.match(server, /const\s+budget\s*=\s*publicBudgetView\(\{/);
 });

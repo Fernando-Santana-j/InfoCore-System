@@ -25,19 +25,20 @@
   </div>
 
   <div class="card budget-filter-card">
-    <input class="form-input" id="budgetSearchInput" placeholder="Buscar código, cliente ou item...">
-    <select class="form-input" id="budgetStatusFilter">
+    <input class="form-input" id="budgetSearchInput" aria-label="Buscar orçamentos" placeholder="Buscar código, cliente ou item...">
+    <select class="form-input" id="budgetStatusFilter" aria-label="Filtrar por status">
       <option value="">Todos os status</option>
       <option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="awaiting">Aguardando cliente</option>
       <option value="approved">Aprovado</option><option value="acquiring_parts">Peças em aquisição</option><option value="rejected">Recusado</option>
       <option value="expired">Expirado</option><option value="cancelled">Cancelado</option><option value="converted">Convertido em venda</option>
     </select>
-    <select class="form-input" id="budgetSourceFilter">
+    <select class="form-input" id="budgetSourceFilter" aria-label="Filtrar por origem">
       <option value="">Todas as origens</option><option value="instagram">Instagram</option><option value="google">Google</option>
       <option value="referral">Indicação</option><option value="storefront">Passou na loja</option><option value="old_customer">Cliente antigo</option>
       <option value="whatsapp">WhatsApp</option><option value="facebook">Facebook</option><option value="other">Outro</option>
     </select>
-    <input class="form-input" id="budgetMonthFilter" type="month">
+    <input class="form-input" id="budgetMonthFilter" type="month" aria-label="Filtrar por mês">
+    <button class="btn btn-ghost btn-sm" id="clearBudgetFiltersBtn" type="button" hidden>Limpar filtros</button>
   </div>
 
   <section class="card budget-list-card">
@@ -117,6 +118,45 @@
           <button class="btn btn-danger-soft btn-sm budget-option-delete" id="removeBudgetOptionBtn" type="button">Excluir opção</button>
         </div>
 
+        <details class="budget-presentation" open>
+          <summary>
+            <span><strong>Apresentação para o cliente</strong><small>Fotos, benefícios, tarefas e desempenho desta opção.</small></span>
+            <span class="budget-presentation-summary-hint">Abrir / recolher</span>
+          </summary>
+          <div class="budget-presentation-body">
+            <label class="budget-field"><span>Descrição da configuração</span><textarea class="form-input" id="budgetOptionDescription" rows="2" maxlength="1200" placeholder="Ex.: PC equilibrado para jogar em Full HD, estudar e trabalhar com ótima fluidez."></textarea></label>
+
+            <div class="budget-presentation-block">
+              <div class="budget-presentation-title"><div><strong>Fotos de como ficará o PC</strong><small>Até 8 imagens. A primeira foto será a capa da proposta.</small></div><span id="budgetGalleryCount">0/8</span></div>
+              <div class="budget-photo-toolbar">
+                <input id="budgetGalleryFiles" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+                <button class="btn btn-ghost btn-sm" id="budgetUploadGalleryBtn" type="button">Enviar fotos</button>
+                <input class="form-input" id="budgetGalleryUrl" type="url" inputmode="url" placeholder="Ou cole uma URL de imagem https://...">
+                <button class="btn btn-ghost btn-sm" id="budgetAddGalleryUrlBtn" type="button">Adicionar URL</button>
+              </div>
+              <div class="budget-upload-status text-xs text-muted" id="budgetGalleryUploadStatus" aria-live="polite"></div>
+              <div class="budget-gallery-editor" id="budgetGalleryEditor"></div>
+            </div>
+
+            <div class="budget-presentation-columns">
+              <div class="budget-presentation-block">
+                <div class="budget-presentation-title"><div><strong>O que este PC consegue fazer</strong><small>Cadastre tarefas, programas e perfis de uso.</small></div><button class="btn btn-ghost btn-sm" id="budgetAddUseCaseBtn" type="button">+ Tarefa</button></div>
+                <div class="budget-rich-list" id="budgetUseCasesEditor"></div>
+              </div>
+
+              <div class="budget-presentation-block">
+                <div class="budget-presentation-title"><div><strong>Jogos e FPS estimado</strong><small>Informe resolução, qualidade e faixa de desempenho.</small></div><button class="btn btn-ghost btn-sm" id="budgetAddGameBtn" type="button">+ Jogo</button></div>
+                <div class="budget-rich-list" id="budgetGamesEditor"></div>
+              </div>
+            </div>
+
+            <div class="budget-form-grid cols-2">
+              <label class="budget-field"><span>Destaques rápidos (um por linha)</span><textarea class="form-input" id="budgetOptionHighlights" rows="3" maxlength="1200" placeholder="Inicialização rápida&#10;Wi-Fi integrado&#10;Gabinete com ótimo fluxo de ar"></textarea></label>
+              <label class="budget-field"><span>Observação sobre desempenho</span><textarea class="form-input" id="budgetOptionPerformanceNote" rows="3" maxlength="1200" placeholder="Ex.: FPS estimado; pode variar conforme atualizações, temperatura e configurações do jogo."></textarea></label>
+            </div>
+          </div>
+        </details>
+
         <div class="budget-product-section">
           <label class="budget-field budget-field-grow"><span>Adicionar produto ou serviço</span>
             <div class="budget-ac-wrap" id="budgetProductAcWrap">
@@ -180,7 +220,7 @@
           <label class="budget-field"><span>Categoria</span><input class="form-input" id="templateCategory" placeholder="Ex.: PC Gamer"></label>
         </div>
         <label class="budget-field"><span>Descrição</span><textarea class="form-input" id="templateDescription" rows="2" placeholder="Descrição curta do objetivo do modelo"></textarea></label>
-        <label class="budget-field"><span>Imagem de apresentação</span><div class="template-image-input"><input class="form-input" id="templateImageUrl" placeholder="URL da imagem ou envie um arquivo"><input type="file" id="templateImageFile" accept="image/jpeg,image/png,image/gif,image/webp"><button class="btn btn-ghost btn-sm" type="button" id="templateUploadImageBtn">Enviar imagem</button></div><img id="templateImagePreview" class="template-image-preview" alt="Prévia do modelo" hidden></label>
+        <label class="budget-field"><span>Imagem de apresentação</span><div class="template-image-input"><input class="form-input" id="templateImageUrl" placeholder="URL da imagem ou envie um arquivo"><input type="file" id="templateImageFile" accept="image/jpeg,image/png,image/webp"><button class="btn btn-ghost btn-sm" type="button" id="templateUploadImageBtn">Enviar imagem</button></div><img id="templateImagePreview" class="template-image-preview" alt="Prévia do modelo" hidden></label>
         <div class="budget-form-grid cols-3">
           <label class="budget-field"><span>Validade padrão</span><div class="budget-input-suffix"><input class="form-input" id="templateValidDays" type="number" min="1" max="90" value="7"><span>dias</span></div></label>
           <label class="budget-field"><span>Prazo padrão</span><input class="form-input" id="templateDeadline" placeholder="Ex.: 5 a 8 dias úteis"></label>

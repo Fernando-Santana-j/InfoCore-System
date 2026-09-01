@@ -15,12 +15,49 @@ async function fetchBudgetTemplateHtml(kind, budget) {
 function waitForBudgetTemplateImages(root) {
     const imgs = [...(root || document).querySelectorAll('img')];
     return Promise.all(imgs.map((img) => {
-        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        // Uma imagem quebrada também fica `complete`; nesse caso os eventos já
+        // ocorreram e aguardar por eles deixaria a exportação travada para sempre.
+        if (img.complete) return Promise.resolve();
         return new Promise((resolve) => {
-            img.addEventListener('load', resolve, { once: true });
-            img.addEventListener('error', resolve, { once: true });
+            let timeoutId;
+            const done = () => {
+                clearTimeout(timeoutId);
+                resolve();
+            };
+            img.addEventListener('load', done, { once: true });
+            img.addEventListener('error', done, { once: true });
+            timeoutId = setTimeout(done, 5000);
         });
     }));
+}
+
+function escapeBudgetTemplateHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function prepareBudgetPrintLayout(doc) {
+    const area = doc?.querySelector?.('#budgetPrintArea');
+    if (!area) return;
+    area.classList.remove('budget-print-area--multipage');
+    const copies = [...area.querySelectorAll('.budget-print-copy')];
+    if (copies.length !== 2) return;
+
+    // 133 mm por via deixam espaço para a linha de corte dentro da área
+    // imprimível da A4. Orçamentos maiores usam uma página por via para
+    // nunca cortar itens, totais ou assinaturas.
+    const millimeter = doc.createElement('div');
+    millimeter.style.cssText = 'position:absolute;visibility:hidden;width:100mm;height:1px;';
+    doc.body.appendChild(millimeter);
+    const pixelsPerMm = millimeter.getBoundingClientRect().width / 100 || (96 / 25.4);
+    millimeter.remove();
+    const maxCopyHeight = 133 * pixelsPerMm;
+    const fitsOneSheet = copies.every((copy) => copy.scrollHeight <= maxCopyHeight + 1);
+    area.classList.toggle('budget-print-area--multipage', !fitsOneSheet);
 }
 
 async function loadBudgetTemplatePreview(budget, previewEl) {
@@ -90,7 +127,7 @@ async function printBudgetTemplatePdf(budget) {
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <title>${title}</title>
+  <title>${escapeBudgetTemplateHtml(title)}</title>
   <style>
     html, body { margin: 0; padding: 0; background: #fff; color: #0f172a; }
     @media print {
@@ -105,6 +142,8 @@ async function printBudgetTemplatePdf(budget) {
 </html>`);
         w.document.close();
         await waitForBudgetTemplateImages(w.document.body);
+        if (w.document.fonts?.ready) await w.document.fonts.ready;
+        prepareBudgetPrintLayout(w.document);
         w.focus();
         w.print();
     } catch (e) {
