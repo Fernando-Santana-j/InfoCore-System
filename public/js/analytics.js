@@ -105,9 +105,7 @@ function renderAnalytics() {
 }
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        if (typeof initAnalytics === 'function') initAnalytics();
-    });
+    document.addEventListener('DOMContentLoaded', () => whenAppReady(initAnalytics));
 } else {
-    if (typeof initAnalytics === 'function') initAnalytics();
+    whenAppReady(initAnalytics);
 }

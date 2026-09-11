@@ -130,9 +130,7 @@ function addProductFromForm() {
 
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        if (typeof initProducts === 'function') initProducts();
-    });
+    document.addEventListener('DOMContentLoaded', () => whenAppReady(initProducts));
 } else {
-    if (typeof initProducts === 'function') initProducts();
+    whenAppReady(initProducts);
 }

@@ -15,6 +15,8 @@ let duplicateBudgetId = '';
 let pendingBudgetConfirm = null;
 let budgetRefreshErrorShown = false;
 let templatePresentationDraft = null;
+let budgetRefreshInFlight = false;
+let budgetListRevision = '';
 
 const BUDGET_STATUS_LABELS = {
     draft: 'Rascunho', sent: 'Enviado', awaiting: 'Aguardando cliente', approved: 'Aprovado',
@@ -43,6 +45,7 @@ function activeProducts() { return arr(window.appData?.products).filter((p) => p
 function customers() { return arr(window.appData?.customers).slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR')); }
 function templates() { return arr(window.appData?.budgetTemplates).slice().sort((a, b) => String(a.category || '').localeCompare(String(b.category || ''), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR')); }
 function budgets() { return arr(window.appData?.budgets); }
+function budgetsRevision(list) { return arr(list).map((b) => `${b.id}:${b.updatedAt || b.createdAt || ''}:${b.customerResponse?.updatedAt || ''}:${b.status || ''}`).join('|'); }
 function productById(id) { return activeProducts().find((p) => String(p.id) === String(id)) || null; }
 
 async function jsonResponse(res) {
@@ -931,15 +934,19 @@ function initBudgetsPage(){
     // O histórico começa sem filtro. O mês atual continua restrito aos KPIs/insights.
     document.getElementById('budgetMonthFilter').value='';
     fillTemplateSelect(); renderAll(); bindEvents();
+    budgetListRevision=budgetsRevision(budgets());
     setInterval(async()=>{
-        if(document.hidden||document.querySelector('.budget-modal-overlay.open'))return;
+        if(document.hidden||budgetRefreshInFlight||document.querySelector('.budget-modal-overlay.open'))return;
+        budgetRefreshInFlight=true;
         try{
-            const data=await api('/api/budgets'); window.appData.budgets=data.budgets; budgetRefreshErrorShown=false; renderAll();
+            const data=await api('/api/budgets'),revision=budgetsRevision(data.budgets);
+            if(revision!==budgetListRevision){window.appData.budgets=data.budgets;budgetListRevision=revision;renderAll();}
+            budgetRefreshErrorShown=false;
         }catch(error){
             console.error('Falha ao atualizar orçamentos:',error);
             if(!budgetRefreshErrorShown){showToast('Não foi possível atualizar a lista de orçamentos. Os dados atuais foram mantidos.','warning');budgetRefreshErrorShown=true;}
-        }
-    },4000);
+        }finally{budgetRefreshInFlight=false;}
+    },10000);
     const params=new URLSearchParams(location.search),customerId=params.get('customer');
     if(customerId){openNewBudget();const customer=customers().find((row)=>String(row.id)===String(customerId));if(customer)applyCustomer(customer);}
     const openId=params.get('open');if(openId){const budget=budgets().find((row)=>String(row.id)===String(openId));if(budget)setTimeout(()=>openEditBudget(budget),100);}

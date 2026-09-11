@@ -11,7 +11,8 @@ const DOM = {
 
 const scriptLoadCache = new Map();
 const APP_LOAD_START = Date.now();
-const MIN_LOADER_MS = 700;
+// Não mantém a interface bloqueada artificialmente depois que os dados chegam.
+const MIN_LOADER_MS = 0;
 
 function loadScript(src) {
     if (scriptLoadCache.has(src)) return scriptLoadCache.get(src);
@@ -64,7 +65,7 @@ const AppShell = {
             if (loader) {
                 loader.classList.add('is-done');
                 loader.setAttribute('aria-busy', 'false');
-                setTimeout(() => loader.remove(), 550);
+                setTimeout(() => loader.remove(), 200);
             }
         }, wait);
     },

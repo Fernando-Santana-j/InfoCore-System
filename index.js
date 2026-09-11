@@ -1131,14 +1131,14 @@ function paymentLabelForCashFlow(payment) {
     return labels[key] || key;
 }
 
-async function loadCustomersNormalized() {
-    const rows = await db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []);
-    let sales = [];
-    try {
-        sales = await db.findAll({ colecao: SALES_COLLECTION });
-    } catch {
-        sales = [];
-    }
+async function loadCustomersNormalized(options = {}) {
+    const includeSalesStats = options.includeSalesStats !== false;
+    const [rows, sales] = await Promise.all([
+        db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []),
+        includeSalesStats
+            ? db.findAll({ colecao: SALES_COLLECTION }).catch(() => [])
+            : Promise.resolve([])
+    ]);
     const saleMap = salesTotalsByClientKey(Array.isArray(sales) ? sales : []);
     const list = Array.isArray(rows) ? rows : [];
     return list.map((row) => {
@@ -1438,22 +1438,34 @@ async function syncMissingBudgetsToCashFlow() {
 }
 
 const FINANCIAL_REBUILD_FLAG = 'financial_rebuild_v3';
+let financialRebuildChecked = false;
 
 async function ensureFinancialRebuildOnce() {
+    if (financialRebuildChecked) return false;
     try {
         const metaRef = firestore.collection('infocore').doc('meta');
         const snap = await metaRef.get();
-        if (snap.exists && snap.data()?.[FINANCIAL_REBUILD_FLAG] === true) return false;
+        if (snap.exists && snap.data()?.[FINANCIAL_REBUILD_FLAG] === true) {
+            financialRebuildChecked = true;
+            return false;
+        }
         await rebuildAllFinancialData();
         await metaRef.set(
             { [FINANCIAL_REBUILD_FLAG]: true, rebuiltAt: FieldValue.serverTimestamp() },
             { merge: true }
         );
+        financialRebuildChecked = true;
         return true;
     } catch (e) {
         console.error('ensureFinancialRebuildOnce:', e);
-        await rebuildAllFinancialData().catch((err) => console.error('rebuild financeiro:', err));
-        return true;
+        try {
+            await rebuildAllFinancialData();
+            financialRebuildChecked = true;
+            return true;
+        } catch (err) {
+            console.error('rebuild financeiro:', err);
+            return false;
+        }
     }
 }
 
@@ -1462,7 +1474,10 @@ async function loadCashFlowNormalized() {
     await syncMissingBudgetsToCashFlow().catch((e) => console.error('sync orçamentos→fluxo:', e));
     const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
     const raw = Array.isArray(rows) ? rows : [];
-    const list = await hydrateCashFlowEntriesFromProducts(raw);
+    // Custo e lucro são históricos e já ficam persistidos no lançamento. Além
+    // de ser contabilmente mais correto, isso evita reler produtos, vendas e
+    // orçamentos inteiros a cada visita ao fluxo de caixa.
+    const list = raw.map(normalizeCashFlowRow);
     list.sort((a, b) => {
         const dCmp = String(b.date || '').localeCompare(String(a.date || ''));
         if (dCmp !== 0) return dCmp;
@@ -1847,6 +1862,7 @@ async function reconcileProductBarcodeSkus(rows) {
         }
     }
     if (ops) await batch.commit();
+    db.invalidate(PRODUCTS_COLLECTION);
 }
 
 function normalizeProduct(row) {
@@ -2055,13 +2071,66 @@ async function loadProductsFromDb() {
 
 const app = express();
 
+app.set('views', path.join(__dirname, '/views'))
+app.set('view engine', 'ejs');
+app.set('trust proxy', 1);
+app.use(compression());
+
+// Arquivos públicos não precisam consultar a sessão. Antes, cada CSS, JS e
+// imagem causava uma leitura (e um touch) remoto no Firestore.
+const isProduction = process.env.NODE_ENV === 'production';
+const publicStaticOpts = {
+    maxAge: isProduction ? '30d' : 0,
+    immutable: isProduction,
+    etag: true,
+    lastModified: true
+};
+const uploadStaticOpts = {
+    maxAge: isProduction ? '7d' : 0,
+    etag: true,
+    lastModified: true
+};
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), uploadStaticOpts));
+app.use('/public', express.static(path.join(__dirname, 'public'), publicStaticOpts));
+app.use(express.static(path.join(__dirname, 'public'), publicStaticOpts));
+
+const SESSION_CACHE_TTL_MS = 30000;
+const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
+const SESSION_CACHE_MAX = 500;
+
+function cloneSessionData(value) {
+    return JSON.parse(JSON.stringify(value || {}));
+}
+
 class FirestoreSessionStore extends session.Store {
     constructor() {
         super();
         this.collection = firestore.collection('sessions');
+        this.cache = new Map();
+    }
+
+    cacheSet(sid, sessionData, expiresAt, lastPersistedAt = Date.now()) {
+        const key = String(sid);
+        if (this.cache.size >= SESSION_CACHE_MAX && !this.cache.has(key)) {
+            this.cache.delete(this.cache.keys().next().value);
+        }
+        this.cache.set(key, {
+            session: cloneSessionData(sessionData),
+            expiresAt: expiresAt ? new Date(expiresAt).getTime() : 0,
+            cachedAt: Date.now(),
+            lastPersistedAt
+        });
     }
 
     get(sid, callback) {
+        const key = String(sid);
+        const cached = this.cache.get(key);
+        if (cached && cached.cachedAt + SESSION_CACHE_TTL_MS > Date.now()) {
+            if (!cached.expiresAt || cached.expiresAt > Date.now()) {
+                return process.nextTick(() => callback(null, cloneSessionData(cached.session)));
+            }
+            this.cache.delete(key);
+        }
         this.collection.doc(String(sid)).get()
             .then((doc) => {
                 if (!doc.exists) return callback(null, null);
@@ -2071,7 +2140,14 @@ class FirestoreSessionStore extends session.Store {
                     return this.destroy(sid, () => callback(null, null));
                 }
                 const sessionData = data.session && typeof data.session === 'object' ? data.session : null;
-                return callback(null, sessionData);
+                if (sessionData) {
+                    const maxAge = Number(sessionData?.cookie?.originalMaxAge) || 0;
+                    const lastPersistedAt = expiresAt && maxAge > 0
+                        ? expiresAt.getTime() - maxAge
+                        : Date.now();
+                    this.cacheSet(key, sessionData, expiresAt, lastPersistedAt);
+                }
+                return callback(null, sessionData ? cloneSessionData(sessionData) : null);
             })
             .catch((err) => callback(err));
     }
@@ -2090,11 +2166,15 @@ class FirestoreSessionStore extends session.Store {
             updatedAt: FieldValue.serverTimestamp(),
             expiresAt
         })
-            .then(() => callback && callback(null))
+            .then(() => {
+                this.cacheSet(sid, sessionData, expiresAt);
+                callback && callback(null);
+            })
             .catch((err) => callback && callback(err));
     }
 
     destroy(sid, callback) {
+        this.cache.delete(String(sid));
         this.collection.doc(String(sid)).delete()
             .then(() => callback && callback(null))
             .catch((err) => callback && callback(err));
@@ -2103,6 +2183,19 @@ class FirestoreSessionStore extends session.Store {
     touch(sid, sess, callback) {
         const maxAge = Number(sess?.cookie?.maxAge) || 0;
         const expiresAt = new Date(Date.now() + (maxAge > 0 ? maxAge : 3600000));
+        const key = String(sid);
+        const cached = this.cache.get(key);
+        if (cached) {
+            cached.session = cloneSessionData(sess);
+            cached.expiresAt = expiresAt.getTime();
+            cached.cachedAt = Date.now();
+            if (cached.lastPersistedAt + SESSION_TOUCH_INTERVAL_MS > Date.now()) {
+                return process.nextTick(() => callback && callback(null));
+            }
+            cached.lastPersistedAt = Date.now();
+        } else {
+            this.cacheSet(key, sess, expiresAt);
+        }
         this.collection.doc(String(sid)).set({
             updatedAt: FieldValue.serverTimestamp(),
             expiresAt
@@ -2128,10 +2221,6 @@ app.use(cookieParser());
 
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 app.use(bodyParser.json({ limit: '50mb' }));
-app.use(compression());
-
-const staticMaxAge = process.env.NODE_ENV === 'production' ? '7d' : 0;
-const staticOpts = { maxAge: staticMaxAge, etag: true, lastModified: true };
 
 app.use((req, res, next) => {
     const p = String(req.path || '').replace(/\/$/, '') || '/';
@@ -2139,13 +2228,24 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.static(path.join(__dirname, 'public'), staticOpts));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'), staticOpts));
-app.use('/public', express.static(path.join(__dirname, 'public'), staticOpts));
-
-app.set('views', path.join(__dirname, '/views'))
-app.set('view engine', 'ejs');
-app.set('trust proxy', 1);
+// Algumas rotas usam transações/batches diretamente. Invalida o cache curto
+// após mutações bem-sucedidas para que a próxima tela veja os dados novos.
+app.use((req, res, next) => {
+    const method = String(req.method || 'GET').toUpperCase();
+    const mutation = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+    const readOnlyPost = req.path === '/api/budgets/template' || req.path === '/api/services/template';
+    const dataPrefix = [
+        '/api/products', '/api/budgets', '/api/budget-templates', '/api/budget-showcases',
+        '/api/customers', '/api/cash-flow', '/api/services', '/api/service-work-templates',
+        '/api/sales', '/api/public'
+    ].some((prefix) => String(req.path || '').startsWith(prefix));
+    if (mutation && dataPrefix && !readOnlyPost) {
+        res.once('finish', () => {
+            if (res.statusCode < 400) db.clearCache();
+        });
+    }
+    next();
+});
 
 app.get('/p/os/:token', async (req, res) => {
     const token = String(req.params.token || '').trim();
@@ -2294,7 +2394,10 @@ app.put('/api/public/showcases/:token/response',async(req,res)=>{
     const body=req.body||{},option=showcase.options.find(o=>String(o.id)===String(body.selectedOptionId||''));if(!option)return res.status(400).json({error:true,message:'Selecione uma opção válida.'});
     const ids=new Set((option.items||[]).map(i=>String(i.id))),choices={};Object.entries(body.choices&&typeof body.choices==='object'?body.choices:{}).forEach(([id,v])=>{if(ids.has(String(id)))choices[id]={included:v?.included!==false,qty:Math.min(99,Math.max(0,Math.trunc(Number(v?.qty)||0)))}});
     const payload={showcaseId:showcase.id,selectedOptionId:option.id,selectedOptionName:option.name,choices,requestedItems:(Array.isArray(body.requestedItems)?body.requestedItems:[]).map(x=>({name:String(x?.name||'').trim().slice(0,120),details:String(x?.details||'').trim().slice(0,500)})).filter(x=>x.name).slice(0,20),notes:String(body.notes||'').trim().slice(0,3000),customerName:String(body.customerName||showcase.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||showcase.customerPhone||'').trim().slice(0,30),finalized:body.finalized===true,updatedAt:FieldValue.serverTimestamp()};if(payload.finalized)payload.finalizedAt=FieldValue.serverTimestamp();
-    await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).set(payload,{merge:true});await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(showcase.id).set({customerResponse:payload,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();return res.json({error:false,response:customerBudgetResponse(fresh.data()||{})});
+    await Promise.all([
+        firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).set(payload,{merge:true}),
+        firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(showcase.id).set({customerResponse:payload,updatedAt:FieldValue.serverTimestamp()},{merge:true})
+    ]);const fresh=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();return res.json({error:false,response:customerBudgetResponse(fresh.data()||{})});
 });
 
 app.get('/p/orcamento/:token', async (req, res) => {
@@ -2331,8 +2434,10 @@ app.put('/api/public/budgets/:token/response', async (req, res) => {
     const finalized = body.finalized === true;
     const payload = { budgetId: budget.id, budgetCode: budget.code || '', selectedOptionId: option.id, selectedOptionName: option.name || '', choices, requestedItems, notes: String(body.notes || '').trim().slice(0, 3000), customerName: String(body.customerName || budget.customerName || '').trim().slice(0, 120), customerPhone: String(body.customerPhone || budget.customerPhone || '').trim().slice(0, 30), finalized, updatedAt: FieldValue.serverTimestamp() };
     if (finalized) payload.finalizedAt = FieldValue.serverTimestamp();
-    await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).set(payload, { merge: true });
-    await firestore.collection(BUDGETS_COLLECTION).doc(budget.id).set({ customerResponse: payload, customerResponseUpdatedAt: FieldValue.serverTimestamp(), status: finalized ? 'awaiting' : (budget.status === 'draft' ? 'sent' : budget.status), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    await Promise.all([
+        firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).set(payload, { merge: true }),
+        firestore.collection(BUDGETS_COLLECTION).doc(budget.id).set({ customerResponse: payload, customerResponseUpdatedAt: FieldValue.serverTimestamp(), status: finalized ? 'awaiting' : (budget.status === 'draft' ? 'sent' : budget.status), updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+    ]);
     const fresh = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
     return res.json({ error: false, response: customerBudgetResponse(fresh.data() || {}) });
 });
@@ -2761,9 +2866,23 @@ async function loadBudgetTemplatesNormalized() {
         .sort((a, b) => String(a.category || '').localeCompare(String(b.category || ''), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
 }
 
+let configsCache = null;
+let configsCacheExpiresAt = 0;
+let configsPending = null;
+
 async function getConfigsSafe() {
-    const raw = await db.findOne({ colecao: 'infocore', doc: 'configs' });
-    return raw && raw.error !== true ? raw : {};
+    if (configsCache && configsCacheExpiresAt > Date.now()) return { ...configsCache };
+    if (!configsPending) {
+        configsPending = db.findOne({ colecao: 'infocore', doc: 'configs' })
+            .then((raw) => {
+                const configs = raw && raw.error !== true ? raw : {};
+                configsCache = configs;
+                configsCacheExpiresAt = Date.now() + 60000;
+                return configs;
+            })
+            .finally(() => { configsPending = null; });
+    }
+    return { ...(await configsPending) };
 }
 
 async function readSharedNotes() {
@@ -2800,10 +2919,13 @@ function renderAppShell(res, body, user) {
 app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
     try {
         const scope = String(req.params.scope || '').trim();
-        const configs = await getConfigsSafe();
+        // Configurações e dados da página começam a carregar juntos, eliminando
+        // uma ida sequencial ao Firestore em todo bootstrap.
+        const configsPromise = getConfigsSafe();
 
         if (scope === 'dashboard') {
-            const [products, salesRows] = await Promise.all([
+            const [configs, products, salesRows] = await Promise.all([
+                configsPromise,
                 loadProductsFromDb(),
                 db.findAll({ colecao: SALES_COLLECTION }).catch(() => [])
             ]);
@@ -2817,10 +2939,12 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'pdv') {
-            const [products, budgetRows, customers] = await Promise.all([
+            const [configs, products, budgetRows, customers, serviceWorkTemplates] = await Promise.all([
+                configsPromise,
                 loadProductsFromDb(),
                 db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
-                loadCustomersNormalized()
+                loadCustomersNormalized({ includeSalesStats: false }),
+                loadServiceWorkTemplatesNormalized().then((templates) => templates.filter((x) => x.active))
             ]);
             const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
             return res.json({
@@ -2832,17 +2956,18 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
                     base: SERVICE_CHECKLIST_BASE,
                     byDevice: SERVICE_CHECKLIST_BY_DEVICE
                 },
-                serviceWorkTemplates: await loadServiceWorkTemplatesNormalized().then((t) => t.filter((x) => x.active))
+                serviceWorkTemplates
             });
         }
 
         if (scope === 'budgets') {
-            const [products, budgetRows, customers, budgetTemplates] = await Promise.all([
+            const [configs, products, budgetRows, customers, budgetTemplates] = await Promise.all([
+                configsPromise,
                 loadProductsFromDb(),
                 // Uma falha do Firestore deve chegar ao tratamento do bootstrap;
                 // retornar [] aqui faria a interface parecer apenas "sem orçamentos".
                 db.findAll({ colecao: BUDGETS_COLLECTION }),
-                loadCustomersNormalized(),
+                loadCustomersNormalized({ includeSalesStats: false }),
                 loadBudgetTemplatesNormalized()
             ]);
             const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
@@ -2850,18 +2975,24 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'budget-links') {
-            const [rows,budgetTemplates]=await Promise.all([db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]),loadBudgetTemplatesNormalized()]);
+            const [configs,rows,budgetTemplates]=await Promise.all([configsPromise,db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]),loadBudgetTemplatesNormalized()]);
             const showcases=(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
             return res.json({configs,showcases,budgetTemplates});
         }
 
         if (scope === 'stock') {
-            const products = await loadProductsFromDb();
+            const [configs, products] = await Promise.all([configsPromise, loadProductsFromDb()]);
+            return res.json({ configs, products });
+        }
+
+        if (scope === 'products') {
+            const [configs, products] = await Promise.all([configsPromise, loadProductsFromDb()]);
             return res.json({ configs, products });
         }
 
         if (scope === 'clients') {
-            const [customers, budgetRows] = await Promise.all([
+            const [configs, customers, budgetRows] = await Promise.all([
+                configsPromise,
                 loadCustomersNormalized(),
                 db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
             ]);
@@ -2870,21 +3001,32 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'services') {
-            const [services, budgetRows, serviceWorkTemplates] = await Promise.all([
+            const [configs, services, serviceWorkTemplates] = await Promise.all([
+                configsPromise,
                 loadServiceOrdersNormalized(),
-                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
                 loadServiceWorkTemplatesNormalized()
             ]);
-            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-            return res.json({ configs, services, budgets, serviceWorkTemplates });
+            return res.json({ configs, services, serviceWorkTemplates });
         }
 
         if (scope === 'cashflow') {
-            const cashFlowEntries = await loadCashFlowNormalized();
+            const [configs, cashFlowEntries] = await Promise.all([configsPromise, loadCashFlowNormalized()]);
             return res.json({ configs, cashFlowEntries });
         }
 
+        if (scope === 'analytics') {
+            const [configs, products, salesRows, clients] = await Promise.all([
+                configsPromise,
+                loadProductsFromDb(),
+                db.findAll({ colecao: SALES_COLLECTION }).catch(() => []),
+                loadCustomersNormalized()
+            ]);
+            const sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+            return res.json({ configs, products, sales, clients });
+        }
+
         if (scope === 'config') {
+            const configs = await configsPromise;
             return res.json({ configs, whatsapp: whatsappClient.getStatus() });
         }
 
@@ -3165,7 +3307,8 @@ app.post('/api/budgets/image', verifyLogin, uploadBudgetImage, validateBudgetIma
 app.get('/api/budget-showcases',verifyLogin,async(_req,res)=>{const rows=await db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]);return res.json({error:false,showcases:(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase)});});
 app.post('/api/budget-showcases',verifyLogin,async(req,res)=>{
     const body=req.body||{},ids=[...new Set((Array.isArray(body.templateIds)?body.templateIds:[]).map(String))].slice(0,12);if(!ids.length)return res.status(400).json({error:true,message:'Selecione ao menos um modelo.'});
-    const templates=[];for(const id of ids){const snap=await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();if(snap.exists&&snap.data()?.active!==false)templates.push(normalizeBudgetTemplate({id,...snap.data()}));}if(!templates.length)return res.status(400).json({error:true,message:'Nenhum modelo válido selecionado.'});
+    const templateSnaps=await Promise.all(ids.map((id)=>firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get()));
+    const templates=templateSnaps.flatMap((snap,index)=>snap.exists&&snap.data()?.active!==false?[normalizeBudgetTemplate({id:ids[index],...snap.data()})]:[]);if(!templates.length)return res.status(400).json({error:true,message:'Nenhum modelo válido selecionado.'});
     const id=randomUUID(),token=randomUUID(),options=templates.map((t,i)=>budgetDomain.computeOption({
         id:randomUUID(),name:t.name,description:t.description,imageUrl:t.imageUrl,gallery:t.gallery,useCases:t.useCases,
         games:t.games,highlights:t.highlights,performanceNote:t.performanceNote,recommended:i===0,items:t.items
@@ -5482,24 +5625,27 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         : [];
     const appliedTemplateNames = [];
 
-    if (workTemplateId) {
-        const tplSnap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(workTemplateId).get();
-        if (tplSnap.exists) {
-            const tpl = normalizeServiceWorkTemplateRow({ id: workTemplateId, ...(tplSnap.data() || {}) });
-            workTemplateName = tpl.name;
-            appliedTemplateNames.push(tpl.name);
-            checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
-        }
+    const requestedTemplateIds = [...new Set([workTemplateId, ...applyTemplateIds].filter(Boolean))];
+    const templateSnapshots = await Promise.all(requestedTemplateIds.map((templateId) =>
+        firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(templateId).get()
+    ));
+    const templateById = new Map(templateSnapshots
+        .filter((snap) => snap.exists)
+        .map((snap) => [snap.id, normalizeServiceWorkTemplateRow({ id: snap.id, ...(snap.data() || {}) })]));
+
+    if (workTemplateId && templateById.has(workTemplateId)) {
+        const tpl = templateById.get(workTemplateId);
+        workTemplateName = tpl.name;
+        appliedTemplateNames.push(tpl.name);
+        checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
     }
     if (applyTemplateIds.length) {
         for (const tid of applyTemplateIds) {
             if (workTemplateId && String(tid) === workTemplateId) continue;
-            const tplSnap = await firestore.collection(SERVICE_WORK_TEMPLATES_COLLECTION).doc(String(tid).trim()).get();
-            if (tplSnap.exists) {
-                const tpl = normalizeServiceWorkTemplateRow({ id: tplSnap.id, ...(tplSnap.data() || {}) });
-                checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
-                if (tpl.name) appliedTemplateNames.push(tpl.name);
-            }
+            const tpl = templateById.get(String(tid));
+            if (!tpl) continue;
+            checklist = applyWorkTemplateToChecklist(checklist, tpl, deviceType);
+            if (tpl.name) appliedTemplateNames.push(tpl.name);
         }
         checklist = reorderChecklistByTemplateSequence(checklist, applyTemplateIds);
         if (appliedTemplateNames.length) {

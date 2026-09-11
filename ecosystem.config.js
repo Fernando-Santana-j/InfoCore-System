@@ -3,11 +3,9 @@ module.exports = {
         {
             name: "sdkapps",
             script: "./index.js",
-            watch: true,
-            ignore_watch: ["node_modules", "logs", "uploads", 'test'], 
-            watch_options: {
-                followSymlinks: false,
-                usePolling: true, 
+            watch: false,
+            env: {
+                NODE_ENV: "production"
             },
         },
     ],

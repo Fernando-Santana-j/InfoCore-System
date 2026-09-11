@@ -301,13 +301,11 @@ async function saveTplForm(e) {
 }
 
 function bindTemplatesModal() {
-    document.getElementById('btnOpenWorkTemplates')?.addEventListener('click', async () => {
+    document.getElementById('btnOpenWorkTemplates')?.addEventListener('click', () => {
         const modal = document.getElementById('svcTplModal');
-        const list = document.getElementById('svcTplList');
         modal?.removeAttribute('hidden');
-        if (list) list.innerHTML = '<p class="svc-tpl-empty">Carregando templates…</p>';
-        await reloadWorkTemplatesFromApi();
         renderTplList();
+        void reloadWorkTemplatesFromApi().then(() => renderTplList());
     });
     document.getElementById('svcTplCloseBtn')?.addEventListener('click', () => {
         document.getElementById('svcTplModal')?.setAttribute('hidden', '');
@@ -337,7 +335,6 @@ function bootServices() {
         document.getElementById('btnRefreshServices')?.addEventListener('click', () => reloadServicesFromApi(true));
         bindTemplatesModal();
         renderServicesList();
-        await reloadServicesFromApi(false);
     });
 }
 if (document.readyState === 'loading') {

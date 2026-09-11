@@ -317,10 +317,19 @@ function renderSaleDetailModal(s) {
 
 async function openSaleDetailFromCashFlow(saleId) {
     if (!saleId) return;
+    document.getElementById('saleDetailId').textContent = 'Carregando…';
+    document.getElementById('saleDetailClient').textContent = 'Buscando detalhes da venda';
+    document.getElementById('saleDetailDate').textContent = '—';
+    document.getElementById('saleDetailItems').innerHTML = '<tr><td colspan="4" style="text-align:center">Carregando…</td></tr>';
+    document.getElementById('saleDetailPayment').textContent = '—';
+    document.getElementById('saleDetailCashWrap').style.display = 'none';
+    openModal('saleDetail');
     try {
         const data = await cfApi(`/api/sales/${encodeURIComponent(saleId)}`);
         if (data.sale) renderSaleDetailModal(data.sale);
-    } catch {}
+    } catch {
+        document.getElementById('saleDetailItems').innerHTML = '<tr><td colspan="4" style="text-align:center">Não foi possível carregar os detalhes.</td></tr>';
+    }
 }
 
 async function deleteCfEntry(id) {

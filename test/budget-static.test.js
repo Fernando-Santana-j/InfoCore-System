@@ -184,7 +184,7 @@ test('budget UI avoids native browser confirm/prompt dialogs', () => {
 test('budget assets are cache-busted after modal regression fix', () => {
   const layout = read('views/layout.ejs');
   assert.match(layout, /\/css\/<%= body %>\.css\?v=10/);
-  assert.match(layout, /\/js\/<%= body %>\.js\?v=12/);
+  assert.match(layout, /\/js\/<%= body %>\.js\?v=13/);
 });
 
 test('budget server forces quote snapshots and conversion only after approval', () => {

@@ -166,7 +166,7 @@ table tbody tr:hover {
 .toast.warning .toast-icon { color: var(--gold); }
 
 .modal-overlay.open .modal {
-    animation: modalPop 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+    animation: modalPop 0.22s cubic-bezier(0.34, 1.2, 0.64, 1) both;
 }
 
 @keyframes modalPop {

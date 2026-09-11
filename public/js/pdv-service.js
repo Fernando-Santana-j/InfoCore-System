@@ -12,6 +12,7 @@ let svcBudgetItemsDraft = [];
 let svcBudgetSeeded = false;
 let svcSelectedBudgetProductId = '';
 let svcBudgetProductAcIndex = -1;
+let svcTemplatesLastRefresh = 0;
 
 const SVC_NEXT_LABEL = 'Próximo →';
 const SVC_SUBMIT_LABEL = '✓ Finalizar ordem de serviço';
@@ -113,11 +114,13 @@ function svcClearCustomer() {
 }
 
 async function svcRefreshWorkTemplates() {
+    if (Date.now() - svcTemplatesLastRefresh < 60000) return;
     try {
         const res = await fetch('/api/service-work-templates?active=1', { credentials: 'same-origin' });
         const data = await res.json().catch(() => ({}));
         if (res.ok && !data.error && Array.isArray(data.templates)) {
             window.appData.serviceWorkTemplates = data.templates;
+            svcTemplatesLastRefresh = Date.now();
         }
     } catch (e) {
         console.warn('svcRefreshWorkTemplates', e);
@@ -730,10 +733,12 @@ async function svcOpenModal() {
     svcRenderChecklist();
     document.getElementById('serviceIntakeModal')?.classList.add('open');
     document.body.style.overflow = 'hidden';
-    await svcRefreshWorkTemplates();
     svcRenderWorkTemplatesPicker();
     svcRenderAppliedTemplatesSequence();
     svcSetStep(1);
+    // O bootstrap já trouxe os modelos. Atualiza em segundo plano para que a
+    // abertura do popup nunca dependa da rede.
+    void svcRefreshWorkTemplates().then(() => svcRenderWorkTemplatesPicker());
 }
 
 function svcCloseModal() {
@@ -904,7 +909,10 @@ function bindServiceIntakeModal() {
 }
 
 function bootServiceIntake() {
-    whenAppReady(() => bindServiceIntakeModal());
+    whenAppReady(() => {
+        svcTemplatesLastRefresh = Date.now();
+        bindServiceIntakeModal();
+    });
 }
 
 if (document.readyState === 'loading') {
