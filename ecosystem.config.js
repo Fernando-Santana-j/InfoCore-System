@@ -1,7 +1,7 @@
 module.exports = {
     apps: [
         {
-            name: "sdkapps",
+            name: "infocoreSystem",
             script: "./index.js",
             watch: false,
             env: {
