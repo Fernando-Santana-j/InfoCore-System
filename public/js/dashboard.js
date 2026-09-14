@@ -16,6 +16,9 @@ const Dashboard = (() => {
         const n = Number(v);
         return Number.isFinite(n) ? n : 0;
     };
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
     const pluralize = (count, singular, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`;
     const setText = (id, text) => {
         const el = getEl(id);
@@ -64,17 +67,19 @@ const Dashboard = (() => {
     };
 
     const updateStats = ({ products, sales, clients }) => {
-        const totalSales = sales.reduce((sum, s) => sum + asNumber(s.total), 0);
+        const today = new Date().toDateString();
+        const todaySales = sales.filter((sale) => parseSaleDate(sale)?.toDateString() === today);
+        const totalSales = todaySales.reduce((sum, s) => sum + asNumber(s.total), 0);
         const catalogProducts = products.filter((p) => String(p?.itemType || '').toLowerCase() !== 'service');
         const totalItems = catalogProducts.reduce((sum, p) => sum + asNumber(p.qty), 0);
         const lowStock = catalogProducts.filter((p) => asNumber(p.qty) < asNumber(p.min)).length;
 
         setText('statTotal', fmt(totalSales));
-        setText('statSales', String(sales.length));
+        setText('statSales', String(todaySales.length));
         setText('statStock', String(totalItems));
         setText('statClients', String(clients.length));
 
-        setText('statTotalChange', `${pluralize(sales.length, 'venda')} registrada${sales.length === 1 ? '' : 's'}`);
+        setText('statTotalChange', `${pluralize(todaySales.length, 'venda')} hoje`);
         setText('statSalesChange', `${sales.length} no histórico`);
         setHtml('statStockChange', lowStock > 0 ? `<span style="color: var(--red);">${lowStock} em risco</span>` : `✓ <span style="color: var(--green);">Tudo ok</span>`);
         setText('statClientsChange', pluralize(clients.length, 'cliente'));
@@ -195,7 +200,7 @@ const Dashboard = (() => {
 
         container.innerHTML = orderedKeys.map((key) => {
             const cfg = categoryConfig[key] || {};
-            const name = cfg.name || key;
+            const name = escapeHtml(cfg.name || key);
             const color = normalizeCssColor(cfg.color || 'var(--text3)');
             const count = categorySalesCount[key] || 0;
             const pct = totalCount > 0 ? Math.round((count / totalCount) * 100) : 0;
@@ -234,8 +239,8 @@ const Dashboard = (() => {
             const pct = total > 0 ? Math.round((count / total) * 100) : 0;
             return `
         <div class="payment-item" style="border-color: ${cfg.color}; border-width: 2px;">
-          <div class="payment-icon">${cfg.icon}</div>
-          <div class="payment-type">${cfg.name}</div>
+          <div class="payment-icon">${escapeHtml(cfg.icon)}</div>
+          <div class="payment-type">${escapeHtml(cfg.name)}</div>
           <div class="payment-count">${count}</div>
           <div class="payment-pct">${pct}%</div>
         </div>
@@ -247,7 +252,7 @@ const Dashboard = (() => {
         const tbody = getEl('recentSales');
         if (!tbody) return;
 
-        const recent = sales.slice().reverse().slice(0, MAX_SALES);
+        const recent = sales.slice(0, MAX_SALES);
         if (recent.length === 0) {
             tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 40px 20px; color: var(--text3);">📊 Nenhuma venda registrada</td></tr>`;
             return;
@@ -256,14 +261,15 @@ const Dashboard = (() => {
         tbody.innerHTML = recent.map((sale) => {
             const paymentCfg = getPaymentConfig(normalizePaymentKey(sale.payment));
             const itemCount = asArray(sale.items).length;
-            const hour = String(sale.date || '').split(' ')[1] || '--:--';
+            const parsedDate = parseSaleDate(sale);
+            const hour = parsedDate ? parsedDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
             return `
         <tr class="fade-in">
-          <td class="mono text-muted">#${sale.id || '-'}</td>
-          <td class="font-bold">${sale.client || 'Balcao'}</td>
+          <td class="mono text-muted">#${escapeHtml(sale.code || sale.id || '-')}</td>
+          <td class="font-bold">${escapeHtml(sale.client || 'Balcão')}</td>
           <td class="text-muted">${itemCount} ${itemCount === 1 ? 'item' : 'itens'}</td>
           <td class="mono text-gold font-bold">${fmt(sale.total)}</td>
-          <td class="sales-payment-content"><span class="sales-payment-icon" style="margin-right: 4px;">${paymentCfg.icon}</span>${paymentCfg.name}</td>
+          <td class="sales-payment-content"><span class="sales-payment-icon" style="margin-right: 4px;">${escapeHtml(paymentCfg.icon)}</span>${escapeHtml(paymentCfg.name)}</td>
           <td class="text-muted mono">${hour}</td>
           <td><span class="tag green">✓ Pago</span></td>
         </tr>

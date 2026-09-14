@@ -27,6 +27,7 @@ require('dotenv').config();
 // const config = require('./config/config.json');
 
 const PRODUCTS_COLLECTION = 'products';
+const CATALOG_SCHEMA_VERSION = 2;
 const SALES_COLLECTION = 'sales';
 const BUDGETS_COLLECTION = 'budgets';
 const BUDGET_TEMPLATES_COLLECTION = 'budget_templates';
@@ -186,6 +187,35 @@ function normalizeBudgetRow(row) {
     };
 }
 
+function budgetForUser(row, user) {
+    const budget = normalizeBudgetRow(row);
+    if (user?.type === 'admin') return budget;
+    const cleanItem = (item) => {
+        const { cost, unitCost, lineCost, ...safe } = item && typeof item === 'object' ? item : {};
+        return safe;
+    };
+    const cleanOption = (option) => {
+        const { costTotal, profit, margin, ...safe } = option && typeof option === 'object' ? option : {};
+        return { ...safe, items: asItemsArray(safe.items).map(cleanItem) };
+    };
+    const { costTotal, profit, margin, ...safeBudget } = budget;
+    return {
+        ...safeBudget,
+        options: asItemsArray(budget.options).map(cleanOption),
+        items: asItemsArray(budget.items).map(cleanItem)
+    };
+}
+
+function budgetTemplateForUser(row, user) {
+    const template = normalizeBudgetTemplate(row);
+    if (user?.type === 'admin') return template;
+    const { costTotal, profit, margin, internalNotes, ...safe } = template;
+    return {
+        ...safe,
+        items: asItemsArray(template.items).map(({ cost, unitCost, lineCost, ...item }) => item)
+    };
+}
+
 function toDateSafe(value) {
     if (!value) return null;
     if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -206,9 +236,9 @@ function toDateSafe(value) {
 
 function normalizeSaleRow(row) {
     const r = row && typeof row === 'object' ? row : {};
-    const createdAtDate = toDateSafe(r.createdAt);
+    const createdAtDate = toDateSafe(r.createdAt || r.date);
     const paymentGateway = r.paymentGateway && typeof r.paymentGateway === 'object' ? r.paymentGateway : null;
-    const payment = paymentGateway?.provider ? String(paymentGateway.provider) : normalizePaymentKey(r.payment);
+    const payment = normalizePaymentKey(r.payment);
 
     return {
         id: r.id != null ? String(r.id) : '',
@@ -242,6 +272,16 @@ function normalizeSaleRow(row) {
         adjustments: r.adjustments && typeof r.adjustments === 'object' ? r.adjustments : null,
         cashReceived: Number.isFinite(Number(r.cashReceived)) ? Number(r.cashReceived) : null,
         change: Number.isFinite(Number(r.change)) ? Number(r.change) : null
+    };
+}
+
+function saleForUser(row, user) {
+    const sale = normalizeSaleRow(row);
+    if (user?.type === 'admin') return sale;
+    const { costTotal, profit, ...safe } = sale;
+    return {
+        ...safe,
+        items: asItemsArray(sale.items).map(({ cost, lineCost, ...item }) => item)
     };
 }
 
@@ -332,6 +372,13 @@ function normalizeCashFlowRow(row) {
     };
 }
 
+function cashFlowForUser(row, user) {
+    const entry = normalizeCashFlowRow(row);
+    if (user?.type === 'admin') return entry;
+    const { cost, profit, ...safe } = entry;
+    return safe;
+}
+
 function serviceDisplayCode() {
     const t = Date.now().toString(36).toUpperCase();
     return `OS-${t.slice(-6)}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
@@ -408,6 +455,8 @@ function normalizeServiceChecklistItem(item) {
     const r = item && typeof item === 'object' ? item : {};
     const key = String(r.key || r.id || '').trim() || randomUUID();
     const label = String(r.label || r.title || '').trim();
+    const allowedWorkTypes = new Set(['service', 'part', 'diagnostic', 'other']);
+    const requestedWorkType = String(r.workType || 'service').trim().toLowerCase();
     let estimatedPrice = r.estimatedPrice;
     if (estimatedPrice != null && estimatedPrice !== '') {
         estimatedPrice = Math.max(0, Number(estimatedPrice) || 0);
@@ -418,6 +467,7 @@ function normalizeServiceChecklistItem(item) {
         key,
         label,
         icon: r.icon != null ? String(r.icon) : '',
+        workType: allowedWorkTypes.has(requestedWorkType) ? requestedWorkType : 'service',
         defective: Boolean(r.defective),
         customerNote: r.customerNote != null ? String(r.customerNote).trim() : (r.notes != null ? String(r.notes).trim() : ''),
         estimatedPrice,
@@ -575,6 +625,15 @@ function serviceShareableStages(service) {
     return (service?.checklist || []).filter((item) => item.defective);
 }
 
+function serviceWorkTypeLabel(type) {
+    return ({
+        service: 'Serviço',
+        part: 'Peça/material',
+        diagnostic: 'Diagnóstico',
+        other: 'Outro'
+    })[String(type || 'service')] || 'Serviço';
+}
+
 function buildServiceStagesHtml(service, options = {}) {
     const compact = options?.compact === true;
     const stages = serviceShareableStages(service);
@@ -605,15 +664,18 @@ function buildServiceStagesHtml(service, options = {}) {
   <div style="display:flex;flex-wrap:wrap;gap:8px;">${thumbs}</div>
 </div>`;
         };
-        const statusBadge = item.done
-            ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Concluído</span>'
-            : '<span style="background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Em andamento</span>';
+        const statusBadge = item.archived
+            ? '<span style="background:#f1f5f9;color:#64748b;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Arquivada</span>'
+            : item.done
+                ? '<span style="background:#dcfce7;color:#166534;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Concluído</span>'
+                : '<span style="background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:999px;font-size:.68rem;font-weight:700;">Em andamento</span>';
+        const typeLabel = serviceWorkTypeLabel(item.workType);
         return `
 <article style="border:1px solid #e2e8f0;border-radius:16px;padding:${pad};margin-bottom:16px;background:#fff;box-shadow:0 4px 24px rgba(15,23,42,.06);">
   <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;">
     <span style="font-size:1.6rem;line-height:1;">${safeTemplateValue(item.icon || '🔧')}</span>
     <div style="flex:1;">
-      <div style="font-size:.72rem;color:#94a3b8;font-weight:600;">Etapa ${index + 1}</div>
+      <div style="font-size:.72rem;color:#94a3b8;font-weight:600;">Etapa ${index + 1} · ${safeTemplateValue(typeLabel)}</div>
       <h3 style="margin:4px 0 0;font-size:1.05rem;color:#0f172a;">${safeTemplateValue(item.label)}</h3>
     </div>
     ${statusBadge}
@@ -637,7 +699,7 @@ function serviceTemplateData(service, req, options = {}) {
     const logoUrl = base ? `${base}/public/img/logo_bg.png` : '/public/img/logo_bg.png';
     const shareUrl = serviceShareUrl(service?.shareToken, req);
     const stages = serviceShareableStages(service);
-    const done = stages.filter((s) => s.done).length;
+    const done = stages.filter((s) => s.done || s.archived).length;
     const progress = stages.length ? Math.round((done / stages.length) * 100) : 0;
     const storeName = options?.storeName != null
         ? String(options.storeName)
@@ -1232,7 +1294,6 @@ async function enrichBudgetItemsWithCost(rawItems, maps, { preferProvidedProduct
         const name = String(normalized.name || '').trim();
         const providedCost = Number(row?.unitCost ?? row?.cost);
         const canUseProvided = preferProvidedProductCost
-            && normalized.kind === 'product'
             && Number.isFinite(providedCost)
             && providedCost >= 0;
         const unitCost = canUseProvided
@@ -1806,6 +1867,17 @@ function pickUnusedBarcodeSku(usedSet) {
     throw new Error('Esgotados os códigos numéricos de produto (SKU).');
 }
 
+function pickUnusedServiceSku(usedSet) {
+    for (let number = 1; number <= 999999; number++) {
+        const code = `SRV-${String(number).padStart(4, '0')}`;
+        if (!usedSet.has(code.toLowerCase())) {
+            usedSet.add(code.toLowerCase());
+            return code;
+        }
+    }
+    throw new Error('Esgotados os códigos de serviço disponíveis.');
+}
+
 async function fetchProductRows() {
     const rows = await db.findAll({ colecao: PRODUCTS_COLLECTION });
     return Array.isArray(rows) ? rows : [];
@@ -1822,6 +1894,10 @@ async function reconcileProductBarcodeSkus(rows) {
         const id = row.id != null ? String(row.id) : '';
         if (!id) continue;
         const c = canonicalBarcodeSku(row.sku);
+        if (isServiceItemType(row)) {
+            if (c) used.add(c);
+            continue;
+        }
         if (!c) continue;
         if (!used.has(c)) {
             used.add(c);
@@ -1833,6 +1909,7 @@ async function reconcileProductBarcodeSkus(rows) {
     for (const row of rows) {
         const id = row.id != null ? String(row.id) : '';
         if (!id) continue;
+        if (isServiceItemType(row)) continue;
         const raw = row.sku != null ? String(row.sku).trim() : '';
         const c = canonicalBarcodeSku(raw);
         const kept = plannedKeep.get(id);
@@ -1880,6 +1957,7 @@ function normalizeProduct(row) {
     const emojiDefault = itemType === 'service' ? '🔧' : '📦';
     return {
         id,
+        schemaVersion: Number(d.schemaVersion) || 1,
         sku,
         name: String(d.name || ''),
         category: String(d.category || '').trim() || 'others',
@@ -1898,6 +1976,13 @@ function normalizeProduct(row) {
         description: d.description != null ? String(d.description) : '',
         serviceDuration: d.serviceDuration != null ? String(d.serviceDuration).trim() : ''
     };
+}
+
+function productForPdv(product, user) {
+    const normalized = normalizeProduct(product);
+    if (user?.type === 'admin') return normalized;
+    const { cost, laborCost, partsCost, unitCostTotal, ...cashierView } = normalized;
+    return cashierView;
 }
 
 function parseMoneyField(v) {
@@ -2076,6 +2161,14 @@ app.set('view engine', 'ejs');
 app.set('trust proxy', 1);
 app.use(compression());
 
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+});
+
 // Arquivos públicos não precisam consultar a sessão. Antes, cada CSS, JS e
 // imagem causava uma leitura (e um touch) remoto no Firestore.
 const isProduction = process.env.NODE_ENV === 'production';
@@ -2093,6 +2186,12 @@ const uploadStaticOpts = {
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), uploadStaticOpts));
 app.use('/public', express.static(path.join(__dirname, 'public'), publicStaticOpts));
 app.use(express.static(path.join(__dirname, 'public'), publicStaticOpts));
+
+// Telas e APIs contêm dados operacionais e não devem ficar em caches compartilhados.
+app.use((req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    next();
+});
 
 const SESSION_CACHE_TTL_MS = 30000;
 const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
@@ -2214,7 +2313,8 @@ app.use(session({
     cookie: {
         maxAge: 8 * 60 * 60 * 1000,
         httpOnly: true,
-        sameSite: 'lax'
+        sameSite: 'lax',
+        secure: isProduction
     }
 }));
 app.use(cookieParser());
@@ -2800,6 +2900,16 @@ function verifyAdmin(req, res, next) {
     next();
 }
 
+function verifyAdminApi(req, res, next) {
+    if (!req.session.user) {
+        return res.status(401).json({ error: true, message: 'Sessão expirada. Entre novamente.' });
+    }
+    if (req.session.user.type !== 'admin') {
+        return res.status(403).json({ error: true, message: 'Esta função é exclusiva de administradores.' });
+    }
+    next();
+}
+
 function isBudgetFinalized(row) {
     return normalizeBudgetStatus(row?.status) === 'converted';
 }
@@ -2908,45 +3018,57 @@ async function readSharedNotes() {
     };
 }
 
+function publicSessionUser(user) {
+    const source = user && typeof user === 'object' ? user : {};
+    const { pass, password, passwordHash, ...safe } = source;
+    return safe;
+}
+
 function renderAppShell(res, body, user) {
     res.render('layout', {
         body,
         bootstrap: body,
-        appData: { user, configs: {}, cart: [] }
+        appData: { user: publicSessionUser(user), configs: {}, cart: [] }
     });
 }
 
 app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
     try {
         const scope = String(req.params.scope || '').trim();
+        if (['stock', 'products', 'analytics', 'config'].includes(scope) && req.session.user?.type !== 'admin') {
+            return res.status(403).json({ error: true, message: 'Esta área é exclusiva de administradores.' });
+        }
         // Configurações e dados da página começam a carregar juntos, eliminando
         // uma ida sequencial ao Firestore em todo bootstrap.
         const configsPromise = getConfigsSafe();
 
         if (scope === 'dashboard') {
-            const [configs, products, salesRows] = await Promise.all([
+            const [configs, products, salesRows, clients] = await Promise.all([
                 configsPromise,
                 loadProductsFromDb(),
-                db.findAll({ colecao: SALES_COLLECTION }).catch(() => [])
+                db.findAll({ colecao: SALES_COLLECTION }).catch(() => []),
+                loadCustomersNormalized({ includeSalesStats: false })
             ]);
-            let sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
+            const visibleProducts = products.map((product) => productForPdv(product, req.session.user));
+            let sales = Array.isArray(salesRows) ? salesRows.map((row) => saleForUser(row, req.session.user)) : [];
             sales.sort((a, b) => {
                 const ta = new Date(a.createdAt || a.date || 0).getTime();
                 const tb = new Date(b.createdAt || b.date || 0).getTime();
                 return tb - ta;
             });
-            return res.json({ configs, products, sales });
+            return res.json({ configs, products: visibleProducts, sales, clients });
         }
 
         if (scope === 'pdv') {
-            const [configs, products, budgetRows, customers, serviceWorkTemplates] = await Promise.all([
+            const [configs, productRows, budgetRows, customers, serviceWorkTemplates] = await Promise.all([
                 configsPromise,
                 loadProductsFromDb(),
                 db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
                 loadCustomersNormalized({ includeSalesStats: false }),
                 loadServiceWorkTemplatesNormalized().then((templates) => templates.filter((x) => x.active))
             ]);
-            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+            const products = productRows.map((product) => productForPdv(product, req.session.user));
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
             return res.json({
                 configs,
                 products,
@@ -2961,7 +3083,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'budgets') {
-            const [configs, products, budgetRows, customers, budgetTemplates] = await Promise.all([
+            const [configs, productRows, budgetRows, customers, budgetTemplates] = await Promise.all([
                 configsPromise,
                 loadProductsFromDb(),
                 // Uma falha do Firestore deve chegar ao tratamento do bootstrap;
@@ -2970,14 +3092,15 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
                 loadCustomersNormalized({ includeSalesStats: false }),
                 loadBudgetTemplatesNormalized()
             ]);
-            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
-            return res.json({ configs, products, budgets, customers, budgetTemplates });
+            const products = productRows.map((product) => productForPdv(product, req.session.user));
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
+            return res.json({ configs, products, budgets, customers, budgetTemplates: budgetTemplates.map((row) => budgetTemplateForUser(row, req.session.user)) });
         }
 
         if (scope === 'budget-links') {
             const [configs,rows,budgetTemplates]=await Promise.all([configsPromise,db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]),loadBudgetTemplatesNormalized()]);
             const showcases=(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
-            return res.json({configs,showcases,budgetTemplates});
+            return res.json({configs,showcases,budgetTemplates:budgetTemplates.map((row)=>budgetTemplateForUser(row,req.session.user))});
         }
 
         if (scope === 'stock') {
@@ -2996,21 +3119,25 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
                 loadCustomersNormalized(),
                 db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
             ]);
-            const budgets = Array.isArray(budgetRows) ? budgetRows.map(normalizeBudgetRow) : [];
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
             return res.json({ configs, customers, budgets });
         }
 
         if (scope === 'services') {
-            const [configs, services, serviceWorkTemplates] = await Promise.all([
+            const [configs, services, serviceWorkTemplates, budgetRows, customers] = await Promise.all([
                 configsPromise,
                 loadServiceOrdersNormalized(),
-                loadServiceWorkTemplatesNormalized()
+                loadServiceWorkTemplatesNormalized(),
+                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+                loadCustomersNormalized({ includeSalesStats: false })
             ]);
-            return res.json({ configs, services, serviceWorkTemplates });
+            const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
+            return res.json({ configs, services, serviceWorkTemplates, budgets, customers });
         }
 
         if (scope === 'cashflow') {
-            const [configs, cashFlowEntries] = await Promise.all([configsPromise, loadCashFlowNormalized()]);
+            const [configs, cashFlowRows] = await Promise.all([configsPromise, loadCashFlowNormalized()]);
+            const cashFlowEntries = cashFlowRows.map((row) => cashFlowForUser(row, req.session.user));
             return res.json({ configs, cashFlowEntries });
         }
 
@@ -3037,18 +3164,71 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
     }
 });
 
+app.put('/api/config', verifyAdminApi, async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const patch = {};
+    if (body.storeName != null) patch.storeName = String(body.storeName).trim().slice(0, 120);
+    if (body.storeDoc != null) patch.storeDoc = String(body.storeDoc).trim().slice(0, 40);
+    if (body.storeAddress != null) patch.storeAddress = String(body.storeAddress).trim().slice(0, 240);
+    if (body.storePhone != null) patch.storePhone = String(body.storePhone).trim().slice(0, 40);
+    if (body.currency != null) patch.currency = 'BRL';
+    if (body.defaultMinStock != null) patch.defaultMinStock = Math.min(999999, Math.max(0, Math.trunc(Number(body.defaultMinStock) || 0)));
+    if (!Object.keys(patch).length) return res.status(400).json({ error: true, message: 'Nenhuma configuração válida foi enviada.' });
+    try {
+        patch.updatedAt = FieldValue.serverTimestamp();
+        await firestore.collection(INFOCORE_COLLECTION).doc('configs').set(patch, { merge: true });
+        configsCache = null;
+        configsCacheExpiresAt = 0;
+        db.invalidate(INFOCORE_COLLECTION);
+        return res.json({ error: false, configs: { ...patch, updatedAt: undefined } });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ error: true, message: 'Erro ao salvar configurações.' });
+    }
+});
+
+app.put('/api/account/password', verifyLogin, async (req, res) => {
+    const currentPassword = String(req.body?.currentPassword || '');
+    const newPassword = String(req.body?.newPassword || '');
+    if (newPassword.length < 6) return res.status(400).json({ error: true, message: 'A nova senha deve ter pelo menos 6 caracteres.' });
+    try {
+        const sessionUser = req.session.user || {};
+        let user = sessionUser.id ? await db.findOne({ colecao: 'users', doc: String(sessionUser.id) }) : null;
+        if (!user || user.error) user = await db.findOne({ colecao: 'users', where: ['email', '==', String(sessionUser.email || '')] });
+        if (!user || user.error) return res.status(404).json({ error: true, message: 'Usuário não encontrado.' });
+        if (String(user.pass || '') !== currentPassword) return res.status(400).json({ error: true, message: 'Senha atual incorreta.' });
+        await db.update('users', String(user.id), { pass: newPassword, updatedAt: FieldValue.serverTimestamp() });
+        return res.json({ error: false });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ error: true, message: 'Erro ao alterar senha.' });
+    }
+});
+
 app.post('/login', async (req, res) => {
-    let { email, pass } = req.body;
+    const email = String(req.body?.email || '').trim();
+    const pass = String(req.body?.pass || '');
+    if (!email || !pass) {
+        return res.status(400).json({ error: true, message: 'Informe email e senha.' });
+    }
     let user = await db.findOne({ colecao: 'users', where: ['email', '==', email] });
     
-    if (!user) {
+    if (!user || user.error) {
         return res.json({ error: true, message: 'Usuário não encontrado' });
     }
     if (user.pass !== pass) {
         return res.json({ error: true, message: 'Senha incorreta' });
     }
-    req.session.user = user;
+    req.session.user = publicSessionUser(user);
     return res.json({ error: false, message: 'Login realizado com sucesso' });
+});
+
+app.post('/logout', verifyLogin, (req, res) => {
+    req.session.destroy((error) => {
+        if (error) return res.status(500).json({ error: true, message: 'Não foi possível encerrar a sessão.' });
+        res.clearCookie('connect.sid', { httpOnly: true, sameSite: 'lax', secure: isProduction });
+        return res.json({ error: false });
+    });
 });
 
 
@@ -3103,11 +3283,11 @@ app.get('/services/:id', verifyAdmin, async (req, res) => {
     res.render('layout', {
         body: 'service-work',
         bootstrap: '',
-        appData: { configs, user: req.session.user, service }
+        appData: { configs, user: publicSessionUser(req.session.user), service }
     });
 });
 
-app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
+app.post('/api/products', verifyAdminApi, uploadProductImage, async (req, res) => {
     const body = req.body || {};
     const name = String(body.name || '').trim();
     const category = String(body.category || 'others').trim() || 'others';
@@ -3135,13 +3315,18 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
     const id = randomUUID();
     const existingRows = await fetchProductRows();
     const usedSkus = new Set();
+    const usedCatalogCodes = new Set();
     for (const r of existingRows) {
+        const rawSku = r.sku != null ? String(r.sku).trim() : '';
+        if (rawSku) usedCatalogCodes.add(rawSku.toLowerCase());
         const c = canonicalBarcodeSku(r.sku != null ? String(r.sku).trim() : '');
         if (c) usedSkus.add(c);
     }
     let sku;
     try {
-        sku = pickUnusedBarcodeSku(usedSkus);
+        sku = itemType === 'service'
+            ? pickUnusedServiceSku(usedCatalogCodes)
+            : pickUnusedBarcodeSku(usedSkus);
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Não foi possível gerar código do produto.' });
@@ -3150,6 +3335,7 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
 
     const payload = {
         id,
+        schemaVersion: CATALOG_SCHEMA_VERSION,
         sku,
         name,
         category,
@@ -3157,13 +3343,18 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
         emoji: itemType === 'service' ? '🔧' : '📦',
         image,
         cost,
-        partsCost,
         price,
-        qty,
-        min,
-        trackStock,
-        active: true
+        active: true,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
     };
+    if (itemType === 'service') {
+        payload.partsCost = partsCost;
+    } else {
+        payload.qty = qty;
+        payload.min = min;
+        payload.trackStock = trackStock;
+    }
     if (description) payload.description = description;
     if (serviceDuration) payload.serviceDuration = serviceDuration;
 
@@ -3177,7 +3368,51 @@ app.post('/api/products', verifyLogin, uploadProductImage, async (req, res) => {
     return res.json({ error: false, product: normalizeProduct(payload) });
 });
 
-app.patch('/api/products/:id', verifyLogin, uploadProductImageIfMultipart, async (req, res) => {
+app.post('/api/products/:id/duplicate', verifyAdminApi, async (req, res) => {
+    const sourceId = String(req.params.id || '').trim();
+    const snap = await firestore.collection(PRODUCTS_COLLECTION).doc(sourceId).get();
+    if (!snap.exists) return res.status(404).json({ error: true, message: 'Item do catálogo não encontrado.' });
+    const source = snap.data() || {};
+    const itemType = isServiceItemType(source) ? 'service' : 'product';
+    const existingRows = await fetchProductRows();
+    const usedBarcodeSkus = new Set(existingRows.map((row) => canonicalBarcodeSku(row.sku)).filter(Boolean));
+    const usedCodes = new Set(existingRows.map((row) => String(row.sku || '').trim().toLowerCase()).filter(Boolean));
+    const id = randomUUID();
+    const sku = itemType === 'service' ? pickUnusedServiceSku(usedCodes) : pickUnusedBarcodeSku(usedBarcodeSkus);
+    const payload = {
+        id,
+        schemaVersion: CATALOG_SCHEMA_VERSION,
+        sku,
+        name: `${String(source.name || (itemType === 'service' ? 'Serviço' : 'Produto')).trim()} (cópia)`,
+        category: String(source.category || 'others'),
+        itemType,
+        emoji: String(source.emoji || (itemType === 'service' ? '🔧' : '📦')),
+        image: String(source.image || ''),
+        cost: productLaborCost(source),
+        price: parseMoneyField(source.price),
+        active: false,
+        description: String(source.description || ''),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+    };
+    if (itemType === 'service') {
+        payload.partsCost = parsePartsCostField(source);
+        payload.serviceDuration = String(source.serviceDuration || '');
+    } else {
+        payload.qty = 0;
+        payload.min = Number.parseInt(String(source.min), 10) || 0;
+        payload.trackStock = source.trackStock !== false;
+    }
+    try {
+        await db.create(PRODUCTS_COLLECTION, id, payload);
+        return res.json({ error: false, product: normalizeProduct(payload) });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ error: true, message: 'Não foi possível duplicar o item.' });
+    }
+});
+
+app.patch('/api/products/:id', verifyAdminApi, uploadProductImageIfMultipart, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) {
         return res.status(400).json({ error: true, message: 'ID inválido.' });
@@ -3210,22 +3445,35 @@ app.patch('/api/products/:id', verifyLogin, uploadProductImageIfMultipart, async
     if (body.trackStock != null) {
         patch.trackStock = body.trackStock === true || body.trackStock === 'true';
     }
+    if (body.active != null) patch.active = body.active === true || body.active === 'true';
     if (body.serviceDuration != null) {
         patch.serviceDuration = String(body.serviceDuration).trim();
     }
     if (body.description != null) {
-        const d = String(body.description).trim();
-        if (d) patch.description = d;
+        patch.description = String(body.description).trim();
     }
     if (body.emoji != null) patch.emoji = String(body.emoji).trim() || '📦';
     if (req.file) patch.image = `/uploads/${req.file.filename}`;
 
     const mergedType = patch.itemType || snap.data().itemType || 'product';
     if (String(mergedType).toLowerCase() === 'service') {
-        patch.trackStock = false;
-        patch.qty = 0;
-        patch.min = 0;
+        patch.trackStock = FieldValue.delete();
+        patch.qty = FieldValue.delete();
+        patch.min = FieldValue.delete();
+        patch.partsCost = body.partsCost != null ? parseMoneyField(body.partsCost) : parseMoneyField(snap.data().partsCost);
+        if (body.emoji == null && String(snap.data().itemType || '').toLowerCase() !== 'service') patch.emoji = '🔧';
+    } else {
+        patch.partsCost = FieldValue.delete();
+        patch.serviceDuration = FieldValue.delete();
+        if (String(snap.data().itemType || '').toLowerCase() === 'service') {
+            if (body.qty == null) patch.qty = 0;
+            if (body.min == null) patch.min = 10;
+            if (body.trackStock == null) patch.trackStock = true;
+            if (body.emoji == null) patch.emoji = '📦';
+        }
     }
+    patch.schemaVersion = CATALOG_SCHEMA_VERSION;
+    patch.updatedAt = FieldValue.serverTimestamp();
 
     if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: true, message: 'Nada para atualizar.' });
@@ -3238,11 +3486,11 @@ app.patch('/api/products/:id', verifyLogin, uploadProductImageIfMultipart, async
         return res.status(500).json({ error: true, message: 'Erro ao atualizar produto.' });
     }
 
-    const merged = { id, ...snap.data(), ...patch };
-    return res.json({ error: false, product: normalizeProduct(merged) });
+    const fresh = await firestore.collection(PRODUCTS_COLLECTION).doc(id).get();
+    return res.json({ error: false, product: normalizeProduct({ id, ...(fresh.data() || {}) }) });
 });
 
-app.delete('/api/products/:id', verifyLogin, async (req, res) => {
+app.delete('/api/products/:id', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) {
         return res.status(400).json({ error: true, message: 'ID inválido.' });
@@ -3266,7 +3514,7 @@ app.delete('/api/products/:id', verifyLogin, async (req, res) => {
 app.get('/api/budgets', verifyLogin, async (req, res) => {
     try {
         const rows = await db.findAll({ colecao: BUDGETS_COLLECTION });
-        const budgets = Array.isArray(rows) ? rows.map(normalizeBudgetRow) : [];
+        const budgets = Array.isArray(rows) ? rows.map((row) => budgetForUser(row, req.session.user)) : [];
         budgets.sort((a, b) => {
             const ad = new Date(a.updatedAt || a.createdAt || 0).getTime() || 0;
             const bd = new Date(b.updatedAt || b.createdAt || 0).getTime() || 0;
@@ -3286,7 +3534,7 @@ app.post('/api/budgets/:id/public-link', verifyLogin, async (req, res) => {
     const current = snap.data() || {};
     const token = String(current.publicToken || randomUUID());
     await firestore.collection(BUDGETS_COLLECTION).doc(id).set({ publicToken: token, publicLinkCreatedAt: FieldValue.serverTimestamp(), status: normalizeBudgetStatus(current.status) === 'draft' ? 'sent' : current.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    return res.json({ error: false, token, url: `${req.protocol}://${req.get('host')}/p/orcamento/${token}`, budget: await fetchBudgetNormalized(id) });
+    return res.json({ error: false, token, url: `${req.protocol}://${req.get('host')}/p/orcamento/${token}`, budget: budgetForUser(await fetchBudgetNormalized(id), req.session.user) });
 });
 
 app.get('/api/budgets/:id/customer-response', verifyLogin, async (req, res) => {
@@ -3294,7 +3542,7 @@ app.get('/api/budgets/:id/customer-response', verifyLogin, async (req, res) => {
     return res.json({ error: false, response: publicBudgetResponse(snap.exists ? snap.data() : {}) });
 });
 
-app.post('/api/budget-templates/image', verifyLogin, uploadBudgetImage, validateBudgetImageSignature, (req, res) => {
+app.post('/api/budget-templates/image', verifyAdminApi, uploadBudgetImage, validateBudgetImageSignature, (req, res) => {
     if (!req.file) return res.status(400).json({ error: true, message: 'Selecione uma imagem.' });
     return res.json({ error: false, imageUrl: `/uploads/${req.file.filename}` });
 });
@@ -3459,7 +3707,7 @@ async function enrichBudgetOptionsFromBody(body, { existingOptions = [], preserv
             if (String(item.kind || '').toLowerCase() === 'product') {
                 const old = oldItemsById.get(String(item.id || '').trim());
                 const sameProduct = old && String(old.productId || '') === String(item.productId || '');
-                if (sameProduct) {
+                if (!preserveSubmittedProductCosts && sameProduct) {
                     item.unitCost = Number(old.unitCost) || 0;
                 } else if (!preserveSubmittedProductCosts) {
                     // Produto novo em orçamento: custo vem do cadastro, nunca de um valor arbitrário do navegador.
@@ -3581,7 +3829,8 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
         code: null,
         createdAt: null,
         prevStatus: null,
-        existing: null
+        existing: null,
+        preserveSubmittedProductCosts: req.session.user?.type === 'admin'
     });
     if (built.error) return res.status(400).json({ error: true, message: built.message });
 
@@ -3592,7 +3841,7 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
         if (built.status === 'sent' && budget) notifications = await dispatchBudgetNotifications(budget);
         return res.json({
             error: false,
-            budget: budget || built.budget,
+            budget: budgetForUser(budget || built.budget, req.session.user),
             notifications,
             customerCreated: built.customerCreated,
             customer: built.customer
@@ -3600,6 +3849,57 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao salvar orçamento.' });
+    }
+});
+
+app.patch('/api/budgets/:id/status', verifyLogin, async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
+    try {
+        const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+        if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
+        const prev = snap.data() || {};
+        const beforeStatus = normalizeBudgetStatus(prev.status);
+        const requestedRawStatus = String(req.body?.status || '').trim().toLowerCase();
+        if (!budgetDomain.BUDGET_STATUSES.has(requestedRawStatus)) {
+            return res.status(400).json({ error: true, message: 'Estado de orçamento inválido.' });
+        }
+        if (beforeStatus === 'converted') {
+            return res.status(400).json({ error: true, message: 'Orçamentos convertidos são somente leitura.' });
+        }
+        if (requestedRawStatus === 'converted') {
+            return res.status(400).json({ error: true, message: 'Use a ação “Converter em venda” para concluir esta etapa.' });
+        }
+
+        const patch = {
+            status: requestedRawStatus,
+            updatedAt: FieldValue.serverTimestamp()
+        };
+        if (requestedRawStatus === 'rejected') {
+            const reason = String(req.body?.rejectionReason || '').trim();
+            if (!reason) return res.status(400).json({ error: true, message: 'Informe o motivo da recusa.' });
+            patch.rejectionReason = reason.slice(0, 80);
+            patch.rejectionNote = String(req.body?.rejectionNote || '').trim().slice(0, 500);
+            patch.rejectedAt = FieldValue.serverTimestamp();
+        } else {
+            patch.rejectionReason = '';
+            patch.rejectionNote = '';
+            patch.rejectedAt = null;
+        }
+        if (requestedRawStatus === 'sent' && beforeStatus !== 'sent') {
+            patch.sentAt = FieldValue.serverTimestamp();
+        }
+
+        await db.update(BUDGETS_COLLECTION, id, patch);
+        const budget = await fetchBudgetNormalized(id);
+        let notifications = null;
+        if (requestedRawStatus === 'sent' && beforeStatus !== 'sent' && budget) {
+            notifications = await dispatchBudgetNotifications(budget);
+        }
+        return res.json({ error: false, budget: budgetForUser(budget, req.session.user), notifications });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: true, message: 'Erro ao alterar o estado do orçamento.' });
     }
 });
 
@@ -3619,7 +3919,8 @@ app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
         code: prev.code,
         createdAt: prev.createdAt,
         prevStatus: prev.status,
-        existing: prev
+        existing: prev,
+        preserveSubmittedProductCosts: req.session.user?.type === 'admin'
     });
     if (built.error) return res.status(400).json({ error: true, message: built.message });
 
@@ -3631,7 +3932,7 @@ app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
         if (beforeStatus !== 'sent' && built.status === 'sent' && budget) notifications = await dispatchBudgetNotifications(budget);
         return res.json({
             error: false,
-            budget: budget || built.budget,
+            budget: budgetForUser(budget || built.budget, req.session.user),
             notifications,
             customerCreated: built.customerCreated,
             customer: built.customer
@@ -3702,7 +4003,7 @@ app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
         }, { merge: true });
         const budget = await fetchBudgetNormalized(id);
         const notifications = budget ? await dispatchBudgetNotifications(budget) : null;
-        return res.json({ error: false, budget, notifications });
+        return res.json({ error: false, budget: budgetForUser(budget, req.session.user), notifications });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao enviar orçamento.' });
@@ -3724,7 +4025,7 @@ app.patch('/api/budgets/:id/follow-up', verifyLogin, async (req, res) => {
             updatedAt: now
         };
         await firestore.collection(BUDGETS_COLLECTION).doc(id).set(patch, { merge: true });
-        return res.json({ error: false, budget: await fetchBudgetNormalized(id) });
+        return res.json({ error: false, budget: budgetForUser(await fetchBudgetNormalized(id), req.session.user) });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao atualizar follow-up.' });
@@ -3777,16 +4078,17 @@ app.post('/api/budgets/:id/duplicate', verifyLogin, async (req, res) => {
         const built = await buildBudgetRecordFromBody(body, { id: randomUUID(), code: null, createdAt: null, prevStatus: null, existing: null, preserveSubmittedProductCosts: true });
         if (built.error) return res.status(400).json({ error: true, message: built.message });
         await db.create(BUDGETS_COLLECTION, built.payload.id, built.payload);
-        return res.json({ error: false, budget: await fetchBudgetNormalized(built.payload.id) });
+        return res.json({ error: false, budget: budgetForUser(await fetchBudgetNormalized(built.payload.id), req.session.user) });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao duplicar orçamento.' });
     }
 });
 
-app.get('/api/budget-templates', verifyLogin, async (_req, res) => {
+app.get('/api/budget-templates', verifyLogin, async (req, res) => {
     try {
-        return res.json({ error: false, templates: await loadBudgetTemplatesNormalized() });
+        const templates = await loadBudgetTemplatesNormalized();
+        return res.json({ error: false, templates: templates.map((row) => budgetTemplateForUser(row, req.session.user)) });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao carregar modelos.' });
@@ -3829,7 +4131,7 @@ async function buildBudgetTemplatePayload(body, existing = null) {
     };
 }
 
-app.post('/api/budget-templates', verifyLogin, async (req, res) => {
+app.post('/api/budget-templates', verifyAdminApi, async (req, res) => {
     try {
         const built = await buildBudgetTemplatePayload(req.body || {});
         if (built.error) return res.status(400).json({ error: true, message: built.message });
@@ -3842,7 +4144,7 @@ app.post('/api/budget-templates', verifyLogin, async (req, res) => {
     }
 });
 
-app.patch('/api/budget-templates/:id', verifyLogin, async (req, res) => {
+app.patch('/api/budget-templates/:id', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     try {
@@ -3859,7 +4161,7 @@ app.patch('/api/budget-templates/:id', verifyLogin, async (req, res) => {
     }
 });
 
-app.delete('/api/budget-templates/:id', verifyLogin, async (req, res) => {
+app.delete('/api/budget-templates/:id', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     try {
@@ -3871,7 +4173,7 @@ app.delete('/api/budget-templates/:id', verifyLogin, async (req, res) => {
     }
 });
 
-app.post('/api/budget-templates/:id/duplicate', verifyLogin, async (req, res) => {
+app.post('/api/budget-templates/:id/duplicate', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     try {
         const snap = await firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get();
@@ -3893,7 +4195,7 @@ app.post('/api/budget-templates/:id/duplicate', verifyLogin, async (req, res) =>
     }
 });
 
-app.post('/api/budgets/:id/save-as-template', verifyLogin, async (req, res) => {
+app.post('/api/budgets/:id/save-as-template', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     try {
         const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
@@ -4044,7 +4346,7 @@ app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
             }, { merge: true });
             result = { saleId, saleCode: code, optionId: option.id, cashFlowId: cfPayload.id };
         });
-        return res.json({ error: false, ...result, budget: await fetchBudgetNormalized(budgetId) });
+        return res.json({ error: false, ...result, budget: budgetForUser(await fetchBudgetNormalized(budgetId), req.session.user) });
     } catch (e) {
         console.error(e);
         const status = Number(e?.httpStatus) || 500;
@@ -4517,8 +4819,11 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     const extraAdj = parseAdjustment(body, 'extra');
     const clientLabel = body.client != null ? String(body.client).trim() : '';
     const client = clientLabel || 'Balcão';
+    const saleNotes = body.notes != null ? String(body.notes).trim().slice(0, 500) : '';
 
     const allowInsufficientStock = body.allowInsufficientStock === true;
+    const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
+    const isAdminSale = user?.type === 'admin';
     const resolvedItems = [];
     const stockUpdates = [];
     let subtotalCents = 0;
@@ -4580,7 +4885,13 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 message: `Estoque insuficiente para "${p.name || 'produto'}". Disponível: ${stock}.`
             });
         }
-        const price = parseMoneyField(p.price) || Number(p.price) || 0;
+        const catalogPrice = parseMoneyField(p.price) || Number(p.price) || 0;
+        const requestedOverride = Number(row.unitPriceOverride);
+        const hasPriceOverride = isAdminSale && row.unitPriceOverride != null;
+        if (hasPriceOverride && (!Number.isFinite(requestedOverride) || requestedOverride < 0)) {
+            return res.status(400).json({ error: true, message: `Preço personalizado inválido para "${p.name || 'item'}".` });
+        }
+        const price = hasPriceOverride ? Math.round(requestedOverride * 100) / 100 : catalogPrice;
         const cost = productUnitCost(p);
         const lineTotal = lineCostFromUnit(price, qty);
         const lineCost = lineCostFromUnit(cost, qty);
@@ -4594,6 +4905,8 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
             category: p.category != null ? String(p.category) : '',
             itemType: p.itemType != null ? String(p.itemType) : 'product',
             price,
+            catalogPrice,
+            priceOverridden: hasPriceOverride && price !== catalogPrice,
             cost: productUnitCost(p),
             qty,
             lineTotal,
@@ -4609,8 +4922,6 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
 
     const saleId = randomUUID();
     const code = saleDisplayCode();
-    const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
-
     const saleRecord = {
         id: saleId,
         code,
@@ -4629,6 +4940,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         profit,
         createdAt: FieldValue.serverTimestamp()
     };
+    if (saleNotes) saleRecord.notes = saleNotes;
 
     if (payment === 'credit_card') {
         saleRecord.creditInstallments = creditInstallments;
@@ -4857,7 +5169,12 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     if (saleRecord.change != null) saleResponse.change = saleRecord.change;
 
     if (pointPaymentInfo) saleResponse.payment = pointPaymentInfo;
-    return res.json({ error: false, sale: saleResponse, products: updatedProducts, cashFlowEntry });
+    return res.json({
+        error: false,
+        sale: saleResponse,
+        products: updatedProducts.map((product) => productForPdv(product, user)),
+        cashFlowEntry: cashFlowEntry ? cashFlowForUser(cashFlowEntry, user) : null
+    });
 });
 
 app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
@@ -5256,7 +5573,7 @@ app.get('/api/cash-flow', verifyLogin, async (req, res) => {
         const to = String(req.query.to || '').trim();
         if (from) filtered = filtered.filter((e) => !e.date || e.date >= from);
         if (to) filtered = filtered.filter((e) => !e.date || e.date <= to);
-        return res.json({ error: false, entries: filtered });
+        return res.json({ error: false, entries: filtered.map((row) => cashFlowForUser(row, req.session.user)) });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao carregar fluxo de caixa.' });
@@ -5590,7 +5907,29 @@ app.get('/api/services/:id', verifyLogin, async (req, res) => {
 
 app.post('/api/services', verifyLogin, async (req, res) => {
     const body = req.body || {};
-    const customerName = String(body.customerName || '').trim();
+    const allowEmpty = body.allowEmpty === true;
+    const skipBudget = body.skipBudget === true;
+    const existingBudgetId = String(body.existingBudgetId || '').trim();
+    if (skipBudget && existingBudgetId) {
+        return res.status(400).json({ error: true, message: 'Escolha vincular um orçamento ou criar a OS sem orçamento.' });
+    }
+
+    let existingBudget = null;
+    if (existingBudgetId) {
+        const budgetSnap = await firestore.collection(BUDGETS_COLLECTION).doc(existingBudgetId).get();
+        if (!budgetSnap.exists) {
+            return res.status(404).json({ error: true, message: 'Orçamento selecionado não foi encontrado.' });
+        }
+        existingBudget = normalizeBudgetRow({ id: existingBudgetId, ...(budgetSnap.data() || {}) });
+        if (existingBudget.serviceOrderId) {
+            return res.status(409).json({ error: true, message: `O orçamento ${existingBudget.code || ''} já está vinculado a outra OS.` });
+        }
+    }
+
+    const customerName = String(existingBudget?.customerName || body.customerName || '').trim();
+    const customerPhone = String(existingBudget?.customerPhone || body.customerPhone || '').trim();
+    const customerEmail = String(existingBudget?.customerEmail || body.customerEmail || '').trim();
+    const customerId = String(existingBudget?.customerId || body.customerId || '').trim();
     const deviceType = String(body.deviceType || 'Celular').trim() || 'Celular';
     const deviceBrandModel = String(body.deviceBrandModel || '').trim();
     const issueReport = String(body.issueReport || '').trim();
@@ -5613,10 +5952,10 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         estimateValue = Math.max(0, Math.round((subtotal - discount + extra) * 100) / 100);
     }
 
-    let incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
+    const incomingChecklist = Array.isArray(body.checklist) ? body.checklist : [];
     let checklist = incomingChecklist.length
         ? incomingChecklist.map(normalizeServiceChecklistItem).filter((item) => item.label)
-        : defaultServiceChecklistState(deviceType);
+        : (allowEmpty ? [] : defaultServiceChecklistState(deviceType));
 
     const workTemplateId = String(body.workTemplateId || '').trim();
     let workTemplateName = String(body.workTemplateName || '').trim();
@@ -5654,7 +5993,6 @@ app.post('/api/services', verifyLogin, async (req, res) => {
     }
 
     const defectiveItems = checklist.filter((item) => item.defective);
-    const customerPhone = String(body.customerPhone || '').trim();
     if (!customerName) {
         return res.status(400).json({ error: true, message: 'Informe o nome do cliente.' });
     }
@@ -5664,7 +6002,7 @@ app.post('/api/services', verifyLogin, async (req, res) => {
     if (!deviceBrandModel) {
         return res.status(400).json({ error: true, message: 'Informe marca/modelo do aparelho.' });
     }
-    if (!defectiveItems.length && !issueReport) {
+    if (!allowEmpty && !defectiveItems.length && !issueReport) {
         return res.status(400).json({
             error: true,
             message: 'Marque ao menos um serviço/defeito ou preencha o relato do problema.'
@@ -5678,10 +6016,10 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         id,
         code,
         budgetId: '',
-        customerId: String(body.customerId || '').trim(),
+        customerId,
         customerName,
         customerPhone,
-        customerEmail: String(body.customerEmail || '').trim(),
+        customerEmail,
         deviceType,
         deviceBrandModel,
         accessories: String(body.accessories || '').trim(),
@@ -5703,12 +6041,25 @@ app.post('/api/services', verifyLogin, async (req, res) => {
         workTemplateName
     });
 
-    let budgetLink;
+    let budgetLink = { error: false, budgetId: '', budget: null, customerCreated: false, created: false };
     try {
-        budgetLink = await createLinkedBudgetForService(serviceDraft, req.session.user, budgetBody);
+        if (existingBudget) {
+            budgetLink = {
+                error: false,
+                budgetId: existingBudget.id,
+                budget: existingBudget,
+                customerCreated: false,
+                created: false
+            };
+        } else if (!skipBudget) {
+            budgetLink = {
+                ...(await createLinkedBudgetForService(serviceDraft, req.session.user, budgetBody)),
+                created: true
+            };
+        }
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ error: true, message: 'Erro ao criar orçamento vinculado.' });
+        return res.status(500).json({ error: true, message: 'Erro ao preparar o orçamento vinculado.' });
     }
     if (budgetLink.error) {
         return res.status(400).json({ error: true, message: budgetLink.message || 'Erro ao criar orçamento vinculado.' });
@@ -5727,12 +6078,28 @@ app.post('/api/services', verifyLogin, async (req, res) => {
 
     try {
         await db.create(SERVICE_ORDERS_COLLECTION, id, firestorePayload);
+        if (existingBudget) {
+            await db.update(BUDGETS_COLLECTION, existingBudget.id, {
+                serviceOrderId: id,
+                updatedAt: FieldValue.serverTimestamp()
+            });
+            budgetLink.budget = { ...existingBudget, serviceOrderId: id };
+        }
     } catch (e) {
         console.error('[OS] Erro ao gravar ordem:', e);
-        try {
-            await firestore.collection(BUDGETS_COLLECTION).doc(budgetLink.budgetId).delete();
-        } catch (cleanupErr) {
-            console.error(cleanupErr);
+        if (budgetLink.created && budgetLink.budgetId) {
+            try {
+                await db.delete(BUDGETS_COLLECTION, budgetLink.budgetId);
+            } catch (cleanupErr) {
+                console.error(cleanupErr);
+            }
+        }
+        if (existingBudget) {
+            try {
+                await db.delete(SERVICE_ORDERS_COLLECTION, id);
+            } catch (cleanupErr) {
+                console.error(cleanupErr);
+            }
         }
         return res.status(500).json({ error: true, message: 'Erro ao criar ordem de serviço.' });
     }
@@ -5909,7 +6276,7 @@ app.get('/api/sales/:id', verifyLogin, async (req, res) => {
             return res.status(404).json({ error: true, message: 'Venda não encontrada.' });
         }
         const data = snap.data() || {};
-        return res.json({ error: false, sale: normalizeSaleRow({ ...data, id }) });
+        return res.json({ error: false, sale: saleForUser({ ...data, id }, req.session.user) });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao carregar venda.' });
@@ -5965,7 +6332,8 @@ app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
 app.get('/sells', verifyLogin, (req, res) => res.redirect('/cash-flow'));
 
 app.get('/products', verifyLogin, (req, res) => {
-    renderAppShell(res, 'products', req.session.user);
+    // O catálogo administrativo é a fonte única para produtos e serviços.
+    res.redirect('/stock');
 });
 
 app.get('/clients', verifyLogin, (req, res) => {
@@ -5976,7 +6344,7 @@ app.get('/cash-flow', verifyLogin, (req, res) => {
     renderAppShell(res, 'cashflow', req.session.user);
 });
 
-app.get('/analytics', verifyLogin, (req, res) => {
+app.get('/analytics', verifyAdmin, (req, res) => {
     renderAppShell(res, 'analytics', req.session.user);
 });
 
@@ -5985,7 +6353,7 @@ app.get('/config', verifyAdmin, async (req, res) => {
     res.render('layout', {
         body: 'config',
         appData: {
-            user: req.session.user,
+            user: publicSessionUser(req.session.user),
             configs,
             whatsapp: whatsappClient.getStatus()
         }
@@ -6025,13 +6393,31 @@ app.post('/api/whatsapp/disconnect', verifyLogin, async (req, res) => {
     }
 });
 
+app.use((req, res) => {
+    if (String(req.path || '').startsWith('/api/')) {
+        return res.status(404).json({ error: true, message: 'Endpoint não encontrado.' });
+    }
+    return res.status(404).render('error', {
+        status: 404,
+        title: 'Página não encontrada',
+        message: 'O endereço informado não existe ou foi movido.',
+        appData: { user: publicSessionUser(req.session?.user || { name: 'Usuário', type: 'user' }) }
+    });
+});
+
 app.use((err, req, res, next) => {
     console.error('Erro não tratado:', err);
+    if (res.headersSent) return next(err);
     const isApi = String(req.path || '').startsWith('/api/');
     if (isApi) {
         return res.status(500).json({ error: true, message: 'Erro interno do servidor.' });
     }
-    return res.status(500).send('Erro interno do servidor. <a href="/dashboard">Voltar ao início</a>');
+    return res.status(500).render('error', {
+        status: 500,
+        title: 'Não foi possível concluir',
+        message: 'Ocorreu uma falha inesperada. Seus dados não foram alterados; tente novamente.',
+        appData: { user: publicSessionUser(req.session?.user || { name: 'Usuário', type: 'user' }) }
+    });
 });
 
 let port = process.env.PORT || 3131;

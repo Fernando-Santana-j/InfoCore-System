@@ -41,13 +41,7 @@ async function ensureHtml2Canvas() {
     await loadScript('https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js');
 }
 
-async function ensureXlsx() {
-    if (typeof XLSX !== 'undefined') return;
-    await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
-}
-
 window.ensureHtml2Canvas = ensureHtml2Canvas;
-window.ensureXlsx = ensureXlsx;
 
 const AppShell = {
     _finished: false,
@@ -72,7 +66,7 @@ const AppShell = {
     failLoading(message) {
         this.setLoaderText(message || 'Erro ao carregar');
         const loader = document.getElementById('pageLoader');
-        if (loader) loader.style.background = '#1a0a0a';
+        if (loader) loader.classList.add('has-error');
     }
 };
 
@@ -96,7 +90,13 @@ function showToast(msg, type = 'info') {
     const container = DOM.getToastContainer();
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.innerHTML = `<div class="toast-icon">${icons[type] || 'ℹ'}</div><div class="toast-msg">${msg}</div>`;
+    const icon = document.createElement('div');
+    const message = document.createElement('div');
+    icon.className = 'toast-icon';
+    message.className = 'toast-msg';
+    icon.textContent = icons[type] || 'ℹ';
+    message.textContent = String(msg || '');
+    toast.append(icon, message);
     container?.appendChild(toast);
     requestAnimationFrame(() => {
         setTimeout(() => {
@@ -106,11 +106,26 @@ function showToast(msg, type = 'info') {
     });
 }
 
+let modalReturnFocus = null;
+
+function syncGlobalModalState() {
+    const open = Boolean(document.querySelector(
+        '.modal-overlay.open, .budget-modal-overlay.open:not([hidden]), .link-modal:not([hidden]), .pdv-modal-overlay.open, .svc-create-overlay:not([hidden]), .svc-tpl-overlay:not([hidden]), .svc-stage-overlay:not([hidden]), .svc-delete-overlay:not([hidden]), .svc-share-overlay:not([hidden])'
+    ));
+    document.documentElement.classList.toggle('modal-is-open', open);
+    if (!open) document.body.style.overflow = '';
+}
+
 function openModal(id) {
     const el = document.getElementById('modal-' + id);
     if (el) {
+        if (el.parentElement !== document.body) document.body.appendChild(el);
+        modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         el.classList.add('open');
+        el.setAttribute('aria-hidden', 'false');
         document.body.style.overflow = 'hidden';
+        syncGlobalModalState();
+        requestAnimationFrame(() => el.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])')?.focus());
     }
 }
 
@@ -118,19 +133,29 @@ function closeModal(id) {
     const el = document.getElementById('modal-' + id);
     if (el) {
         el.classList.remove('open');
-        document.body.style.overflow = '';
+        el.setAttribute('aria-hidden', 'true');
+        syncGlobalModalState();
+        modalReturnFocus?.focus?.({ preventScroll: true });
+        modalReturnFocus = null;
     }
 }
 
 document.addEventListener('click', e => {
     if (e.target?.classList.contains('modal-overlay')) {
         e.target.classList.remove('open');
-        document.body.style.overflow = '';
+        e.target.setAttribute('aria-hidden', 'true');
+        syncGlobalModalState();
     }
 }, { passive: true });
 
+const CURRENCY_FORMATTERS = new Map();
 function formatCurrency(value) {
-    return 'R$ ' + Number(value || 0).toFixed(2).replace('.', ',');
+    const amount = Number(value);
+    const currency = window.appData?.configs?.currency === 'USD' ? 'USD' : 'BRL';
+    if (!CURRENCY_FORMATTERS.has(currency)) {
+        CURRENCY_FORMATTERS.set(currency, new Intl.NumberFormat('pt-BR', { style: 'currency', currency }));
+    }
+    return CURRENCY_FORMATTERS.get(currency).format(Number.isFinite(amount) ? amount : 0);
 }
 
 function updateTopbarTitle(title) {
@@ -153,23 +178,6 @@ function markNavActive(path) {
         if (href === '/services' && path.startsWith('/services')) isActive = true;
         link.classList.toggle('active', isActive);
     });
-}
-
-function prefetchLazyLibs() {
-    const scheduleLoad = (fn) => {
-        if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(() => fn(), { timeout: 2500 });
-        } else {
-            setTimeout(() => fn(), 2500);
-        }
-    };
-    
-    if (window.__needsHtml2canvas) {
-        scheduleLoad(() => ensureHtml2Canvas().catch(() => {}));
-    }
-    if (window.__needsXlsx) {
-        scheduleLoad(() => ensureXlsx().catch(() => {}));
-    }
 }
 
 function openInstructionsModal() {
@@ -291,13 +299,58 @@ window.openSharedNotesModal = openSharedNotesModal;
 window.closeSharedNotesModal = closeSharedNotesModal;
 window.saveSharedNotes = saveSharedNotes;
 
+function setMobileMenu(open) {
+    const value = Boolean(open);
+    document.documentElement.classList.toggle('mobile-menu-open', value);
+    document.getElementById('mobileMenuBtn')?.setAttribute('aria-expanded', String(value));
+}
+
+function updateConnectionStatus() {
+    const el = document.getElementById('connectionStatus');
+    if (!el) return;
+    const online = navigator.onLine;
+    el.classList.toggle('is-offline', !online);
+    const text = el.querySelector('span');
+    if (text) text.textContent = online ? 'Online' : 'Sem conexão';
+}
+
+async function logoutCurrentUser() {
+    const button = document.getElementById('logoutBtn');
+    if (button) button.disabled = true;
+    try {
+        const response = await fetch('/logout', { method: 'POST', credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Não foi possível encerrar a sessão.');
+        window.location.assign('/');
+    } catch (error) {
+        if (button) button.disabled = false;
+        showToast(error.message, 'error');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-    prefetchLazyLibs();
+    // Modais dentro de .content seriam posicionados em relação ao scroll dessa área.
+    document.querySelectorAll('.modal-overlay, .budget-modal-overlay, .link-modal, .pdv-modal-overlay, .svc-create-overlay, .svc-tpl-overlay, .svc-stage-overlay, .svc-delete-overlay, .svc-share-overlay').forEach((modal) => {
+        if (modal.parentElement !== document.body) document.body.appendChild(modal);
+    });
     const path = window.location.pathname.replace(/\/$/, '') || '/dashboard';
     markNavActive(path);
     if (!window.__bootstrap) {
         AppShell.finishLoading();
     }
+    document.getElementById('pageLoaderRetry')?.addEventListener('click', () => window.location.reload());
+    document.getElementById('mobileMenuBtn')?.addEventListener('click', () => setMobileMenu(true));
+    document.getElementById('sidebarCloseBtn')?.addEventListener('click', () => setMobileMenu(false));
+    document.getElementById('sidebarBackdrop')?.addEventListener('click', () => setMobileMenu(false));
+    document.querySelectorAll('#appSidebar .nav-item').forEach((link) => link.addEventListener('click', () => setMobileMenu(false)));
+    document.getElementById('logoutBtn')?.addEventListener('click', logoutCurrentUser);
+    window.addEventListener('online', updateConnectionStatus);
+    window.addEventListener('offline', updateConnectionStatus);
+    updateConnectionStatus();
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        setMobileMenu(false);
+        requestAnimationFrame(syncGlobalModalState);
+    });
     document.getElementById('sharedNotesContent')?.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();

@@ -175,3 +175,4 @@
         flex-direction: column;
     }
 }
+.config-health-list{display:flex;flex-direction:column;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;overflow:hidden}.config-health-list>div{display:flex;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid var(--border);background:var(--bg3)}.config-health-list>div:last-child{border-bottom:0}.config-health-list span{color:var(--text2);font-size:.76rem}.config-health-list strong{color:var(--green);font-size:.75rem;text-align:right}

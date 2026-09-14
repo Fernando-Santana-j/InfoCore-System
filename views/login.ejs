@@ -3,7 +3,7 @@
 <head>
   <%- include('reusable/head') %>
   <title>Login | InfoCore System</title>
-  <link rel="stylesheet" href="/css/login.css?v=3">
+  <link rel="stylesheet" href="/css/login.css?v=4">
 </head>
 <body>
   <main class="login-page">
@@ -38,8 +38,10 @@
             <input type="checkbox" id="remember">
             <span>Lembrar acesso</span>
           </label>
-          <a class="forgot-link" href="#">Esqueci a senha</a>
+          <span class="login-access-hint">Acesso gerenciado pelo administrador</span>
         </div>
+
+        <div class="login-error" id="loginError" role="alert" hidden></div>
 
         <button class="btn btn-primary w-full login-submit" type="submit" id="loginSubmit">
           Entrar
@@ -52,6 +54,6 @@
     </section>
   </main>
 
-  <script src="/js/login.js"></script>
+  <script src="/js/login.js?v=2"></script>
 </body>
 </html>

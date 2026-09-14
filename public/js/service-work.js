@@ -5,8 +5,17 @@ let phase = 'items';
 const pendingPhotos = [];
 const pendingBeforePhotos = [];
 const pendingAfterPhotos = [];
-/** @type {'done'|'archive'} */
-let itemOutcome = 'done';
+/** @type {'progress'|'done'|'archive'} */
+let itemOutcome = 'progress';
+let selectedStageType = 'service';
+let pendingDeleteStageKey = '';
+
+const STAGE_TYPES = {
+    service: { label: 'Serviço', icon: '🔧' },
+    part: { label: 'Peça/material', icon: '📦' },
+    diagnostic: { label: 'Diagnóstico', icon: '🔎' },
+    other: { label: 'Outro', icon: '📝' }
+};
 
 function esc(v) {
     return String(v || '')
@@ -169,12 +178,27 @@ function currentItem() {
     return defectItems[currentStep] || null;
 }
 
+function stageType(item) {
+    const type = String(item?.workType || 'service');
+    return STAGE_TYPES[type] ? type : 'service';
+}
+
+function hasPendingUploads() {
+    return pendingPhotos.length > 0 || pendingBeforePhotos.length > 0 || pendingAfterPhotos.length > 0;
+}
+
+function currentOutcome(item = currentItem()) {
+    if (item?.archived) return 'archive';
+    if (item?.done) return 'done';
+    return 'progress';
+}
+
 function renderPhotos(photos, extraClass) {
     if (!photos?.length) return '';
     const cls = extraClass ? ` ${extraClass}` : '';
     return `<div class="svc-photo-row${cls}">${photos.map((p) => `
         <a class="svc-photo-thumb" href="${esc(p.url)}" target="_blank" rel="noopener">
-            <img src="${esc(p.url)}" alt="">
+            <img src="${esc(p.url)}" alt="" loading="lazy" decoding="async">
         </a>
     `).join('')}</div>`;
 }
@@ -197,7 +221,9 @@ function renderTop() {
             <div class="svc-detail-progress-ring" style="background: conic-gradient(var(--gold) ${prog}%, var(--bg3) 0)"><span>${prog}%</span></div>
             <span class="svc-work-progress-label">${defectItems.filter((i) => itemIsFinished(i)).length}/${defectItems.length} itens</span>
         </div>
+        <button type="button" class="btn btn-primary btn-sm svc-work-quick-add" data-stage-add>+ Nova etapa</button>
     `;
+    el.querySelector('[data-stage-add]')?.addEventListener('click', () => openStageEditor());
 }
 
 function renderStepper() {
@@ -218,9 +244,12 @@ function renderStepper() {
             <button type="button" class="${cls}" data-step="${i}" title="${esc(item.label)}">
                 <span class="svc-work-step-pill-num">${i + 1}</span>
                 <span class="svc-work-step-pill-icon">${esc(item.icon || '🔧')}</span>
+                <span class="svc-work-step-pill-label">${esc(item.label)}</span>
             </button>
         `;
-    }).join('');
+    }).join('') + `
+        <button type="button" class="svc-work-step-add" data-stage-add title="Adicionar uma etapa durante o reparo" aria-label="Adicionar nova etapa"><span>+</span><small>Nova etapa</small></button>
+    `;
     el.querySelectorAll('.svc-work-step-pill').forEach((btn) => {
         btn.addEventListener('click', () => {
             const idx = Number(btn.getAttribute('data-step'));
@@ -228,6 +257,7 @@ function renderStepper() {
             goToStep(idx, false);
         });
     });
+    el.querySelector('[data-stage-add]')?.addEventListener('click', () => openStageEditor());
 }
 
 function renderEmpty() {
@@ -236,12 +266,16 @@ function renderEmpty() {
     document.getElementById('svcWorkMain').innerHTML = `
         <div class="svc-work-empty">
             <div class="empty-icon">📋</div>
-            <h3>Nenhum defeito marcado</h3>
-            <p>Esta OS não tem itens no checklist. Volte à oficina ou registre defeitos no PDV.</p>
-            <a href="/services" class="btn btn-primary btn-sm">Voltar à oficina</a>
+            <h3>Comece um fluxo personalizado</h3>
+            <p>Esta OS ainda não tem etapas. Adicione o primeiro serviço, peça ou diagnóstico agora e construa o processo enquanto trabalha.</p>
+            <div class="svc-work-empty-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="svcEmptyAddStageBtn">+ Criar primeira etapa</button>
+                <a href="/services" class="btn btn-ghost btn-sm">Voltar à oficina</a>
+            </div>
         </div>
     `;
     document.getElementById('svcWorkFooter').innerHTML = '';
+    document.getElementById('svcEmptyAddStageBtn')?.addEventListener('click', () => openStageEditor());
 }
 
 function renderSummary() {
@@ -268,6 +302,7 @@ function renderSummary() {
                     <button type="button" class="btn btn-ghost btn-sm" id="svcWorkArchiveBtn">📦 Arquivar OS</button>
                 </div>
                 ${budgetBtn}
+                <button type="button" class="btn btn-ghost btn-sm" id="svcWorkAddStageSummaryBtn">+ Adicionar outra etapa</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="svcWorkReviewBtn">Revisar itens</button>
                 <button type="button" class="btn btn-primary btn-sm svc-work-share-btn" id="svcWorkShareBtn">✨ Enviar relatório ao cliente</button>
             </div>
@@ -278,6 +313,7 @@ function renderSummary() {
         <button type="button" class="btn btn-primary btn-sm" id="svcWorkShareBtnFooter">Enviar ao cliente</button>
     `;
     bindDiagnosticPanel();
+    document.getElementById('svcWorkAddStageSummaryBtn')?.addEventListener('click', () => openStageEditor());
     document.getElementById('svcWorkShareBtn')?.addEventListener('click', openShareModal);
     document.getElementById('svcWorkShareBtnFooter')?.addEventListener('click', openShareModal);
     document.getElementById('svcWorkMarkDoneBtn')?.addEventListener('click', async () => {
@@ -316,7 +352,8 @@ function renderItemStep() {
     pendingPhotos.length = 0;
     pendingBeforePhotos.length = 0;
     pendingAfterPhotos.length = 0;
-    itemOutcome = item.archived ? 'archive' : 'done';
+    itemOutcome = currentOutcome(item);
+    const typeMeta = STAGE_TYPES[stageType(item)];
 
     main.innerHTML = `
         <article class="svc-work-card">
@@ -325,15 +362,25 @@ function renderItemStep() {
                 <div>
                     <p class="svc-work-card-step">Item ${currentStep + 1} de ${defectItems.length}</p>
                     <h3 class="svc-work-card-title">${esc(item.label)}</h3>
+                    <span class="svc-work-type-badge is-${esc(stageType(item))}">${esc(typeMeta.label)}</span>
                 </div>
                 <span class="svc-defect-badge ${item.archived ? 'is-archived' : ''} ${item.done ? 'is-done' : ''}">${item.archived ? 'Arquivado' : (item.done ? 'Concluído' : 'Em reparo')}</span>
             </header>
 
-            ${item.customerNote || (item.photos || []).length ? `
+            <div class="svc-work-manage-bar" aria-label="Gerenciar etapa">
+                <button type="button" class="btn btn-ghost btn-sm" id="svcWorkEditStageBtn">✎ Editar</button>
+                <div class="svc-work-order-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" id="svcWorkMovePrevBtn" ${currentStep === 0 ? 'disabled' : ''} title="Mover etapa para trás" aria-label="Mover etapa para trás">←</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="svcWorkMoveNextBtn" ${currentStep === defectItems.length - 1 ? 'disabled' : ''} title="Mover etapa para frente" aria-label="Mover etapa para frente">→</button>
+                    <button type="button" class="btn btn-ghost btn-sm svc-work-delete-stage" id="svcWorkDeleteStageBtn">Excluir</button>
+                </div>
+            </div>
+
+            ${item.customerNote || item.estimatedPrice > 0 || (item.photos || []).length ? `
             <section class="svc-work-section svc-work-section--intake">
-                <h4 class="svc-work-section-title">📥 Relato do balcão</h4>
+                <h4 class="svc-work-section-title">📥 Contexto inicial</h4>
                 ${item.customerNote ? `<p class="svc-work-intake-note">${esc(item.customerNote)}</p>` : ''}
-                ${item.estimatedPrice > 0 ? `<p class="svc-defect-price">Ref. balcão: ${formatCurrency(Number(item.estimatedPrice))}</p>` : ''}
+                ${item.estimatedPrice > 0 ? `<p class="svc-defect-price">Valor de referência: ${formatCurrency(Number(item.estimatedPrice))}</p>` : ''}
                 ${renderPhotos(item.photos)}
             </section>` : ''}
 
@@ -378,7 +425,8 @@ function renderItemStep() {
             <div class="svc-work-outcome">
                 <span class="form-label">Situação desta etapa</span>
                 <div class="svc-work-outcome-btns" role="group" aria-label="Situação da etapa">
-                    <button type="button" class="svc-work-outcome-btn is-active" data-outcome="done" id="svcWorkOutcomeDone">✓ Concluído</button>
+                    <button type="button" class="svc-work-outcome-btn is-active" data-outcome="progress" id="svcWorkOutcomeProgress">◷ Em andamento</button>
+                    <button type="button" class="svc-work-outcome-btn" data-outcome="done" id="svcWorkOutcomeDone">✓ Concluído</button>
                     <button type="button" class="svc-work-outcome-btn" data-outcome="archive" id="svcWorkOutcomeArchive">📦 Arquivar</button>
                 </div>
             </div>
@@ -397,16 +445,16 @@ function renderItemStep() {
 
     document.querySelectorAll('.svc-work-outcome-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
-            itemOutcome = btn.getAttribute('data-outcome') === 'archive' ? 'archive' : 'done';
+            const requested = btn.getAttribute('data-outcome');
+            itemOutcome = requested === 'archive' ? 'archive' : (requested === 'done' ? 'done' : 'progress');
             document.querySelectorAll('.svc-work-outcome-btn').forEach((b) => {
                 b.classList.toggle('is-active', b.getAttribute('data-outcome') === itemOutcome);
             });
         });
     });
-    if (itemOutcome === 'archive') {
-        document.getElementById('svcWorkOutcomeArchive')?.classList.add('is-active');
-        document.getElementById('svcWorkOutcomeDone')?.classList.remove('is-active');
-    }
+    document.querySelectorAll('.svc-work-outcome-btn').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.getAttribute('data-outcome') === itemOutcome);
+    });
 
     const syncPendingHint = () => {
         const pendingEl = document.getElementById('svcWorkPending');
@@ -438,7 +486,225 @@ function renderItemStep() {
 
     document.getElementById('svcWorkPrevBtn')?.addEventListener('click', () => goToStep(currentStep - 1, false));
     document.getElementById('svcWorkSaveBtn')?.addEventListener('click', () => saveCurrentStep(isLast));
+    document.getElementById('svcWorkEditStageBtn')?.addEventListener('click', () => openStageEditor(item));
+    document.getElementById('svcWorkMovePrevBtn')?.addEventListener('click', () => moveCurrentStage(-1));
+    document.getElementById('svcWorkMoveNextBtn')?.addEventListener('click', () => moveCurrentStage(1));
+    document.getElementById('svcWorkDeleteStageBtn')?.addEventListener('click', deleteCurrentStage);
     bindDiagnosticPanel();
+}
+
+function stageChecklistWithLiveDraft() {
+    const item = currentItem();
+    const noteEl = document.getElementById('svcWorkTechNote');
+    if (!item || !noteEl) return (service.checklist || []).slice();
+    const techNote = String(noteEl.value || '').trim();
+    return (service.checklist || []).map((row) => String(row.key) === String(item.key)
+        ? {
+            ...row,
+            techNote,
+            done: itemOutcome === 'done',
+            archived: itemOutcome === 'archive'
+        }
+        : row);
+}
+
+function setStageType(type, updateIcon = false) {
+    selectedStageType = STAGE_TYPES[type] ? type : 'service';
+    document.querySelectorAll('#svcStageTypes .svc-stage-type').forEach((btn) => {
+        const active = btn.getAttribute('data-type') === selectedStageType;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', String(active));
+    });
+    if (updateIcon) {
+        const iconEl = document.getElementById('svcStageIcon');
+        if (iconEl) iconEl.value = STAGE_TYPES[selectedStageType].icon;
+    }
+}
+
+function openStageEditor(item = null) {
+    const modal = document.getElementById('svcStageModal');
+    if (!modal) return;
+    const editing = Boolean(item?.key);
+    document.getElementById('svcStageKey').value = editing ? item.key : '';
+    document.getElementById('svcStageTitle').textContent = editing ? 'Editar etapa' : 'Nova etapa';
+    document.getElementById('svcStageSaveBtn').textContent = editing ? 'Salvar alterações' : 'Adicionar etapa';
+    document.getElementById('svcStageLabel').value = editing ? (item.label || '') : '';
+    document.getElementById('svcStageNote').value = editing ? (item.customerNote || '') : '';
+    document.getElementById('svcStagePrice').value = editing && item.estimatedPrice != null ? item.estimatedPrice : '';
+    document.getElementById('svcStageIcon').value = editing ? (item.icon || STAGE_TYPES[stageType(item)].icon) : STAGE_TYPES.service.icon;
+    setStageType(editing ? stageType(item) : 'service');
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    window.setTimeout(() => document.getElementById('svcStageLabel')?.focus(), 0);
+}
+
+function closeStageEditor() {
+    const modal = document.getElementById('svcStageModal');
+    if (!modal) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    if (document.getElementById('svcShareModal')?.hidden !== false) {
+        document.body.style.overflow = '';
+    }
+}
+
+async function persistStageChecklist(checklist, focusKey, message) {
+    const patch = { checklist };
+    if (service.status === 'open') patch.status = 'in_progress';
+    const updated = await persistPatch(patch);
+    if (!updated) return false;
+    service = updated;
+    window.appData.service = service;
+    sharePreviewLoaded = false;
+    syncDefectItems();
+    const nextIndex = defectItems.findIndex((row) => String(row.key) === String(focusKey));
+    currentStep = nextIndex >= 0 ? nextIndex : Math.max(0, Math.min(currentStep, defectItems.length - 1));
+    phase = defectItems.length ? 'items' : 'empty';
+    renderAll();
+    showToast(message, 'success');
+    return true;
+}
+
+async function saveStageEditor(event) {
+    event.preventDefault();
+    if (hasPendingUploads()) {
+        showToast('Salve as fotos pendentes antes de alterar a estrutura das etapas.', 'warning');
+        return;
+    }
+    const key = String(document.getElementById('svcStageKey')?.value || '').trim();
+    const label = String(document.getElementById('svcStageLabel')?.value || '').trim();
+    if (!label) {
+        showToast('Informe o nome da etapa.', 'error');
+        document.getElementById('svcStageLabel')?.focus();
+        return;
+    }
+    const priceRaw = document.getElementById('svcStagePrice')?.value;
+    const estimatedPrice = priceRaw === '' || priceRaw == null ? null : Math.max(0, Number(priceRaw) || 0);
+    const values = {
+        label,
+        icon: String(document.getElementById('svcStageIcon')?.value || '').trim() || STAGE_TYPES[selectedStageType].icon,
+        workType: selectedStageType,
+        customerNote: String(document.getElementById('svcStageNote')?.value || '').trim(),
+        estimatedPrice,
+        defective: true
+    };
+    const saveBtn = document.getElementById('svcStageSaveBtn');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Salvando...';
+    }
+    let checklist = stageChecklistWithLiveDraft();
+    let focusKey = key;
+    let message = 'Etapa atualizada.';
+    if (key) {
+        checklist = checklist.map((row) => String(row.key) === key ? { ...row, ...values } : row);
+    } else {
+        focusKey = `dynamic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const newStage = {
+            key: focusKey,
+            ...values,
+            photos: [],
+            done: false,
+            techNote: '',
+            techPhotos: [],
+            beforePhotos: [],
+            afterPhotos: [],
+            fromTemplate: false,
+            archived: false
+        };
+        const anchorKey = currentItem()?.key;
+        const anchorIndex = checklist.findIndex((row) => String(row.key) === String(anchorKey));
+        if (anchorIndex >= 0) checklist.splice(anchorIndex + 1, 0, newStage);
+        else checklist.push(newStage);
+        message = 'Nova etapa adicionada ao fluxo.';
+    }
+    const ok = await persistStageChecklist(checklist, focusKey, message);
+    if (ok) closeStageEditor();
+    if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = key ? 'Salvar alterações' : 'Adicionar etapa';
+    }
+}
+
+async function moveCurrentStage(direction) {
+    if (hasPendingUploads()) {
+        showToast('Salve as fotos pendentes antes de reordenar.', 'warning');
+        return;
+    }
+    const item = currentItem();
+    const target = defectItems[currentStep + direction];
+    if (!item || !target) return;
+    const checklist = stageChecklistWithLiveDraft();
+    const from = checklist.findIndex((row) => String(row.key) === String(item.key));
+    const to = checklist.findIndex((row) => String(row.key) === String(target.key));
+    if (from < 0 || to < 0) return;
+    [checklist[from], checklist[to]] = [checklist[to], checklist[from]];
+    await persistStageChecklist(checklist, item.key, 'Ordem das etapas atualizada.');
+}
+
+function deleteCurrentStage() {
+    if (hasPendingUploads()) {
+        showToast('Salve ou descarte as fotos pendentes antes de excluir.', 'warning');
+        return;
+    }
+    const item = currentItem();
+    if (!item) return;
+    pendingDeleteStageKey = String(item.key);
+    document.getElementById('svcDeleteStageName').textContent = item.label;
+    const modal = document.getElementById('svcDeleteModal');
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    window.setTimeout(() => document.getElementById('svcDeleteCancelBtn')?.focus(), 0);
+}
+
+function closeDeleteStageModal() {
+    pendingDeleteStageKey = '';
+    const modal = document.getElementById('svcDeleteModal');
+    if (!modal) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+}
+
+async function confirmDeleteCurrentStage() {
+    const key = pendingDeleteStageKey;
+    const itemIndex = defectItems.findIndex((row) => String(row.key) === key);
+    if (!key || itemIndex < 0) return closeDeleteStageModal();
+    const nextFocus = defectItems[itemIndex + 1]?.key || defectItems[itemIndex - 1]?.key || '';
+    const checklist = (service.checklist || []).filter((row) => String(row.key) !== key);
+    const button = document.getElementById('svcDeleteConfirmBtn');
+    button.disabled = true;
+    button.textContent = 'Removendo...';
+    const removed = await persistStageChecklist(checklist, nextFocus, 'Etapa removida do fluxo.');
+    if (removed) closeDeleteStageModal();
+    button.disabled = false;
+    button.textContent = 'Sim, remover';
+}
+
+function bindStageEditor() {
+    document.getElementById('svcStageForm')?.addEventListener('submit', saveStageEditor);
+    document.getElementById('svcStageCloseBtn')?.addEventListener('click', closeStageEditor);
+    document.getElementById('svcStageCancelBtn')?.addEventListener('click', closeStageEditor);
+    document.getElementById('svcDeleteCancelBtn')?.addEventListener('click', closeDeleteStageModal);
+    document.getElementById('svcDeleteConfirmBtn')?.addEventListener('click', confirmDeleteCurrentStage);
+    document.getElementById('svcDeleteModal')?.addEventListener('click', (event) => {
+        if (event.target.id === 'svcDeleteModal') closeDeleteStageModal();
+    });
+    document.getElementById('svcStageModal')?.addEventListener('click', (event) => {
+        if (event.target.id === 'svcStageModal') closeStageEditor();
+    });
+    document.querySelectorAll('#svcStageTypes .svc-stage-type').forEach((btn) => {
+        btn.addEventListener('click', () => setStageType(btn.getAttribute('data-type'), true));
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && document.getElementById('svcStageModal')?.hidden === false) {
+            closeStageEditor();
+        } else if (event.key === 'Escape' && document.getElementById('svcDeleteModal')?.hidden === false) {
+            closeDeleteStageModal();
+        }
+    });
 }
 
 function renderAll() {
@@ -715,7 +981,9 @@ async function saveCurrentStep(isLast) {
     }
 
     console.log('[Salvar] Salvando checklist via PATCH...');
-    const saved = await persistPatch({ checklist });
+    const patch = { checklist };
+    if (service.status === 'open') patch.status = 'in_progress';
+    const saved = await persistPatch(patch);
     if (!saved) {
         console.error('[Salvar] PATCH falhou');
         if (saveBtn) {
@@ -753,12 +1021,13 @@ async function saveCurrentStep(isLast) {
 
     console.log('[Salvar] Tudo OK!');
 
+    sharePreviewLoaded = false;
     if (archived) {
         showToast('Etapa arquivada.', 'success');
     } else if (done) {
         showToast('Etapa concluída.', 'success');
     } else {
-        showToast('Salvo.', 'success');
+        showToast('Progresso salvo. A etapa continua em andamento.', 'success');
     }
 
     if (isLast) {
@@ -782,7 +1051,7 @@ function goToStep(index, skipConfirm) {
         const item = currentItem();
         if (item && noteEl) {
             const dirty = noteEl.value.trim() !== String(item.techNote || '').trim()
-                || itemOutcome !== (item.archived ? 'archive' : (item.done ? 'done' : 'done'))
+                || itemOutcome !== currentOutcome(item)
                 || pendingPhotos.length > 0
                 || pendingBeforePhotos.length > 0
                 || pendingAfterPhotos.length > 0;
@@ -946,6 +1215,7 @@ function bootServiceWork() {
             }
         }
         bindShareModal();
+        bindStageEditor();
         startDiagnosticSession();
         window.addEventListener('beforeunload', stopDiagnosticSession);
         renderAll();

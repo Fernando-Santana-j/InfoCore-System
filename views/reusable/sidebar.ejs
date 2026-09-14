@@ -5,12 +5,13 @@
     return path === href;
   }
 %>
-<aside class="sidebar">
+<aside class="sidebar" id="appSidebar" aria-label="Navegação da plataforma">
   <div class="sidebar-logo">
     <div class="logo-icon" aria-hidden="true">
       <img src="/img/logo_bg.ico" alt="" width="32" height="32" decoding="async">
     </div>
     <div class="logo-text">Info<span>Core</span></div>
+    <button type="button" class="icon-btn sidebar-close-btn" id="sidebarCloseBtn" aria-label="Fechar menu">✕</button>
   </div>
   <nav class="sidebar-nav" aria-label="Menu principal">
     <div class="nav-section-label">Principal</div>
@@ -21,7 +22,6 @@
     <a href="/pdv" class="nav-item<%= navActive('/pdv') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">🛒</span>
       <span class="nav-label">PDV</span>
-      <span class="badge green">Novo</span>
     </a>
     <% if (appData.user.type === 'admin') { %>
     <a href="/services" class="nav-item<%= navActive('/services') ? ' active' : '' %>">
@@ -51,6 +51,10 @@
       <span class="nav-label">Fluxo de caixa</span>
     </a>
     <% if (appData.user.type === 'admin') { %>
+    <a href="/analytics" class="nav-item<%= navActive('/analytics') ? ' active' : '' %>">
+      <span class="nav-icon" aria-hidden="true">📈</span>
+      <span class="nav-label">Análises</span>
+    </a>
     <div class="nav-section-label">Sistema</div>
     <a href="/config" class="nav-item<%= navActive('/config') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">⚙️</span>
@@ -59,12 +63,13 @@
     <% } %>
   </nav>
   <div class="sidebar-bottom">
-    <div class="user-card">
+    <div class="user-card" title="Usuário conectado">
       <div class="user-avatar" aria-hidden="true"><%= (appData.user.name || 'IC').slice(0, 2).toUpperCase() %></div>
       <div class="user-info">
         <div class="user-name"><%= appData.user.name %></div>
-        <div class="user-role"><%= appData.user.type %></div>
+        <div class="user-role"><%= appData.user.type === 'admin' ? 'Administrador' : 'Caixa' %></div>
       </div>
+      <button type="button" class="user-logout-btn" id="logoutBtn" title="Sair da plataforma" aria-label="Sair da plataforma">↪</button>
     </div>
   </div>
 </aside>

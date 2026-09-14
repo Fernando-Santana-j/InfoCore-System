@@ -20,7 +20,7 @@
         <div class="os-public-meta">
           <span><%= service.deviceType %> · <%= service.deviceBrandModel %></span>
         </div>
-        <% const stages = (service.checklist || []).filter(i => i.defective); const done = stages.filter(s => s.done).length; const pct = stages.length ? Math.round((done / stages.length) * 100) : 0; %>
+        <% const stages = (service.checklist || []).filter(i => i.defective); const done = stages.filter(s => s.done || s.archived).length; const pct = stages.length ? Math.round((done / stages.length) * 100) : 0; %>
         <div class="os-public-progress" role="progressbar" aria-valuenow="<%= pct %>">
           <div class="os-public-progress-bar" style="width:<%= pct %>%"></div>
           <span><%= pct %>% concluído · <%= done %>/<%= stages.length %> etapas</span>
@@ -30,14 +30,15 @@
 
     <main class="os-public-main">
       <% stages.forEach(function(item, index) { %>
-        <article class="os-stage-card <%= item.done ? 'is-done' : '' %>">
+        <article class="os-stage-card <%= item.done || item.archived ? 'is-done' : '' %>">
           <div class="os-stage-head">
             <span class="os-stage-icon"><%= item.icon || '🔧' %></span>
             <div>
-              <span class="os-stage-num">Etapa <%= index + 1 %></span>
+              <% const typeLabel = ({ service: 'Serviço', part: 'Peça/material', diagnostic: 'Diagnóstico', other: 'Outro' })[item.workType] || 'Serviço'; %>
+              <span class="os-stage-num">Etapa <%= index + 1 %> · <%= typeLabel %></span>
               <h2><%= item.label %></h2>
             </div>
-            <span class="os-stage-status"><%= item.done ? 'Concluído' : 'Em andamento' %></span>
+            <span class="os-stage-status"><%= item.archived ? 'Arquivada' : (item.done ? 'Concluído' : 'Em andamento') %></span>
           </div>
 
           <% if (item.customerNote) { %>

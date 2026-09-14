@@ -1,11 +1,14 @@
+<% const topbarTitles = { dashboard:'Visão geral', pdv:'PDV', budgets:'Orçamentos', 'budget-links':'Links de propostas', clients:'Clientes', stock:'Catálogo', services:'Oficina', cashflow:'Fluxo de caixa', analytics:'Análises', config:'Configurações' }; %>
 <header class="topbar">
-  <div class="topbar-title" id="topbarTitle">Dashboard</div>
+  <button class="icon-btn mobile-menu-btn" type="button" id="mobileMenuBtn" aria-label="Abrir menu" aria-controls="appSidebar" aria-expanded="false">☰</button>
+  <div class="topbar-title" id="topbarTitle"><%= topbarTitles[body] || 'InfoCore' %></div>
   <div class="topbar-actions">
-    <button class="btn btn-ghost btn-sm topbar-instructions-btn" type="button" id="topbarInstructionsBtn" onclick="openInstructionsModal()">
-      📋 Instruções
+    <span class="connection-status" id="connectionStatus" role="status" aria-live="polite"><i></i><span>Online</span></span>
+    <button class="btn btn-ghost btn-sm topbar-instructions-btn" type="button" id="topbarInstructionsBtn" onclick="openInstructionsModal()" aria-label="Abrir instruções">
+      <span aria-hidden="true">📋</span><span class="topbar-action-label">Instruções</span>
     </button>
-    <button class="btn btn-ghost btn-sm topbar-instructions-btn" type="button" id="topbarNotesBtn" onclick="openSharedNotesModal()">
-      📝 Notas
+    <button class="btn btn-ghost btn-sm topbar-instructions-btn" type="button" id="topbarNotesBtn" onclick="openSharedNotesModal()" aria-label="Abrir notas compartilhadas">
+      <span aria-hidden="true">📝</span><span class="topbar-action-label">Notas</span>
     </button>
   </div>
 </header>

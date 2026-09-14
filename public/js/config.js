@@ -78,6 +78,7 @@ function renderWaUi(data) {
 function startWaPoll() {
     if (waPollTimer) return;
     waPollTimer = setInterval(async () => {
+        if (document.hidden) return;
         try {
             const data = await fetchWaStatus();
             renderWaUi(data);
@@ -89,6 +90,62 @@ function startWaPoll() {
             console.error(e);
         }
     }, 2500);
+}
+
+async function configRequest(url, options) {
+    const response = await fetch(url, { credentials: 'same-origin', ...options, headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.message || 'Não foi possível salvar.');
+    return data;
+}
+
+async function runConfigAction(button, loadingText, action) {
+    if (!button || button.disabled) return;
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = loadingText;
+    try { await action(); } catch (error) { showToast(error.message, 'error'); }
+    finally { button.disabled = false; button.textContent = original; }
+}
+
+function bindRealConfigForms() {
+    const saveStore = document.getElementById('saveStoreBtn');
+    saveStore?.addEventListener('click', () => runConfigAction(saveStore, 'Salvando…', async () => {
+        const payload = {
+            storeName: document.getElementById('storeName')?.value.trim(),
+            storeDoc: document.getElementById('storeDoc')?.value.trim(),
+            storeAddress: document.getElementById('storeAddress')?.value.trim(),
+            storePhone: document.getElementById('storePhone')?.value.trim()
+        };
+        if (!payload.storeName) throw new Error('Informe o nome da loja.');
+        const data = await configRequest('/api/config', { method: 'PUT', body: JSON.stringify(payload) });
+        Object.assign(window.appData.configs, data.configs || payload);
+        showToast('Dados da loja salvos.', 'success');
+    }));
+
+    const savePreferences = document.getElementById('savePreferencesBtn');
+    savePreferences?.addEventListener('click', () => runConfigAction(savePreferences, 'Salvando…', async () => {
+        const payload = {
+            currency: document.getElementById('currency')?.value || 'BRL',
+            defaultMinStock: Number(document.getElementById('defaultMinStock')?.value) || 0
+        };
+        const data = await configRequest('/api/config', { method: 'PUT', body: JSON.stringify(payload) });
+        Object.assign(window.appData.configs, data.configs || payload);
+        showToast('Preferências salvas.', 'success');
+    }));
+
+    const changePassword = document.getElementById('changePasswordBtn');
+    changePassword?.addEventListener('click', () => runConfigAction(changePassword, 'Alterando…', async () => {
+        const currentPassword = document.getElementById('currentPassword')?.value || '';
+        const newPassword = document.getElementById('newPassword')?.value || '';
+        const confirmation = document.getElementById('confirmPassword')?.value || '';
+        if (!currentPassword) throw new Error('Informe a senha atual.');
+        if (newPassword.length < 6) throw new Error('A nova senha deve ter pelo menos 6 caracteres.');
+        if (newPassword !== confirmation) throw new Error('A confirmação da nova senha não confere.');
+        await configRequest('/api/account/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) });
+        ['currentPassword', 'newPassword', 'confirmPassword'].forEach((id) => { const input = document.getElementById(id); if (input) input.value = ''; });
+        showToast('Senha alterada com sucesso.', 'success');
+    }));
 }
 
 function stopWaPoll() {
@@ -168,6 +225,7 @@ function initConfig() {
     updateTopbarTitle('Configurações');
     markNavActive('/config');
     bindWhatsAppConfig();
+    bindRealConfigForms();
 }
 
 function bootConfig() {
@@ -181,3 +239,5 @@ if (document.readyState === 'loading') {
 } else {
     bootConfig();
 }
+
+window.addEventListener('pagehide', stopWaPoll);

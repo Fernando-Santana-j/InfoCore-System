@@ -109,7 +109,7 @@ function stockCategoryTagHtml(categoryKey) {
 
 function productThumbCell(p) {
     if (p.image) {
-        return `<img class="stock-prod-thumb" src="${escapeAttr(p.image)}" alt="">`;
+        return `<img class="stock-prod-thumb" src="${escapeAttr(p.image)}" alt="" loading="lazy" decoding="async">`;
     }
     return `<span class="stock-prod-thumb stock-prod-thumb--ph" aria-hidden="true">${p.emoji || '📦'}</span>`;
 }
@@ -167,13 +167,15 @@ function wireStockPageActions(api) {
         }
     });
     page.addEventListener('click', (e) => {
-        const btn = e.target.closest?.('.stock-btn-edit, .stock-btn-delete');
+        const btn = e.target.closest?.('.stock-btn-edit, .stock-btn-delete, .stock-btn-duplicate, .stock-btn-toggle');
         if (!btn || !page.contains(btn)) return;
         const id = btn.dataset.productId;
         if (!id) return;
         e.preventDefault();
         if (btn.classList.contains('stock-btn-edit')) api.openEdit(id);
         else if (btn.classList.contains('stock-btn-delete')) api.deleteProduct(id);
+        else if (btn.classList.contains('stock-btn-duplicate')) api.duplicateProduct(id);
+        else if (btn.classList.contains('stock-btn-toggle')) api.toggleActive(id);
     });
 }
 
@@ -211,6 +213,23 @@ function syncCatalogFormType(scope) {
     if (catEl) populateCategorySelect(catEl, catEl.value);
     const costLabel = document.getElementById(`${scope}CostLabel`);
     if (costLabel) costLabel.textContent = isSvc ? 'Custo mão de obra (R$)' : 'Custo (R$)';
+    if (scope === 'new') {
+        const title = document.getElementById('catalogCreateTitle');
+        const subtitle = document.getElementById('catalogCreateSubtitle');
+        const submit = document.getElementById('catalogCreateSubmitBtn');
+        const skuLabel = document.getElementById('newSkuLabel');
+        const skuHint = document.getElementById('newSkuHint');
+        const imageLabel = document.getElementById('newImageLabel');
+        if (title) title.textContent = isSvc ? 'Novo serviço' : 'Novo produto';
+        if (subtitle) subtitle.textContent = isSvc ? 'Defina duração, mão de obra e materiais. Serviços não movimentam estoque.' : 'Cadastre um item físico com quantidade e estoque mínimo.';
+        if (submit) submit.textContent = isSvc ? 'Salvar serviço' : 'Salvar produto';
+        if (skuLabel) skuLabel.textContent = isSvc ? 'Código do serviço' : 'SKU / código de barras';
+        if (skuHint) skuHint.textContent = isSvc ? 'Gerado automaticamente no formato SRV-0001.' : 'Gerado automaticamente com 8 dígitos para leitura de código de barras.';
+        if (imageLabel) imageLabel.textContent = isSvc ? 'Imagem ilustrativa (opcional)' : 'Foto do produto';
+    } else {
+        const title = document.getElementById('catalogEditTitle');
+        if (title) title.textContent = isSvc ? 'Editar serviço' : 'Editar produto';
+    }
     updateCatalogCostPreview(scope);
 }
 
@@ -237,15 +256,73 @@ function wireCatalogFormType(scope) {
 }
 
 let stockTypeFilter = 'todos';
+let catalogStatusFilter = 'all';
+let catalogCategoryFilter = 'all';
+let pendingCatalogConfirm = null;
+
+function syncCatalogFilterControls() {
+    document.querySelectorAll('[data-stock-type-filter]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.stockTypeFilter === stockTypeFilter);
+    });
+    const status = document.getElementById('catalogStatusFilter');
+    const category = document.getElementById('catalogCategoryFilter');
+    if (status) status.value = catalogStatusFilter;
+    if (category) category.value = catalogCategoryFilter;
+}
+
+function populateCatalogFilters() {
+    const category = document.getElementById('catalogCategoryFilter');
+    if (category) {
+        category.innerHTML = '<option value="all">Todas</option>' + getAllCategoryKeys().map((key) => `<option value="${escapeAttr(key)}">${escapeHtml(stockCategoryLabel(key) || key)}</option>`).join('');
+        category.onchange = () => { catalogCategoryFilter = category.value || 'all'; Stock.render(); };
+    }
+    const status = document.getElementById('catalogStatusFilter');
+    if (status) status.onchange = () => { catalogStatusFilter = status.value || 'all'; Stock.render(); };
+    syncCatalogFilterControls();
+}
+
+function closeCatalogConfirm() {
+    pendingCatalogConfirm = null;
+    closeModal('catalogConfirm');
+}
+
+function openCatalogConfirm({ title, message, confirmText, onConfirm }) {
+    pendingCatalogConfirm = typeof onConfirm === 'function' ? onConfirm : null;
+    document.getElementById('catalogConfirmTitle').textContent = title || 'Confirmar ação';
+    document.getElementById('catalogConfirmMessage').textContent = message || '';
+    document.getElementById('confirmCatalogActionBtn').textContent = confirmText || 'Confirmar';
+    openModal('catalogConfirm');
+}
+
+function bindCatalogConfirm() {
+    const close = document.getElementById('closeCatalogConfirmBtn');
+    const cancel = document.getElementById('cancelCatalogConfirmBtn');
+    const confirmButton = document.getElementById('confirmCatalogActionBtn');
+    if (close) close.onclick = closeCatalogConfirm;
+    if (cancel) cancel.onclick = closeCatalogConfirm;
+    if (confirmButton) confirmButton.onclick = async () => {
+        const action = pendingCatalogConfirm;
+        pendingCatalogConfirm = null;
+        closeModal('catalogConfirm');
+        if (action) await action();
+    };
+}
 
 function setStockTypeFilter(type, btn) {
     stockTypeFilter = type || 'todos';
-    document.querySelectorAll('[data-stock-type-filter]').forEach((b) => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
+    syncCatalogFilterControls();
     Stock.filterSearch?.();
 }
 
-function openStockAddProductModal() {
+function openCatalogModal(id) {
+    const overlay = document.getElementById(`modal-${id}`);
+    // A área principal possui scroll próprio. Levar o modal para o body garante
+    // centralização na janela visível, independentemente da posição do catálogo.
+    if (overlay && overlay.parentElement !== document.body) document.body.appendChild(overlay);
+    openModal(id);
+}
+
+function openStockAddProductModal(type = 'product') {
     const inp = document.getElementById('newProductImage');
     if (inp) inp.value = '';
     setPreviewFromUrl(document.getElementById('newImagePreview'), '');
@@ -253,14 +330,15 @@ function openStockAddProductModal() {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
-    const productRadio = document.querySelector('input[name="newItemType"][value="product"]');
+    const selectedType = type === 'service' ? 'service' : 'product';
+    const productRadio = document.querySelector(`input[name="newItemType"][value="${selectedType}"]`);
     if (productRadio) productRadio.checked = true;
     const cat = document.getElementById('newCategory');
     populateCategorySelect(cat, 'others');
     const minEl = document.getElementById('newMin');
-    if (minEl) minEl.value = '10';
+    if (minEl) minEl.value = String(Math.max(0, Number(window.appData?.configs?.defaultMinStock) || 10));
     syncCatalogFormType('new');
-    openModal('addProduct');
+    openCatalogModal('addProduct');
 }
 
 const Stock = (() => {
@@ -296,10 +374,61 @@ const Stock = (() => {
         let list = products;
         if (stockTypeFilter === 'product') list = list.filter((p) => !isCatalogService(p));
         if (stockTypeFilter === 'service') list = list.filter((p) => isCatalogService(p));
+        if (catalogCategoryFilter !== 'all') list = list.filter((p) => String(p.category) === catalogCategoryFilter);
+        if (catalogStatusFilter === 'active') list = list.filter((p) => p.active !== false);
+        if (catalogStatusFilter === 'inactive') list = list.filter((p) => p.active === false);
+        if (catalogStatusFilter === 'critical') list = list.filter((p) => !isCatalogService(p) && p.active !== false && asNumber(p.qty) <= asNumber(p.min));
         if (filter === 'baixo') return list.filter((p) => !isCatalogService(p) && p.qty < p.min);
         if (filter === 'normal') return list.filter((p) => !isCatalogService(p) && p.qty >= p.min && p.qty < p.min * 3);
         if (filter === 'alto') return list.filter((p) => !isCatalogService(p) && p.qty >= p.min * 3);
         return list;
+    };
+
+    const marginTag = (p) => {
+        const price = asNumber(p.price);
+        const cost = asNumber(p.unitCostTotal ?? p.cost);
+        const margin = price > 0 ? ((price - cost) / price) * 100 : 0;
+        const cls = margin >= 30 ? 'green' : margin >= 15 ? 'gold' : 'red';
+        return `<span class="tag ${cls}">${margin.toFixed(1)}%</span>`;
+    };
+
+    const actionButtons = (p) => {
+        const id = escapeAttr(String(p.id));
+        return `<div class="catalog-row-actions">
+            <button type="button" class="btn btn-ghost btn-sm btn-icon stock-btn-edit" data-product-id="${id}" title="Editar">✏️</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon stock-btn-duplicate" data-product-id="${id}" title="Duplicar">⧉</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon stock-btn-toggle" data-product-id="${id}" title="${p.active === false ? 'Ativar' : 'Desativar'}">${p.active === false ? '▶' : 'Ⅱ'}</button>
+        </div>`;
+    };
+
+    const renderKpis = () => {
+        const all = window.appData.products || [];
+        const physical = all.filter((p) => !isCatalogService(p));
+        const services = all.filter(isCatalogService);
+        const critical = physical.filter((p) => p.active !== false && asNumber(p.qty) <= asNumber(p.min));
+        const inactive = all.filter((p) => p.active === false);
+        const el = getEl('catalogKpis');
+        if (!el) return;
+        el.innerHTML = [
+            ['📦', 'Produtos', physical.length, 'Itens com estoque'],
+            ['🔧', 'Serviços', services.length, 'Sem movimentar estoque'],
+            ['⚠️', 'Estoque crítico', critical.length, 'Pedem reposição'],
+            ['◌', 'Inativos', inactive.length, 'Ocultos no PDV']
+        ].map(([icon, label, value, hint]) => `<button type="button" class="catalog-kpi" data-kpi-filter="${label === 'Estoque crítico' ? 'critical' : label === 'Inativos' ? 'inactive' : label === 'Produtos' ? 'product' : 'service'}"><span>${icon}</span><div><small>${label}</small><strong>${value}</strong><em>${hint}</em></div></button>`).join('');
+        el.querySelectorAll('[data-kpi-filter]').forEach((button) => {
+            button.onclick = () => {
+                const selected = button.dataset.kpiFilter;
+                if (selected === 'product' || selected === 'service') {
+                    stockTypeFilter = selected;
+                    catalogStatusFilter = 'all';
+                } else {
+                    stockTypeFilter = 'todos';
+                    catalogStatusFilter = selected;
+                }
+                syncCatalogFilterControls();
+                render();
+            };
+        });
     };
 
     const render = () => {
@@ -308,48 +437,46 @@ const Stock = (() => {
         let products = search();
         products = applyFilter(products);
 
+        const physical = products.filter((p) => !isCatalogService(p));
+        const services = products.filter(isCatalogService);
         const countEl = getEl('stockCount');
-        if (countEl) countEl.textContent = `${products.length} item(ns) no catálogo`;
+        if (countEl) countEl.textContent = `${products.length} resultado(s) · ${physical.length} produto(s) · ${services.length} serviço(s)`;
+        const productCount = getEl('catalogProductsCount');
+        const serviceCount = getEl('catalogServicesCount');
+        if (productCount) productCount.textContent = `${physical.length} produto(s) nesta visualização`;
+        if (serviceCount) serviceCount.textContent = `${services.length} serviço(s) nesta visualização`;
 
-        const table = getEl('stockTable');
-        if (!table) return;
-
+        const productTable = getEl('catalogProductsTable');
+        const serviceTable = getEl('catalogServicesTable');
+        if (!productTable || !serviceTable) return;
         const rowId = (p) => escapeAttr(String(p.id));
-
-        table.innerHTML = products.map((p) => {
-            const svc = isCatalogService(p);
-            const qtyCell = svc
-                ? '<span class="text-xs text-muted">—</span>'
-                : `<div class="editable-cell"><input type="number" min="0" step="1" class="editable-input stock-qty-input" value="${p.qty}" data-product-id="${rowId(p)}"></div>`;
-            const minCell = svc ? '—' : p.min;
-            const typeTag = svc
-                ? '<span class="tag gold">🔧 Serviço</span>'
-                : '<span class="tag blue">📦 Produto</span>';
-            const statusTag = svc
-                ? '<span class="text-xs text-muted">—</span>'
-                : `<span class="tag ${getStockStatus(p).cls}">${getStockStatus(p).label}</span>`;
-            return `
-      <tr class="fade-in">
-        <td class="mono text-muted">${p.sku}</td>
-        <td>${productThumbCell(p)}<strong>${escapeHtml(p.name)}</strong></td>
-        <td>${typeTag}</td>
-        <td>${stockCategoryTagHtml(p.category)}</td>
-        <td>${qtyCell}</td>
-        <td class="mono text-muted">${minCell}</td>
-        <td class="mono">${catalogDisplayCost(p)}</td>
-        <td>
-          <div class="editable-cell">
-            <input type="text" inputmode="numeric" autocomplete="off" class="editable-input input-money stock-price-input" value="${formatMoneyFromNumber(p.price)}" data-product-id="${rowId(p)}">
-          </div>
-        </td>
-        <td>${statusTag}</td>
-        <td class="flex gap-2">
-          <button type="button" class="btn btn-ghost btn-sm btn-icon stock-btn-edit" data-product-id="${rowId(p)}">✏️</button>
-          <button type="button" class="btn btn-danger btn-sm btn-icon stock-btn-delete" data-product-id="${rowId(p)}">🗑️</button>
-        </td>
-      </tr>
-    `;
-        }).join('') || `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum item encontrado</p></div></td></tr>`;
+        productTable.innerHTML = physical.map((p) => `<tr class="fade-in${p.active === false ? ' catalog-row-inactive' : ''}">
+            <td class="mono text-muted">${escapeHtml(p.sku)}</td>
+            <td><div class="catalog-item-cell">${productThumbCell(p)}<div><strong>${escapeHtml(p.name)}</strong><small>${escapeHtml(p.description || 'Produto físico')}</small></div></div></td>
+            <td>${stockCategoryTagHtml(p.category)}</td>
+            <td><div class="editable-cell"><input aria-label="Estoque de ${escapeAttr(p.name)}" type="number" min="0" step="1" class="editable-input stock-qty-input" value="${asNumber(p.qty)}" data-product-id="${rowId(p)}"></div></td>
+            <td class="mono text-muted">${asNumber(p.min)}</td>
+            <td class="mono">${formatCurrency(asNumber(p.cost))}</td>
+            <td><div class="editable-cell"><input aria-label="Preço de ${escapeAttr(p.name)}" type="text" inputmode="numeric" autocomplete="off" class="editable-input input-money stock-price-input" value="${formatMoneyFromNumber(p.price)}" data-product-id="${rowId(p)}"></div></td>
+            <td>${marginTag(p)}</td>
+            <td><span class="tag ${p.active === false ? 'gray' : getStockStatus(p).cls}">${p.active === false ? 'Inativo' : getStockStatus(p).label}</span></td>
+            <td>${actionButtons(p)}</td>
+        </tr>`).join('') || '<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">📦</div><p>Nenhum produto encontrado</p></div></td></tr>';
+        serviceTable.innerHTML = services.map((p) => `<tr class="fade-in${p.active === false ? ' catalog-row-inactive' : ''}">
+            <td class="mono text-muted">${escapeHtml(p.sku || '—')}</td>
+            <td><div class="catalog-item-cell">${productThumbCell(p)}<div><strong>${escapeHtml(p.name)}</strong><small>${escapeHtml(p.description || 'Serviço do catálogo')}</small></div></div></td>
+            <td>${stockCategoryTagHtml(p.category)}</td>
+            <td><span class="catalog-duration">${escapeHtml(p.serviceDuration || 'Não informado')}</span></td>
+            <td class="mono">${formatCurrency(asNumber(p.cost))}</td>
+            <td class="mono">${formatCurrency(asNumber(p.partsCost))}</td>
+            <td class="mono catalog-total-cost">${formatCurrency(asNumber(p.unitCostTotal))}</td>
+            <td><div class="editable-cell"><input aria-label="Preço de ${escapeAttr(p.name)}" type="text" inputmode="numeric" autocomplete="off" class="editable-input input-money stock-price-input" value="${formatMoneyFromNumber(p.price)}" data-product-id="${rowId(p)}"></div></td>
+            <td><span class="tag ${p.active === false ? 'gray' : 'green'}">${p.active === false ? 'Inativo' : 'Ativo no PDV'}</span></td>
+            <td>${actionButtons(p)}</td>
+        </tr>`).join('') || '<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">🔧</div><p>Nenhum serviço encontrado</p></div></td></tr>';
+        getEl('catalogProductsSection').hidden = stockTypeFilter === 'service' || catalogStatusFilter === 'critical' && physical.length === 0;
+        getEl('catalogServicesSection').hidden = stockTypeFilter === 'product' || catalogStatusFilter === 'critical';
+        renderKpis();
     };
 
     const updateStock = async (id, val) => {
@@ -414,6 +541,42 @@ const Stock = (() => {
         }
     };
 
+    const toggleActive = async (id) => {
+        const product = findProd(id);
+        if (!product) return;
+        try {
+            const res = await fetch(`/api/products/${encodeURIComponent(String(id))}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ active: product.active === false })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) throw new Error(data.message || 'Não foi possível alterar a situação.');
+            Object.assign(product, data.product);
+            render();
+            showToast(`${catalogTypeLabel(product)} ${product.active === false ? 'desativado' : 'ativado'} com sucesso.`, 'success');
+        } catch (error) {
+            showToast(error.message || 'Erro de rede ao alterar a situação.', 'error');
+        }
+    };
+
+    const duplicateProduct = async (id) => {
+        const source = findProd(id);
+        if (!source) return;
+        try {
+            const res = await fetch(`/api/products/${encodeURIComponent(String(id))}/duplicate`, { method: 'POST', credentials: 'same-origin' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) throw new Error(data.message || 'Não foi possível duplicar.');
+            window.appData.products.push(data.product);
+            render();
+            showToast(`${catalogTypeLabel(source)} duplicado como inativo para revisão.`, 'success');
+            openEdit(data.product.id);
+        } catch (error) {
+            showToast(error.message || 'Erro de rede ao duplicar.', 'error');
+        }
+    };
+
     const openEdit = (id) => {
         const p = findProd(id);
         if (!p) return;
@@ -433,9 +596,16 @@ const Stock = (() => {
         setVal('editMin', p.min);
         setVal('editDesc', p.description || '');
         setVal('editServiceDuration', p.serviceDuration || '');
+        const editSubtitle = getEl('catalogEditSubtitle');
+        if (editSubtitle) editSubtitle.textContent = `${p.sku || 'Sem código'} · ${stockCategoryLabel(p.category) || 'Sem categoria'}`;
+        const activeButton = getEl('catalogToggleActiveBtn');
+        if (activeButton) {
+            activeButton.textContent = p.active === false ? 'Ativar no PDV' : 'Desativar no PDV';
+            activeButton.onclick = () => { closeModal('editProduct'); toggleActive(p.id); };
+        }
         syncCatalogFormType('edit');
         setPreviewFromUrl(getEl('editImagePreview'), p.image || '');
-        openModal('editProduct');
+        openCatalogModal('editProduct');
     };
 
     const saveEdit = async () => {
@@ -495,8 +665,7 @@ const Stock = (() => {
         }
     };
 
-    const deleteProduct = async (id) => {
-        if (!confirm('Confirmar exclusão do produto?')) return;
+    const deleteProductNow = async (id) => {
         try {
             const res = await fetch(`/api/products/${encodeURIComponent(String(id))}`, {
                 method: 'DELETE',
@@ -514,10 +683,22 @@ const Stock = (() => {
                 closeModal('editProduct');
             }
             render();
-            showToast('Produto excluído!', 'info');
+            showToast('Item excluído do catálogo.', 'info');
         } catch (e) {
-            showToast('Erro de rede ao excluir.', 'error');
+            showToast('Erro de rede ao excluir o item.', 'error');
         }
+    };
+
+    const deleteProduct = (id) => {
+        const product = findProd(id);
+        if (!product) return;
+        closeModal('editProduct');
+        openCatalogConfirm({
+            title: `Excluir ${catalogTypeLabel(product).toLowerCase()}`,
+            message: `Excluir “${product.name}” permanentemente? Vendas e orçamentos antigos manterão apenas o retrato do item. Para ocultar temporariamente, prefira desativar.`,
+            confirmText: 'Excluir permanentemente',
+            onConfirm: () => deleteProductNow(id)
+        });
     };
 
     const deleteEditing = () => {
@@ -603,12 +784,16 @@ const Stock = (() => {
             updateStock,
             updatePrice,
             openEdit,
-            deleteProduct
+            deleteProduct,
+            duplicateProduct,
+            toggleActive
         });
         wireCatalogFormType('new');
         wireCatalogFormType('edit');
         populateCategorySelect(getEl('newCategory'), 'others');
         populateCategorySelect(getEl('editCategory'), 'others');
+        populateCatalogFilters();
+        bindCatalogConfirm();
         wireImagePreview(getEl('newProductImage'), getEl('newImagePreview'));
         wireImagePreview(getEl('editProductImage'), getEl('editImagePreview'));
         if (typeof updateTopbarTitle === 'function') updateTopbarTitle('Catálogo');
@@ -628,6 +813,8 @@ const Stock = (() => {
         render,
         updateStock,
         updatePrice,
+        duplicateProduct,
+        toggleActive,
         openEdit,
         saveEdit,
         delete: deleteProduct,
@@ -642,46 +829,65 @@ const Stock = (() => {
 
 window.Stock = Stock;
 
-/** Exporta para .xlsx os produtos da visualização atual (pesquisa + filtros). */
-async function exportStockExcel() {
-    try {
-        await ensureXlsx();
-    } catch {
-        showToast('Exportação Excel indisponível.', 'error');
+/** Exporta em JSON os itens da visualização atual, separados por natureza. */
+function exportCatalogJson() {
+    const visibleItems = Stock.getVisibleProducts?.() || [];
+    if (!visibleItems.length) {
+        showToast('Não há itens para exportar nesta visualização.', 'info');
         return;
     }
-    const products = Stock.getVisibleProducts?.() || [];
-    if (!products.length) {
-        showToast('Não há produtos para exportar nesta visualização.', 'info');
-        return;
-    }
-    const rows = products.map((p) => ({
-        SKU: p.sku != null ? String(p.sku) : '',
-        Produto: p.name != null ? String(p.name) : '',
-        Categoria: stockCategoryLabel(p.category) || String(p.category || ''),
-        'Qtd. atual': Number(p.qty) || 0,
-        'Estoque mín.': Number(p.min) || 0,
-        'Preço custo (R$)': Number.isFinite(Number(p.cost)) ? Number(p.cost) : 0,
-        'Preço venda (R$)': Number.isFinite(Number(p.price)) ? Number(p.price) : 0,
-        Status: typeof getStockStatus === 'function' ? getStockStatus(p).label : '',
-        Descrição: p.description != null ? String(p.description) : ''
+    const common = (p) => ({
+        id: String(p.id || ''),
+        sku: String(p.sku || ''),
+        nome: String(p.name || ''),
+        categoria: String(p.category || ''),
+        categoriaNome: stockCategoryLabel(p.category) || String(p.category || ''),
+        preco: Number(p.price) || 0,
+        ativo: p.active !== false,
+        descricao: String(p.description || '')
+    });
+    const products = visibleItems.filter((p) => !isCatalogService(p)).map((p) => ({
+        ...common(p), tipo: 'product', custo: Number(p.cost) || 0,
+        estoque: Number(p.qty) || 0, estoqueMinimo: Number(p.min) || 0,
+        controlaEstoque: p.trackStock !== false
     }));
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Estoque');
+    const services = visibleItems.filter(isCatalogService).map((p) => ({
+        ...common(p), tipo: 'service', duracao: String(p.serviceDuration || ''),
+        custoMaoDeObra: Number(p.cost) || 0, custoMateriais: Number(p.partsCost) || 0,
+        custoTotal: Number(p.unitCostTotal ?? ((Number(p.cost) || 0) + (Number(p.partsCost) || 0))) || 0
+    }));
+    const payload = {
+        schemaVersion: 2,
+        exportadoEm: new Date().toISOString(),
+        filtros: { tipo: stockTypeFilter, situacao: catalogStatusFilter, categoria: catalogCategoryFilter },
+        resumo: { total: visibleItems.length, produtos: products.length, servicos: services.length },
+        produtos: products,
+        servicos: services
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
     const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `estoque_${stamp}.xlsx`);
-    showToast(`${products.length} produto(s) exportado(s) para Excel.`, 'success');
+    anchor.href = url;
+    anchor.download = `catalogo_${stamp}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    showToast(`${visibleItems.length} item(ns) exportado(s) em JSON.`, 'success');
 }
+
+// Compatibilidade com páginas que ainda estejam em cache.
+function exportStockExcel() { exportCatalogJson(); }
 
 function filterStock() {
     Stock.filterSearch();
 }
 
 function setStockFilter(f, el) {
-    document.querySelectorAll('#page-estoque .filter-btn').forEach((b) => b.classList.remove('active'));
-    if (el && el.classList) el.classList.add('active');
-    Stock.setFilter(f);
+    catalogStatusFilter = f === 'baixo' ? 'critical' : 'all';
+    syncCatalogFilterControls();
+    Stock.setFilter('todos');
 }
 
 function addProduct() {

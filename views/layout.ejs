@@ -2,14 +2,14 @@
 <html lang="pt-BR">
 <head>
   <%- include('reusable/head') %>
-  <link rel="stylesheet" href="/css/<%= body %>.css?v=10">
+  <link rel="stylesheet" href="/css/<%= body %>.css?v=15">
   <style>
     html.app-is-loading, html.app-is-loading body { overflow: hidden; }
-    html.app-is-loading .app { opacity: 0; pointer-events: none; }
+    html.app-is-loading .app { opacity: 1; }
     #pageLoader {
-      position: fixed; inset: 0; z-index: 99999;
+      position: fixed; inset: var(--topbar-h) 0 0 var(--sidebar-w); z-index: 99999;
       display: flex; align-items: center; justify-content: center;
-      background: #050508;
+      background: rgba(5,5,8,.78); backdrop-filter: blur(10px);
       transition: opacity .18s ease, visibility .18s ease;
     }
     #pageLoader.is-done { opacity: 0; visibility: hidden; pointer-events: none; }
@@ -23,15 +23,21 @@
       position: absolute; font-weight: 800; font-size: 1rem;
       color: #f2c94c; letter-spacing: .12em;
     }
-    .pl-text { margin-top: 20px; color: #9a9aad; font-size: .85rem; font-weight: 600; }
+    .pl-text { margin-top: 20px; color: #c7c7d2; font-size: .85rem; font-weight: 600; }
+    .pl-retry { display: none; margin-top: 12px; }
+    #pageLoader.has-error .pl-ring { animation: none; border-color: rgba(248,113,113,.35); border-top-color: #f87171; }
+    #pageLoader.has-error .pl-retry { display: inline-flex; }
     @keyframes plSpin { to { transform: rotate(360deg); } }
+    @media (max-width:1100px) and (min-width:769px) { #pageLoader { left: 200px; } }
+    @media (max-width:768px) { #pageLoader { left: 0; top: var(--topbar-h); } }
   </style>
 </head>
-<body data-page="<%= body %>" class="app-is-loading">
+<body data-page="<%= body %>" data-user-role="<%= (typeof appData !== 'undefined' && appData?.user?.type) || 'user' %>" class="app-is-loading">
   <div id="pageLoader" role="status" aria-live="polite" aria-busy="true">
     <div style="display:flex;flex-direction:column;align-items:center;position:relative">
       <div class="pl-ring"></div>
       <p class="pl-text" id="pageLoaderText">Carregando…</p>
+      <button type="button" class="btn btn-ghost pl-retry" id="pageLoaderRetry">Tentar novamente</button>
     </div>
   </div>
 
@@ -46,6 +52,8 @@
     </main>
   </div>
 
+  <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Fechar menu" tabindex="-1"></button>
+
   <div class="toast-container" id="toastContainer"></div>
   <%- include('reusable/instructions-modal') %>
   <%- include('reusable/notes-modal') %>
@@ -55,30 +63,39 @@
     window.appData = JSON.parse(document.getElementById('appData').textContent || '{}');
     window.__page = '<%= body %>';
     window.__bootstrap = '<%= typeof bootstrap !== "undefined" ? bootstrap : "" %>';
-    window.__needsHtml2canvas = <%= (body === 'budgets' || body === 'pdv' || body === 'service-work') ? 'true' : 'false' %>;
-    window.__needsXlsx = <%= body === 'stock' ? 'true' : 'false' %>;
     window.__dataReady = (async () => {
       if (!window.__bootstrap) return window.appData;
       const el = document.getElementById('pageLoaderText');
       if (el) el.textContent = 'Sincronizando dados…';
-      const res = await fetch('/api/bootstrap/' + encodeURIComponent(window.__bootstrap), {
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json' }
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.message || 'Falha ao carregar');
-      Object.assign(window.appData, data);
-      return window.appData;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
+      try {
+        const res = await fetch('/api/bootstrap/' + encodeURIComponent(window.__bootstrap), {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) { window.location.replace('/login'); return window.appData; }
+        if (!res.ok || data.error) throw new Error(data.message || 'Falha ao carregar');
+        Object.assign(window.appData, data);
+        return window.appData;
+      } catch (error) {
+        if (error?.name === 'AbortError') throw new Error('A conexão demorou demais. Tente novamente.');
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
     })();
   </script>
-  <script src="/js/shared.js?v=4"></script>
+  <script src="/js/shared.js?v=5"></script>
   <% if (body === 'budgets' || body === 'pdv') { %>
   <script src="/js/budget-templates.js?v=5"></script>
   <% } %>
   <% if (body === 'service-work') { %>
   <script src="/js/service-templates.js?v=1"></script>
   <% } %>
-  <script src="/js/<%= body %>.js?v=13"></script>
+  <script src="/js/<%= body %>.js?v=19"></script>
   <% if (body === 'pdv') { %>
   <script src="/js/pdv-service.js?v=7"></script>
   <% } %>

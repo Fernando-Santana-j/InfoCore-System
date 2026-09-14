@@ -16,10 +16,10 @@
           <span class="cf-metric-label">Saídas</span>
           <strong class="cf-metric-val" id="cfTotalExpense">R$ 0,00</strong>
         </div>
-        <div class="cf-metric cf-metric--profit">
+        <% if (appData.user.type === 'admin') { %><div class="cf-metric cf-metric--profit">
           <span class="cf-metric-label">Lucro</span>
           <strong class="cf-metric-val" id="cfTotalProfit">R$ 0,00</strong>
-        </div>
+        </div><% } %>
         <div class="cf-metric cf-metric--balance">
           <span class="cf-metric-label">Saldo</span>
           <strong class="cf-metric-val" id="cfBalance">R$ 0,00</strong>

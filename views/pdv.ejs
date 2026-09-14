@@ -1,4 +1,8 @@
 <div class="page" id="page-pdv">
+  <header class="pdv-page-hero">
+    <div><p>Operação de caixa</p><h2>PDV</h2><span>Venda rápida de produtos e serviços, com leitura de código e atalhos de teclado.</span></div>
+    <div class="pdv-role-chip"><span class="pdv-role-dot"></span><strong><%= appData.user.type === 'admin' ? 'Modo administrador' : 'Caixa ativo' %></strong><small><%= appData.user.name %></small></div>
+  </header>
   <div class="pdv-layout">
     <div class="pdv-products">
       <div class="pdv-toolbar">
@@ -13,10 +17,8 @@
         <input type="text" id="pdvBarcodeCapture" class="visually-hidden" tabindex="-1" aria-hidden="true" autocomplete="off">
         <div class="filter-bar">
           <button class="filter-btn active" onclick="setPDVFilter('todos',this)">Todos</button>
-          <button class="filter-btn" onclick="setPDVFilter('cell',this)">📱</button>
-          <button class="filter-btn" onclick="setPDVFilter('laptop',this)">💻</button>
-          <button class="filter-btn" onclick="setPDVFilter('pc',this)">🖥️</button>
-          <button class="filter-btn" onclick="setPDVFilter('others',this)">📦</button>
+          <button class="filter-btn" onclick="setPDVFilter('produtos',this)">📦 Produtos</button>
+          <button class="filter-btn" onclick="setPDVFilter('servicos',this)">🔧 Serviços</button>
         </div>
         <button type="button" class="btn btn-ghost btn-sm" id="btnOpenServiceIntakeModal">🧰 Ordem de serviço</button>
         <% if (appData.user.type === 'admin') { %>
@@ -29,8 +31,8 @@
 
     <div class="cart-panel">
       <div class="cart-header">
-        <div class="cart-title">🛒 Carrinho</div>
-        <div class="text-xs text-muted mt-4" id="cartCount">0 itens</div>
+        <div class="cart-header-row"><div><div class="cart-title">🛒 Venda atual</div><div class="text-xs text-muted mt-4" id="cartCount">0 itens</div></div><div class="pdv-held-actions"><button type="button" class="btn btn-ghost btn-sm" id="btnHoldSale" title="Atalho F8">Suspender</button><button type="button" class="btn btn-ghost btn-sm" id="btnResumeSale" hidden>Retomar <span id="heldSaleBadge">1</span></button></div></div>
+        <label class="pdv-customer-field"><span>Cliente</span><input class="form-input" id="pdvCustomerName" list="pdvCustomerOptions" placeholder="Balcão ou nome do cliente" autocomplete="off"><datalist id="pdvCustomerOptions"></datalist></label>
       </div>
       <div class="cart-items" id="cartItems">
         <div class="empty-state" id="cartEmpty">
@@ -39,6 +41,7 @@
         </div>
       </div>
       <div class="cart-footer">
+        <label class="pdv-sale-note"><span>Observação da venda</span><input class="form-input" id="pdvSaleNote" maxlength="500" placeholder="Opcional: garantia, retirada, referência..."></label>
         <div class="cart-totals">
           <div class="cart-total-row"><span>Subtotal</span><span class="val mono" id="cartSubtotal">R$ 0,00</span></div>
           <div class="cart-total-row"><span>Desconto</span><span class="val mono text-green" id="cartDiscount">- R$ 0,00</span></div>
@@ -46,6 +49,7 @@
           <div class="divider"></div>
           <div class="cart-total-row grand"><span>Total</span><span class="val" id="cartTotal">R$ 0,00</span></div>
         </div>
+        <% if (appData.user.type === 'admin') { %><div class="pdv-admin-metrics" id="pdvAdminMetrics"><span>Visão administrativa</span><strong>Lucro estimado: R$ 0,00</strong></div><% } %>
         <div class="payment-methods" id="paymentMethodsButtons"></div>
         <div class="cart-adjust-actions">
           <button class="btn btn-ghost btn-sm" type="button" id="btnOpenDiscountModal">Desconto</button>

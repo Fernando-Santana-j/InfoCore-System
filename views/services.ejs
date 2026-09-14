@@ -2,9 +2,10 @@
   <header class="svc-admin-hero">
     <div>
       <h2>Oficina — Ordens de Serviço</h2>
-      <p>Selecione uma ordem para abrir o fluxo de reparo item a item (descrição e fotos em cada etapa).</p>
+      <p>Abra uma ordem e monte o fluxo durante o reparo: serviços, peças, diagnósticos, descrições e fotos em cada etapa.</p>
     </div>
     <div class="svc-admin-hero-actions">
+      <button type="button" class="btn btn-primary btn-sm svc-create-trigger" id="btnCreateService">+ Nova ordem de serviço</button>
       <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshServices" title="Atualizar lista">↻ Atualizar</button>
       <button type="button" class="btn btn-ghost btn-sm" id="btnOpenWorkTemplates">📋 Templates de serviço</button>
       <a href="/config" class="btn btn-ghost btn-sm" id="btnOpenWhatsappConfig">💬 WhatsApp</a>
@@ -22,6 +23,110 @@
       <div class="svc-order-list svc-order-list--grid" id="servicesList"></div>
     </section>
   </div>
+</div>
+
+<div class="svc-create-overlay" id="svcCreateModal" hidden aria-hidden="true">
+  <form class="svc-create-card" id="svcCreateForm" role="dialog" aria-modal="true" aria-labelledby="svcCreateTitle">
+    <header class="svc-create-head">
+      <div class="svc-create-head-icon">🧰</div>
+      <div>
+        <p class="svc-create-kicker">Entrada rápida na oficina</p>
+        <h3 id="svcCreateTitle">Nova ordem de serviço</h3>
+        <p>Cadastre os dados essenciais. A OS será criada vazia para você montar as etapas durante o trabalho.</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="svcCreateCloseBtn" aria-label="Fechar">✕</button>
+    </header>
+
+    <div class="svc-create-body">
+      <section class="svc-create-section">
+        <div class="svc-create-section-head">
+          <span>1</span>
+          <div><strong>Vínculo financeiro</strong><small>Escolha como esta OS se relaciona com orçamentos.</small></div>
+        </div>
+        <div class="svc-create-modes" id="svcCreateModes" role="group" aria-label="Vínculo com orçamento">
+          <button type="button" class="svc-create-mode is-active" data-mode="existing" aria-pressed="true">
+            <span class="svc-create-mode-icon">🔗</span><strong>Vincular existente</strong><small>Use um orçamento já cadastrado</small>
+          </button>
+          <button type="button" class="svc-create-mode" data-mode="new" aria-pressed="false">
+            <span class="svc-create-mode-icon">🧾</span><strong>Novo rascunho</strong><small>Cria um orçamento junto</small>
+          </button>
+          <button type="button" class="svc-create-mode" data-mode="none" aria-pressed="false">
+            <span class="svc-create-mode-icon">📭</span><strong>Sem orçamento</strong><small>Somente a ordem de serviço</small>
+          </button>
+        </div>
+        <div class="svc-create-budget-picker" id="svcCreateBudgetPicker">
+          <label class="form-label" for="svcCreateBudgetSearch">Orçamento disponível *</label>
+          <div class="svc-create-search-wrap">
+            <span>⌕</span>
+            <input class="form-input" id="svcCreateBudgetSearch" type="search" placeholder="Buscar por código ou cliente..." autocomplete="off">
+          </div>
+          <div class="svc-create-budget-results" id="svcCreateBudgetResults"></div>
+          <input type="hidden" id="svcCreateBudgetId">
+          <div class="svc-create-budget-selected" id="svcCreateBudgetSelected" hidden></div>
+        </div>
+        <div class="svc-create-mode-note" id="svcCreateModeNote" hidden></div>
+      </section>
+
+      <section class="svc-create-section">
+        <div class="svc-create-section-head">
+          <span>2</span>
+          <div><strong>Cliente e equipamento</strong><small>Informações usadas na identificação e no relatório.</small></div>
+        </div>
+        <div class="svc-create-grid">
+          <div class="form-group svc-create-field-full" id="svcCreateCustomerPickerWrap">
+            <label class="form-label" for="svcCreateCustomerSelect">Cliente cadastrado (opcional)</label>
+            <select class="form-input" id="svcCreateCustomerSelect"><option value="">Preencher manualmente</option></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="svcCreateCustomerName">Nome do cliente *</label>
+            <input class="form-input" id="svcCreateCustomerName" maxlength="120" required placeholder="Nome completo">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="svcCreateCustomerPhone">WhatsApp *</label>
+            <input class="form-input" id="svcCreateCustomerPhone" required inputmode="tel" placeholder="(00) 00000-0000">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="svcCreateCustomerEmail">E-mail</label>
+            <input class="form-input" id="svcCreateCustomerEmail" type="email" placeholder="cliente@exemplo.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="svcCreateDeviceType">Tipo *</label>
+            <select class="form-input" id="svcCreateDeviceType" required>
+              <option value="Celular">Celular</option><option value="Notebook">Notebook</option>
+              <option value="Computador">Computador</option><option value="Tablet">Tablet</option><option value="Outro">Outro</option>
+            </select>
+          </div>
+          <div class="form-group svc-create-field-full">
+            <label class="form-label" for="svcCreateDeviceModel">Marca e modelo *</label>
+            <input class="form-input" id="svcCreateDeviceModel" maxlength="160" required placeholder="Ex.: Dell Inspiron 15, Samsung Galaxy A54...">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="svcCreatePriority">Prioridade</label>
+            <select class="form-input" id="svcCreatePriority">
+              <option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="svcCreateAccessories">Acessórios recebidos</label>
+            <input class="form-input" id="svcCreateAccessories" maxlength="300" placeholder="Carregador, capa, fonte...">
+          </div>
+          <div class="form-group svc-create-field-full">
+            <label class="form-label" for="svcCreateIssue">Relato inicial (opcional)</label>
+            <textarea class="form-input" id="svcCreateIssue" rows="3" maxlength="1500" placeholder="O que o cliente informou ou o que já foi observado..."></textarea>
+          </div>
+        </div>
+      </section>
+
+      <div class="svc-create-empty-callout">
+        <span>✨</span><div><strong>Fluxo livre ativado</strong><p>Nenhuma etapa será pré-selecionada. Depois de criar, você adiciona serviços, peças e diagnósticos conforme eles surgirem.</p></div>
+      </div>
+    </div>
+
+    <footer class="svc-create-foot">
+      <button type="button" class="btn btn-ghost btn-sm" id="svcCreateCancelBtn">Cancelar</button>
+      <button type="submit" class="btn btn-primary btn-sm" id="svcCreateSubmitBtn">Criar OS e abrir fluxo →</button>
+    </footer>
+  </form>
 </div>
 
 <div class="svc-tpl-overlay" id="svcTplModal" hidden>

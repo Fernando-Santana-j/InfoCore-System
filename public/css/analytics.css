@@ -11,6 +11,13 @@
     gap: 20px;
 }
 
+.analytics-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:24px 26px;background:linear-gradient(120deg,rgba(94,234,212,.08),rgba(12,12,20,.9))!important}
+.analytics-kicker{display:block;margin-bottom:6px;color:var(--accent);font-size:.67rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.analytics-hero h2{font:800 clamp(1.35rem,2.5vw,1.85rem)/1.15 var(--font-display);letter-spacing:-.035em}.analytics-hero p{max-width:700px;margin-top:7px;color:var(--text2);font-size:.82rem;line-height:1.55}.analytics-period{display:flex;flex-direction:column;gap:5px;min-width:190px}.analytics-period>span{color:var(--text3);font-size:.65rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.analytics-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.analytics-kpi{display:flex;align-items:center;gap:13px;padding:17px;border:1px solid var(--border);border-radius:15px;background:rgba(12,12,20,.82)}.analytics-kpi>span{display:grid;place-items:center;width:40px;height:40px;flex:0 0 auto;border-radius:12px;background:var(--accent-glow);color:var(--accent);font-size:1.05rem}.analytics-kpi>div{display:flex;min-width:0;flex-direction:column}.analytics-kpi small{color:var(--text3);font-size:.67rem;font-weight:700}.analytics-kpi strong{margin:2px 0;font:800 1.1rem var(--font-display);overflow:hidden;text-overflow:ellipsis}.analytics-kpi em{color:var(--text2);font-size:.64rem;font-style:normal}
+.analytics-progress{display:grid;grid-template-columns:minmax(130px,1fr) minmax(90px,1.35fr) 45px;gap:12px;align-items:center;padding:8px 0}.analytics-progress>div:first-child{display:flex;min-width:0;flex-direction:column;gap:2px}.analytics-progress strong{font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.analytics-progress span{color:var(--text3);font-size:.63rem}.analytics-progress-track{height:7px;border-radius:99px;background:var(--bg3);overflow:hidden}.analytics-progress-track i{display:block;height:100%;border-radius:inherit}.analytics-progress>b{color:var(--text2);font-size:.68rem;text-align:right}
+.analytics-rank,.analytics-payment,.analytics-financial{display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid var(--border)}.analytics-rank:last-child,.analytics-payment:last-child,.analytics-financial:last-child{border-bottom:0}.analytics-rank>span{display:grid;place-items:center;width:29px;height:29px;border-radius:9px;background:var(--bg3);color:var(--text3);font-size:.7rem;font-weight:800}.analytics-rank>div,.analytics-payment>div{display:flex;min-width:0;flex:1;flex-direction:column}.analytics-rank strong,.analytics-payment strong{font-size:.77rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.analytics-rank small,.analytics-payment small{color:var(--text3);font-size:.63rem}.analytics-rank>b,.analytics-payment>b{color:var(--gold);font-size:.72rem;white-space:nowrap}.analytics-payment>i{width:9px;height:34px;border-radius:99px}.analytics-payment>span{min-width:40px;color:var(--text2);font-size:.67rem;text-align:right}.analytics-financial{justify-content:space-between}.analytics-financial span{color:var(--text2);font-size:.75rem}.analytics-financial strong{font-size:.82rem}.analytics-financial .positive{color:var(--green)}.analytics-financial .negative{color:var(--red)}.analytics-financial .neutral{color:var(--text)}
+.analytics-empty{display:flex;min-height:150px;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--text3);text-align:center}.analytics-empty>span{font-size:1.5rem}.analytics-empty p{font-size:.75rem}
+
 .report-item {
     background: var(--bg3);
     border-radius: 10px;
@@ -44,4 +51,7 @@
     .report-grid {
         grid-template-columns: 1fr;
     }
+    .analytics-hero{align-items:stretch;flex-direction:column;padding:19px}.analytics-period{min-width:0}.analytics-kpis{grid-template-columns:1fr 1fr}.analytics-progress{grid-template-columns:minmax(120px,1fr) 45px}.analytics-progress-track{grid-row:2;grid-column:1/-1}.analytics-progress>b{grid-column:2;grid-row:1}
 }
+
+@media(max-width:480px){.analytics-kpis{grid-template-columns:1fr}.analytics-kpi{padding:14px}}

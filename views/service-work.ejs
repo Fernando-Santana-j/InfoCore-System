@@ -5,6 +5,70 @@
   <footer class="svc-work-footer" id="svcWorkFooter"></footer>
 </div>
 
+<div class="svc-stage-overlay" id="svcStageModal" hidden aria-hidden="true">
+  <form class="svc-stage-card" id="svcStageForm" role="dialog" aria-modal="true" aria-labelledby="svcStageTitle">
+    <header class="svc-stage-head">
+      <div>
+        <p class="svc-stage-kicker">Fluxo personalizado</p>
+        <h3 id="svcStageTitle">Nova etapa</h3>
+        <p>Cadastre o que surgiu durante o reparo, sem depender de um modelo pronto.</p>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="svcStageCloseBtn" aria-label="Fechar">✕</button>
+    </header>
+    <div class="svc-stage-body">
+      <input type="hidden" id="svcStageKey">
+      <div class="form-group">
+        <label class="form-label">Tipo da etapa</label>
+        <div class="svc-stage-types" id="svcStageTypes" role="group" aria-label="Tipo da etapa">
+          <button type="button" class="svc-stage-type is-active" data-type="service" aria-pressed="true"><span>🔧</span> Serviço</button>
+          <button type="button" class="svc-stage-type" data-type="part" aria-pressed="false"><span>📦</span> Peça/material</button>
+          <button type="button" class="svc-stage-type" data-type="diagnostic" aria-pressed="false"><span>🔎</span> Diagnóstico</button>
+          <button type="button" class="svc-stage-type" data-type="other" aria-pressed="false"><span>📝</span> Outro</button>
+        </div>
+      </div>
+      <div class="svc-stage-name-grid">
+        <div class="form-group svc-stage-icon-field">
+          <label class="form-label" for="svcStageIcon">Ícone</label>
+          <input class="form-input" id="svcStageIcon" value="🔧" maxlength="8" aria-label="Ícone da etapa">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="svcStageLabel">Nome da etapa *</label>
+          <input class="form-input" id="svcStageLabel" placeholder="Ex.: Troca do conector de carga" maxlength="120" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="svcStageNote">Contexto para o cliente</label>
+        <textarea class="form-input" id="svcStageNote" rows="3" maxlength="1000" placeholder="Ex.: Conector oxidado; substituição autorizada pelo cliente."></textarea>
+        <span class="svc-stage-help">Você poderá registrar o trabalho técnico e as fotos dentro da etapa.</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="svcStagePrice">Valor de referência interno (opcional)</label>
+        <div class="svc-stage-money-field">
+          <span>R$</span>
+          <input class="form-input" id="svcStagePrice" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0,00">
+        </div>
+        <span class="svc-stage-help">Usado apenas na tela da oficina; não aparece no relatório do cliente.</span>
+      </div>
+    </div>
+    <footer class="svc-stage-foot">
+      <button type="button" class="btn btn-ghost btn-sm" id="svcStageCancelBtn">Cancelar</button>
+      <button type="submit" class="btn btn-primary btn-sm" id="svcStageSaveBtn">Adicionar etapa</button>
+    </footer>
+  </form>
+</div>
+
+<div class="svc-delete-overlay" id="svcDeleteModal" hidden aria-hidden="true">
+  <div class="svc-delete-card" role="alertdialog" aria-modal="true" aria-labelledby="svcDeleteTitle">
+    <div class="svc-delete-icon">🗑️</div>
+    <h3 id="svcDeleteTitle">Remover esta etapa?</h3>
+    <p><strong id="svcDeleteStageName"></strong> será retirada do fluxo e do relatório. As anotações e fotos vinculadas deixarão de aparecer.</p>
+    <div class="svc-delete-actions">
+      <button type="button" class="btn btn-ghost btn-sm" id="svcDeleteCancelBtn">Manter etapa</button>
+      <button type="button" class="btn btn-sm svc-delete-confirm" id="svcDeleteConfirmBtn">Sim, remover</button>
+    </div>
+  </div>
+</div>
+
 <div class="svc-share-overlay" id="svcShareModal" hidden>
   <div class="svc-share-card" role="dialog" aria-labelledby="svcShareTitle">
     <header class="svc-share-head">

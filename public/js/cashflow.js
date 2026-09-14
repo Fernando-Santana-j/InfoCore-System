@@ -33,9 +33,10 @@ function parseAmountInput(raw) {
 function normalizeEntry(e) {
     const type = String(e.type || '').toLowerCase() === 'expense' ? 'expense' : 'income';
     const amount = Math.max(0, Number(e.amount) || 0);
-    const cost = Math.max(0, Number(e.cost) || 0);
-    let profit = Number(e.profit);
-    if (!Number.isFinite(profit)) profit = type === 'income' ? amount - cost : 0;
+    const hasFinancials = window.appData?.user?.type === 'admin' && (e.cost != null || e.profit != null);
+    const cost = hasFinancials ? Math.max(0, Number(e.cost) || 0) : null;
+    const parsedProfit = Number(e.profit);
+    const profit = hasFinancials && Number.isFinite(parsedProfit) ? parsedProfit : null;
     return {
         id: e.id != null ? String(e.id) : '',
         type,
@@ -115,9 +116,9 @@ function summarize(rows) {
     rows.forEach((r) => {
         if (r.type === 'income') {
             inc += Number(r.amount) || 0;
-            if (Number.isFinite(Number(r.profit))) {
+            if (typeof r.profit === 'number' && Number.isFinite(r.profit)) {
                 profit += Number(r.profit);
-            } else {
+            } else if (window.appData?.user?.type === 'admin') {
                 profit += (Number(r.amount) || 0) - (Number(r.cost) || 0);
             }
         } else {
@@ -178,7 +179,7 @@ function renderCashFlow() {
             d = `${dd}/${m}/${y}`;
         } else d = r.date || '—';
 
-        const profitHint = isInc && (r.cost > 0 || isPdvEntry(r))
+        const profitHint = isInc && typeof r.profit === 'number'
             ? `<div class="cf-profit-hint muted">Custo ${formatCurrency(r.cost)} · Lucro ${formatCurrency(r.profit)}</div>`
             : '';
         const pdv = isPdvEntry(r);

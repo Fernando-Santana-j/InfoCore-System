@@ -11,6 +11,11 @@ let budgetCurrentRecord = null;
 let confirmAllowInsufficientStock = false;
 let selectedCreditInstallments = 1;
 const CREDIT_INSTALLMENT_MAX = 12;
+const PDV_HELD_SALE_KEY = 'infocore:pdv:held-sale:v2';
+
+function isPdvAdmin() {
+    return window.appData?.user?.type === 'admin';
+}
 
 function asArray(value) {
     if (Array.isArray(value)) return value;
@@ -507,6 +512,7 @@ function renderPDVFilters() {
     const categories = getCategories();
     const buttons = [
         `<button class="filter-btn ${currentPDVFilter === 'todos' ? 'active' : ''}" onclick="setPDVFilter('todos',this)">Todos</button>`,
+        `<button class="filter-btn ${currentPDVFilter === 'produtos' ? 'active' : ''}" onclick="setPDVFilter('produtos',this)">📦 Produtos</button>`,
         `<button class="filter-btn ${currentPDVFilter === 'servicos' ? 'active' : ''}" onclick="setPDVFilter('servicos',this)">🔧 Serviços</button>`
     ];
     Object.keys(categories).forEach((key) => {
@@ -670,6 +676,92 @@ function bindCustomItemModal() {
     });
 }
 
+function readHeldSale() {
+    try {
+        const raw = localStorage.getItem(PDV_HELD_SALE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return parsed && Array.isArray(parsed.cart) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function updateHeldSaleControls() {
+    const held = readHeldSale();
+    const holdButton = document.getElementById('btnHoldSale');
+    const resumeButton = document.getElementById('btnResumeSale');
+    if (holdButton) holdButton.disabled = asArray(window.appData?.cart).length === 0;
+    if (resumeButton) {
+        resumeButton.hidden = !held;
+        resumeButton.title = held ? `Suspensa em ${new Date(held.heldAt).toLocaleString('pt-BR')}` : '';
+    }
+}
+
+function holdCurrentSale() {
+    const cart = asArray(window.appData?.cart);
+    if (!cart.length) return showToast('Adicione itens antes de suspender a venda.', 'info');
+    const payload = {
+        version: 2,
+        heldAt: new Date().toISOString(),
+        cart,
+        adjustments: cartAdjustments,
+        payment: selectedPaymentMethod,
+        customer: String(document.getElementById('pdvCustomerName')?.value || '').trim(),
+        notes: String(document.getElementById('pdvSaleNote')?.value || '').trim()
+    };
+    try {
+        localStorage.setItem(PDV_HELD_SALE_KEY, JSON.stringify(payload));
+    } catch {
+        return showToast('Não foi possível suspender a venda neste navegador.', 'error');
+    }
+    clearCartCore();
+    const customer = document.getElementById('pdvCustomerName');
+    const notes = document.getElementById('pdvSaleNote');
+    if (customer) customer.value = '';
+    if (notes) notes.value = '';
+    updateHeldSaleControls();
+    showToast('Venda suspensa. O caixa está livre para outro atendimento.', 'success');
+}
+
+function resumeHeldSale() {
+    const held = readHeldSale();
+    if (!held) return showToast('Não há venda suspensa.', 'info');
+    if (asArray(window.appData?.cart).length) return showToast('Finalize ou limpe a venda atual antes de retomar.', 'warning');
+    const products = asArray(window.appData?.products);
+    const restored = held.cart.flatMap((item) => {
+        if (isCartItemCustom(item)) return [{ ...item, qty: Math.max(1, Math.trunc(asNumber(item.qty) || 1)) }];
+        const product = products.find((row) => String(row.id) === String(item.id) && row.active !== false);
+        if (!product) return [];
+        const hadOverride = isPdvAdmin() && asNumber(item.price) !== asNumber(item.catalogPrice);
+        return [{ ...item, name: product.name, itemType: product.itemType, catalogPrice: asNumber(product.price), price: hadOverride ? asNumber(item.price) : asNumber(product.price), qty: Math.max(1, Math.trunc(asNumber(item.qty) || 1)) }];
+    });
+    window.appData.cart = restored;
+    cartAdjustments = held.adjustments && typeof held.adjustments === 'object' ? held.adjustments : { discount: { type: 'fixed', value: 0 }, extra: { type: 'fixed', value: 0 } };
+    selectedPaymentMethod = held.payment || 'money';
+    const customer = document.getElementById('pdvCustomerName');
+    const notes = document.getElementById('pdvSaleNote');
+    if (customer) customer.value = held.customer || '';
+    if (notes) notes.value = held.notes || '';
+    localStorage.removeItem(PDV_HELD_SALE_KEY);
+    renderPaymentButtons();
+    renderCart();
+    updateHeldSaleControls();
+    showToast('Venda retomada.', 'success');
+}
+
+function populatePdvCustomerOptions() {
+    const list = document.getElementById('pdvCustomerOptions');
+    if (!list) return;
+    list.innerHTML = asArray(window.appData?.customers).slice(0, 500).map((customer) => `<option value="${escapeAttr(customer.name || '')}">${escapeHtml(customer.phone || customer.email || '')}</option>`).join('');
+}
+
+function bindPdvOperationalActions() {
+    document.getElementById('btnHoldSale')?.addEventListener('click', holdCurrentSale);
+    document.getElementById('btnResumeSale')?.addEventListener('click', resumeHeldSale);
+    populatePdvCustomerOptions();
+    updateHeldSaleControls();
+}
+
 function bindPDVKeyboardShortcuts() {
     if (window.__pdvShortcutsBound) return;
     window.__pdvShortcutsBound = true;
@@ -689,6 +781,12 @@ function bindPDVKeyboardShortcuts() {
         if (e.key === 'F4') {
             e.preventDefault();
             document.getElementById('pdvSearch')?.focus();
+            return;
+        }
+        if (e.key === 'F8') {
+            e.preventDefault();
+            if (asArray(window.appData?.cart).length) holdCurrentSale();
+            else resumeHeldSale();
         }
     });
 }
@@ -747,13 +845,15 @@ function renderPDV(filter) {
     }
     if (currentPDVFilter === 'servicos') {
         list = list.filter((p) => isServiceProduct(p));
+    } else if (currentPDVFilter === 'produtos') {
+        list = list.filter((p) => !isServiceProduct(p));
     } else if (currentPDVFilter !== 'todos') {
         list = list.filter((p) => String(p.category) === String(currentPDVFilter));
     }
 
     const productCards = list.map((p) => {
         const img = p.image
-            ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt=""></div>`
+            ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt="" loading="lazy" decoding="async"></div>`
             : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || (isServiceProduct(p) ? '🔧' : '📦')}</span></div>`;
         const tracks = productTracksStock(p);
         const isOutOfStock = tracks && asNumber(p.qty) <= 0;
@@ -1031,6 +1131,8 @@ function addToCart(id) {
             name: product.name,
             category: product.category,
             price: asNumber(product.price),
+            catalogPrice: asNumber(product.price),
+            itemType: product.itemType || 'product',
             qty: 1
         });
     }
@@ -1198,11 +1300,15 @@ function renderCart() {
             : '';
         const product = products.find((x) => String(x.id) === String(item.id));
         const serviceHint = renderCartServiceHint(product);
+        const priceControl = isPdvAdmin()
+            ? `<label class="cart-admin-price" title="Alteração exclusiva do administrador"><span>Unit.</span><input type="number" min="0" step="0.01" value="${asNumber(item.price).toFixed(2)}" onchange='updateCartItemPrice(${cid},this.value)'></label>`
+            : '';
         return `
       <div class="cart-item${isCartItemCustom(item) ? ' cart-item--custom' : ''}">
         <div class="cart-item-main">
           <div class="cart-item-name">${escapeHtml(item.name || 'Produto')}${customTag}</div>
           ${serviceHint}
+          ${priceControl}
         </div>
         <div class="cart-item-qty">
           <button type="button" class="qty-btn" onclick='changeQty(${cid},-1)'>−</button>
@@ -1229,6 +1335,37 @@ function renderCart() {
     if (tot) tot.textContent = formatCurrency(totals.total);
     if (discountEl) discountEl.textContent = `- ${formatCurrency(totals.discount)}`;
     if (extraEl) extraEl.textContent = `+ ${formatCurrency(totals.extra)}`;
+    renderPdvAdminMetrics();
+    updateHeldSaleControls();
+}
+
+function updateCartItemPrice(id, value) {
+    if (!isPdvAdmin()) return;
+    const item = asArray(window.appData?.cart).find((row) => String(row.id) === String(id));
+    if (!item) return;
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) {
+        showToast('Informe um preço unitário válido.', 'error');
+        renderCart();
+        return;
+    }
+    item.price = roundMoney2(price);
+    renderCart();
+}
+
+function renderPdvAdminMetrics() {
+    const element = document.getElementById('pdvAdminMetrics');
+    if (!element || !isPdvAdmin()) return;
+    const products = asArray(window.appData?.products);
+    const cost = asArray(window.appData?.cart).reduce((sum, item) => {
+        if (isCartItemCustom(item)) return sum;
+        const product = products.find((row) => String(row.id) === String(item.id));
+        return sum + asNumber(product?.unitCostTotal ?? product?.cost) * asNumber(item.qty);
+    }, 0);
+    const total = getCurrentTotals().total;
+    const profit = total - cost;
+    const margin = total > 0 ? profit / total * 100 : 0;
+    element.innerHTML = `<span>Visão administrativa · custo ${formatCurrency(cost)}</span><strong class="${profit < 0 ? 'is-negative' : ''}">Lucro estimado ${formatCurrency(profit)} · ${margin.toFixed(1)}%</strong>`;
 }
 
 function changeQty(id, delta) {
@@ -1268,6 +1405,10 @@ function clearCartCore() {
     window.appData.cart = [];
     setAdjustment('discount', 'fixed', 0);
     setAdjustment('extra', 'fixed', 0);
+    const customerInput = document.getElementById('pdvCustomerName');
+    const noteInput = document.getElementById('pdvSaleNote');
+    if (customerInput) customerInput.value = '';
+    if (noteInput) noteInput.value = '';
     renderCart();
 }
 
@@ -1529,12 +1670,15 @@ async function finalizeSaleCore() {
                     custom: true
                 };
             }
-            return { id: i.id, qty: asNumber(i.qty) };
+            const row = { id: i.id, qty: asNumber(i.qty) };
+            if (isPdvAdmin()) row.unitPriceOverride = asNumber(i.price);
+            return row;
         }),
         discount: { ...cartAdjustments.discount },
         extra: { ...cartAdjustments.extra },
         payment,
-        client: 'Balcão',
+        client: String(document.getElementById('pdvCustomerName')?.value || '').trim() || 'Balcão',
+        notes: String(document.getElementById('pdvSaleNote')?.value || '').trim().slice(0, 500),
         allowInsufficientStock: confirmAllowInsufficientStock
     };
 
@@ -1827,6 +1971,7 @@ function bootPDV() {
         bindBudgetModal();
         bindBudgetTemplateModal();
         bindCustomItemModal();
+        bindPdvOperationalActions();
         bindPDVBarcodeCapture();
         bindPDVKeyboardShortcuts();
         const cashInput = document.getElementById('pdvCashReceivedInput');

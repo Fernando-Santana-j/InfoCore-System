@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <%- include('reusable/head') %>
+  <style>
+    .error-page{min-height:100vh;display:grid;place-items:center;padding:24px}.error-card{width:min(560px,100%);padding:34px;text-align:center}.error-code{display:inline-flex;padding:6px 11px;border:1px solid var(--accent-ring);border-radius:999px;color:var(--accent);font-size:.72rem;font-weight:800}.error-card h1{margin:16px 0 8px;font:800 clamp(1.6rem,5vw,2.3rem) var(--font-display)}.error-card p{margin:0 auto 22px;max-width:430px;color:var(--text2);line-height:1.6}.error-actions{display:flex;justify-content:center;gap:9px;flex-wrap:wrap}
+  </style>
+</head>
+<body><main class="error-page"><section class="card error-card"><span class="error-code"><%= status %></span><h1><%= title %></h1><p><%= message %></p><div class="error-actions"><a class="btn btn-primary" href="/dashboard">Ir para o início</a><button class="btn btn-ghost" type="button" onclick="history.back()">Voltar</button></div></section></main></body>
+</html>

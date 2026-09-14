@@ -183,8 +183,8 @@ test('budget UI avoids native browser confirm/prompt dialogs', () => {
 
 test('budget assets are cache-busted after modal regression fix', () => {
   const layout = read('views/layout.ejs');
-  assert.match(layout, /\/css\/<%= body %>\.css\?v=10/);
-  assert.match(layout, /\/js\/<%= body %>\.js\?v=13/);
+  assert.match(layout, /\/css\/<%= body %>\.css\?v=15/);
+  assert.match(layout, /\/js\/<%= body %>\.js\?v=19/);
 });
 
 test('budget server forces quote snapshots and conversion only after approval', () => {
@@ -265,9 +265,87 @@ test('budget history starts unfiltered and can clear every history filter', () =
   assert.match(js, /getElementById\(["']clearBudgetFiltersBtn["']\)\.onclick\s*=\s*clearBudgetFilters/);
 });
 
+test('budget list exposes separated items, compact actions and inline status changes', () => {
+  const view = read('views/budgets.ejs');
+  const js = read('public/js/budgets.js');
+  const server = read('index.js');
+  const renderer = readFunction(js, 'renderBudgetCard');
+  const itemRenderer = readFunction(js, 'budgetItemsMarkup');
+  const quickChange = readFunction(js, 'changeBudgetStatus');
+  const quickHandler = readFunction(js, 'handleQuickBudgetStatus');
+
+  assert.match(renderer, /budget-card-items/);
+  assert.match(itemRenderer, /budget-card-item-row/);
+  assert.match(renderer, /data-budget-status/);
+  assert.match(renderer, /budget-more-actions/);
+  for (const action of ['share', 'preview', 'edit', 'response', 'duplicate', 'followup', 'convert', 'delete']) {
+    assert.match(renderer, new RegExp(`data-action=\\"${action}\\"`), `Ação ${action} desapareceu do cartão`);
+  }
+  assert.match(quickChange, /\/api\/budgets\/\$\{encodeURIComponent\(id\)\}\/status/);
+  assert.match(quickHandler, /__convert__/);
+  assert.match(quickHandler, /openQuickRejectionModal/);
+  assert.match(view, /id="budgetQuickStatusModal"/);
+  assert.match(server, /app\.patch\(['"]\/api\/budgets\/:id\/status['"],\s*verifyLogin/);
+  assert.match(server, /requestedRawStatus === 'converted'/);
+});
+
+test('budget editor is organized in three navigable steps', () => {
+  const view = read('views/budgets.ejs');
+  const js = read('public/js/budgets.js');
+  const stepController = readFunction(js, 'setBudgetEditorStep');
+
+  assert.equal((view.match(/data-editor-step=/g) || []).length, 3);
+  for (const step of ['1', '2', '3']) {
+    assert.match(view, new RegExp(`data-editor-section=["']${step}["']`));
+  }
+  assert.match(view, /id="budgetEditorPrevBtn"/);
+  assert.match(view, /id="budgetEditorNextBtn"/);
+  assert.match(stepController, /budgetSaveBtn/);
+  assert.match(stepController, /budgetSaveAsTemplateBtn/);
+});
+
+test('item cost is editable internally, persisted and excluded from the customer projection', () => {
+  const view = read('views/budgets.ejs');
+  const js = read('public/js/budgets.js');
+  const server = read('index.js');
+  const itemRow = readFunction(js, 'itemRowHtml');
+  const itemEvents = readFunction(js, 'bindItemRowEvents');
+  const publicOption = readFunction(server, 'publicBudgetOption');
+
+  assert.match(view, /Custo 🔒/);
+  assert.match(itemRow, /item-cost budget-internal-input/);
+  assert.match(itemRow, /Uso interno: não aparece para o cliente/);
+  assert.match(itemEvents, /item\.unitCost\s*=\s*Math\.max/);
+  assert.ok((server.match(/preserveSubmittedProductCosts:\s*req\.session\.user\?\.type\s*===\s*'admin'/g) || []).length >= 2, 'Criação e edição devem aceitar custo apenas do administrador');
+  assert.doesNotMatch(publicOption, /unitCost\s*:/);
+  assert.doesNotMatch(publicOption, /lineCost\s*:/);
+});
+
+test('JSON export selects exactly the latest 30 calendar days and omits public tokens', () => {
+  const vm = require('node:vm');
+  const view = read('views/budgets.ejs');
+  const js = read('public/js/budgets.js');
+  const filterSource = readFunction(js, 'budgetsFromLastDays');
+  const downloadSource = readFunction(js, 'downloadRecentBudgetsJson');
+  const rows = [
+    { id: 'today', issuedAt: '2026-09-14' },
+    { id: 'first-day', issuedAt: '2026-08-16' },
+    { id: 'too-old', issuedAt: '2026-08-15' },
+    { id: 'future', issuedAt: '2026-09-15' }
+  ];
+  const context = { Date, num: Number, budgets: () => rows, result: null };
+
+  vm.runInNewContext(`${filterSource}\nresult = budgetsFromLastDays(30, new Date('2026-09-14T12:00:00'));`, context);
+  assert.deepEqual(Array.from(context.result, (row) => row.id), ['today', 'first-day']);
+  assert.match(view, /id="exportRecentBudgetsBtn"/);
+  assert.match(downloadSource, /application\/json/);
+  assert.match(downloadSource, /orcamentos-ultimos-30-dias/);
+  assert.match(downloadSource, /delete safeRow\.publicToken/);
+});
+
 test('budget bootstrap does not turn a database failure into an empty history', () => {
   const server = read('index.js');
-  const budgetScope = server.match(/if\s*\(scope\s*===\s*["']budgets["']\)\s*\{[\s\S]*?return\s+res\.json\(\{\s*configs,\s*products,\s*budgets,\s*customers,\s*budgetTemplates\s*\}\);[\s\S]*?\n\s*\}/)?.[0] || '';
+  const budgetScope = server.match(/if\s*\(scope\s*===\s*["']budgets["']\)\s*\{[\s\S]*?return\s+res\.json\(\{\s*configs,\s*products,\s*budgets,\s*customers,\s*budgetTemplates:[\s\S]*?\}\);[\s\S]*?\n\s*\}/)?.[0] || '';
 
   assert.ok(budgetScope, 'Bootstrap específico de orçamentos não encontrado');
   assert.match(budgetScope, /db\.findAll\(\{\s*colecao:\s*BUDGETS_COLLECTION\s*\}\)/);

@@ -10,7 +10,7 @@
         "test": "node --test test/*.test.js",
         "start": "NODE_ENV=production node index.js",
         "dev": "NODE_ENV=development nodemon --config nodemon.json index.js",
-        "check": "node --check index.js && node --check firebase/models.js && node --check public/js/shared.js && node --check public/js/budgets.js && node --check public/js/budget-links.js && node --check public/js/budget-share-public.js && node --check public/js/budget-templates.js && node --check public/js/pdv.js && node --check public/js/pdv-service.js && node --check public/js/products.js && node --check public/js/stock.js && node --check public/js/clients.js && node --check public/js/cashflow.js && node --check public/js/services.js && node --check public/js/analytics.js && node --check lib/budget-domain.js"
+        "check": "node --check index.js && node --check firebase/models.js && node --check public/js/shared.js && node --check public/js/login.js && node --check public/js/dashboard.js && node --check public/js/config.js && node --check public/js/budgets.js && node --check public/js/budget-links.js && node --check public/js/budget-share-public.js && node --check public/js/budget-templates.js && node --check public/js/pdv.js && node --check public/js/pdv-service.js && node --check public/js/products.js && node --check public/js/stock.js && node --check public/js/clients.js && node --check public/js/cashflow.js && node --check public/js/services.js && node --check public/js/service-work.js && node --check public/js/analytics.js && node --check scripts/migrate-catalog-v2.js && node --check lib/budget-domain.js && node --check lib/service-report-export.js"
     },
     "dependencies": {
         "@whiskeysockets/baileys": "^7.0.0-rc13",

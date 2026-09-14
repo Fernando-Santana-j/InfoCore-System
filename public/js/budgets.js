@@ -17,6 +17,8 @@ let budgetRefreshErrorShown = false;
 let templatePresentationDraft = null;
 let budgetRefreshInFlight = false;
 let budgetListRevision = '';
+let budgetEditorStep = 1;
+let quickStatusBudgetId = '';
 
 const BUDGET_STATUS_LABELS = {
     draft: 'Rascunho', sent: 'Enviado', awaiting: 'Aguardando cliente', approved: 'Aprovado',
@@ -86,6 +88,7 @@ function closeBudgetModal(id) {
     if (id === 'budgetDuplicateModal') duplicateBudgetId = '';
     if (id === 'budgetConvertModal') convertBudgetId = '';
     if (id === 'budgetTemplateModal') budgetCurrentRecord = null;
+    if (id === 'budgetQuickStatusModal') quickStatusBudgetId = '';
     syncBudgetModalLock();
 }
 function closeTopBudgetModal() {
@@ -106,6 +109,49 @@ function statusLabel(s) { return BUDGET_STATUS_LABELS[s] || 'Rascunho'; }
 function sourceLabel(s) { return SOURCE_LABELS[s] || (s ? s : 'Não informado'); }
 function rejectionLabel(s) { return REJECTION_LABELS[s] || (s ? s : 'Não informado'); }
 async function copyBudgetLink(text){if(window.isSecureContext&&navigator.clipboard)return navigator.clipboard.writeText(text);const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();document.execCommand('copy');area.remove();}
+function budgetsFromLastDays(days = 30, referenceDate = new Date()) {
+    const safeDays = Math.max(1, Math.trunc(num(days) || 30));
+    const endExclusive = new Date(referenceDate);
+    endExclusive.setHours(0, 0, 0, 0);
+    endExclusive.setDate(endExclusive.getDate() + 1);
+    const start = new Date(endExclusive);
+    start.setDate(start.getDate() - safeDays);
+    return budgets().filter((budget) => {
+        const rawDate = String(budget.issuedAt || budget.createdAt || '').trim();
+        if (!rawDate) return false;
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T12:00:00`) : new Date(rawDate);
+        return Number.isFinite(date.getTime()) && date >= start && date < endExclusive;
+    }).sort((a, b) => String(b.issuedAt || b.createdAt || '').localeCompare(String(a.issuedAt || a.createdAt || '')));
+}
+function downloadRecentBudgetsJson() {
+    const rows = budgetsFromLastDays(30);
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+    from.setDate(from.getDate() - 29);
+    const exportedBudgets = rows.map((row) => {
+        const safeRow = clone(row);
+        delete safeRow.publicToken;
+        return safeRow;
+    });
+    const payload = {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        period: { days: 30, from: new Date(from.getTime() - from.getTimezoneOffset() * 60000).toISOString().slice(0, 10), to: todayIso() },
+        count: exportedBudgets.length,
+        budgets: exportedBudgets
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orcamentos-ultimos-30-dias-${todayIso()}.json`;
+    link.hidden = true;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    showToast(`${exportedBudgets.length} orçamento(s) exportado(s) em JSON.`, 'success');
+}
 function updateTemplateImagePreview(url){const img=document.getElementById('templateImagePreview');if(!img)return;img.src=url||'';img.hidden=!url;}
 async function uploadTemplateImage(){const file=document.getElementById('templateImageFile')?.files?.[0];if(!file)return showToast('Selecione uma imagem.','info');const fd=new FormData();fd.append('image',file);try{const res=await fetch('/api/budget-templates/image',{method:'POST',credentials:'same-origin',body:fd});const data=await jsonResponse(res);if(!res.ok||data.error)throw new Error(data.message||'Falha no upload.');document.getElementById('templateImageUrl').value=data.imageUrl;updateTemplateImagePreview(data.imageUrl);showToast('Imagem enviada.','success');}catch(e){showToast(e.message,'error');}}
 
@@ -446,7 +492,8 @@ function itemRowHtml(item, i, context) {
       <div class="budget-item-name-wrap"><input class="form-input item-name" value="${esc(item.name)}"><div class="budget-item-secondary"><input class="form-input item-warranty" value="${esc(item.warranty || '')}" placeholder="Garantia"><input class="form-input item-note" value="${esc(item.note || '')}" placeholder="Observação"></div><div class="budget-item-meta">${stockWarn}</div></div>
       <select class="form-input item-condition">${Object.entries(CONDITION_LABELS).map(([v,l]) => `<option value="${v}"${item.condition === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
       <input class="form-input item-qty" type="number" min="1" step="1" value="${Math.max(1, Math.trunc(num(item.qty) || 1))}">
-      <input class="form-input item-price" type="number" min="0" step="0.01" value="${num(item.unitPrice).toFixed(2)}"${priceReadonly}>
+      <input class="form-input item-price" type="number" min="0" step="0.01" value="${num(item.unitPrice).toFixed(2)}"${priceReadonly} aria-label="Preço de venda de ${esc(item.name)}">
+      <input class="form-input item-cost budget-internal-input" type="number" min="0" step="0.01" value="${num(item.unitCost).toFixed(2)}" aria-label="Custo interno de ${esc(item.name)}" title="Uso interno: não aparece para o cliente">
       ${priceModeControl}
       <label class="budget-special-order" title="Item sob encomenda"><input class="item-special" type="checkbox"${item.specialOrder ? ' checked' : ''}></label>
       <div class="budget-items-total">${money(total)}</div>
@@ -468,10 +515,11 @@ function bindItemRowEvents(context) {
             item.condition = row.querySelector('.item-condition').value;
             item.qty = Math.max(1, Math.trunc(num(row.querySelector('.item-qty').value) || 1));
             item.unitPrice = Math.max(0, num(row.querySelector('.item-price').value));
+            item.unitCost = Math.max(0, num(row.querySelector('.item-cost').value));
             const mode = row.querySelector('.item-price-mode');
             item.priceMode = context === 'template' && mode ? mode.value : 'snapshot';
             item.specialOrder = row.querySelector('.item-special').checked;
-            if (context === 'template' && item.priceMode === 'live' && item.productId) {
+            if (context === 'template' && item.priceMode === 'live' && item.productId && row.dataset.refreshProductValues === 'true') {
                 const p = productById(item.productId);
                 if (p) {
                     item.unitPrice = num(p.price);
@@ -480,7 +528,15 @@ function bindItemRowEvents(context) {
             }
             if (context === 'template') renderTemplateItems(); else renderBudgetItems();
         };
-        row.addEventListener('change', (e) => { if (e.target.matches('.item-price') && context === 'template') { item.priceMode='snapshot'; const mode=row.querySelector('.item-price-mode'); if(mode)mode.value='snapshot'; } if (e.target.matches('input,select')) update(); });
+        row.addEventListener('change', (e) => {
+            if (e.target.matches('.item-price') && context === 'template') {
+                item.priceMode='snapshot';
+                const mode=row.querySelector('.item-price-mode');
+                if(mode)mode.value='snapshot';
+            }
+            row.dataset.refreshProductValues = String(e.target.matches('.item-price-mode'));
+            if (e.target.matches('input,select')) update();
+        });
         row.querySelector('.item-name').onblur = update;
         row.querySelector('.item-warranty').onblur = update;
         row.querySelector('.item-note').onblur = update;
@@ -499,7 +555,7 @@ function renderBudgetTotals() {
     if (eType && document.activeElement !== eType) eType.value = o.extra?.type || 'fixed'; if (eVal && document.activeElement !== eVal) eVal.value = num(o.extra?.value);
     const t = optionTotals(o); const box = document.getElementById('budgetTotalsBox'); if (!box) return;
     const card = cardPaymentTotals(t.total);
-    box.innerHTML = `<div class="budget-financial-box"><div class="budget-financial-cell"><small>Subtotal</small><strong>${money(t.subtotal)}</strong></div><div class="budget-financial-cell"><small>Custo interno</small><strong>${money(t.costTotal)}</strong></div><div class="budget-financial-cell"><small>Valor à vista</small><strong>${money(t.total)}</strong></div><div class="budget-financial-cell"><small>Valor no cartão</small><strong>${money(card.cardTotal)}</strong><small>ou 6x de ${money(card.installmentValue)}</small></div><div class="budget-financial-cell"><small>Lucro bruto</small><strong class="${t.profit < 0 ? 'margin-low' : ''}">${money(t.profit)}</strong></div><div class="budget-financial-cell"><small>Margem</small><strong class="${t.margin < 10 ? 'margin-low' : 'margin-good'}">${t.margin.toFixed(1)}%${t.margin < 10 ? ' · baixa' : ''}</strong></div></div>`;
+    box.innerHTML = `<div class="budget-financial-box"><div class="budget-financial-cell"><small>Subtotal</small><strong>${money(t.subtotal)}</strong></div><div class="budget-financial-cell budget-financial-internal"><small>Custo interno</small><strong>${money(t.costTotal)}</strong></div><div class="budget-financial-cell"><small>Valor à vista</small><strong>${money(t.total)}</strong></div><div class="budget-financial-cell"><small>Valor no cartão</small><strong>${money(card.cardTotal)}</strong><small>ou 6x de ${money(card.installmentValue)}</small></div><div class="budget-financial-cell budget-financial-internal"><small>Lucro bruto</small><strong class="${t.profit < 0 ? 'margin-low' : ''}">${money(t.profit)}</strong></div><div class="budget-financial-cell budget-financial-internal"><small>Margem</small><strong class="${t.margin < 10 ? 'margin-low' : 'margin-good'}">${t.margin.toFixed(1)}%${t.margin < 10 ? ' · baixa' : ''}</strong></div></div>`;
 }
 function syncAdjustmentsFromUi() {
     const o = activeOption(); if (!o) return;
@@ -595,6 +651,7 @@ function applyTemplateToActiveBudget(t) {
     document.getElementById('budgetTemplateSelect').value = t.id;
     renderOptionTabs();
     renderBudgetItems();
+    setBudgetEditorStep(2);
     showToast(`Modelo ${t.name} carregado. O orçamento agora é independente.`, 'success');
 }
 function loadTemplateIntoBudget(t) {
@@ -614,6 +671,29 @@ function loadTemplateIntoBudget(t) {
 }
 
 // ---------- Budget editor ----------
+function setBudgetEditorStep(step) {
+    budgetEditorStep = Math.max(1, Math.min(3, Number(step) || 1));
+    document.querySelectorAll('[data-editor-section]').forEach((section) => {
+        const isCurrent = Number(section.dataset.editorSection) === budgetEditorStep;
+        section.hidden = !isCurrent || (section.id === 'budgetTemplateLoader' && Boolean(editingBudgetId));
+    });
+    document.querySelectorAll('[data-editor-step]').forEach((button) => {
+        const active = Number(button.dataset.editorStep) === budgetEditorStep;
+        button.classList.toggle('is-active', active);
+        if (active) button.setAttribute('aria-current', 'step');
+        else button.removeAttribute('aria-current');
+    });
+    const previous = document.getElementById('budgetEditorPrevBtn');
+    const next = document.getElementById('budgetEditorNextBtn');
+    const save = document.getElementById('budgetSaveBtn');
+    const saveTemplate = document.getElementById('budgetSaveAsTemplateBtn');
+    if (previous) previous.hidden = budgetEditorStep === 1;
+    if (next) next.hidden = budgetEditorStep === 3;
+    if (save) save.hidden = budgetEditorStep !== 3;
+    if (saveTemplate) saveTemplate.hidden = budgetEditorStep !== 2;
+    document.querySelector('#budgetCreateModal .budget-editor-body')?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 function resetBudgetEditor() {
     editingBudgetId = '';
     selectedBudgetCustomerId = '';
@@ -640,7 +720,7 @@ function resetBudgetEditor() {
     renderOptionTabs();
     renderBudgetItems();
 }
-function openNewBudget() { resetBudgetEditor(); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
+function openNewBudget() { resetBudgetEditor(); setBudgetEditorStep(1); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
 function openEditBudget(b) {
     if (!b) return;
     if (b.status === 'converted') {
@@ -687,6 +767,7 @@ function openEditBudget(b) {
     toggleRejectionFields();
     renderOptionTabs();
     renderBudgetItems();
+    setBudgetEditorStep(1);
     openBudgetModal('budgetCreateModal');
 }
 function budgetPayload() {
@@ -724,9 +805,187 @@ function renderInsights(){
 function budgetFiltersActive(){return ['budgetSearchInput','budgetStatusFilter','budgetSourceFilter','budgetMonthFilter'].some((id)=>String(document.getElementById(id)?.value||'').trim());}
 function clearBudgetFilters(){['budgetSearchInput','budgetStatusFilter','budgetSourceFilter','budgetMonthFilter'].forEach((id)=>{const el=document.getElementById(id);if(el)el.value='';});renderBudgetCards();}
 function filteredBudgets(){const q=String(document.getElementById('budgetSearchInput')?.value||'').toLowerCase(),st=document.getElementById('budgetStatusFilter')?.value||'',src=document.getElementById('budgetSourceFilter')?.value||'',month=document.getElementById('budgetMonthFilter')?.value||'';return budgets().filter(b=>{const hay=`${b.code} ${b.customerName} ${arr(b.options).flatMap(o=>arr(o.items).map(i=>i.name)).join(' ')}`.toLowerCase();return(!q||hay.includes(q))&&(!st||b.status===st)&&(!src||b.source===src)&&(!month||String(b.issuedAt||b.createdAt||'').slice(0,7)===month);}).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));}
-function renderBudgetCards(){const all=budgets(),list=filteredBudgets(),hasFilters=budgetFiltersActive(),el=document.getElementById('budgetsGrid'),clearBtn=document.getElementById('clearBudgetFiltersBtn');if(clearBtn)clearBtn.hidden=!hasFilters;document.getElementById('budgetResultCount').textContent=hasFilters?`${list.length} de ${all.length} orçamento(s)`:`${all.length} orçamento(s)`;if(!list.length){el.innerHTML=all.length&&hasFilters?'<div class="empty-state">Nenhum orçamento corresponde aos filtros.<br><button class="btn btn-ghost btn-sm" type="button" data-clear-budget-filters>Limpar filtros</button></div>':'<div class="empty-state">Nenhum orçamento cadastrado.</div>';el.querySelector('[data-clear-budget-filters]')?.addEventListener('click',clearBudgetFilters);return;}el.innerHTML=list.map(b=>{const total=normalizedBudgetTotal(b),opts=arr(b.options),margin=num((opts.find(o=>String(o.id)===String(b.selectedOptionId))||opts.find(o=>o.recommended)||opts[0])?.margin??b.margin);const follow=isFollowUpPending(b),reply=b.customerResponse;return `<article class="budget-card-item${reply?' has-customer-reply':''}"><div class="budget-card-head"><div><div class="budget-card-code">${esc(b.code||'Orçamento')}</div><div class="budget-card-client">${esc(b.customerName||'Sem cliente')}</div></div><span class="budget-status status-${esc(b.status||'draft')}">${esc(statusLabel(b.status))}</span></div><div class="budget-card-meta"><span>${esc(sourceLabel(b.source))}</span><span>Emissão ${dateBr(b.issuedAt||b.createdAt)}</span><span>Validade ${dateBr(b.validUntil)}</span>${opts.length>1?`<span>${opts.length} opções</span>`:''}</div>${reply?`<div class="budget-customer-live">${reply.finalized?'✓ Cliente finalizou':'● Cliente está preenchendo'} · ${esc(opts.find(o=>String(o.id)===String(reply.selectedOptionId))?.name||'opção em análise')}</div>`:''}${b.status==='rejected'?`<div class="budget-card-loss">Motivo: ${esc(rejectionLabel(b.rejectionReason))}${b.rejectionNote?` · ${esc(b.rejectionNote)}`:''}</div>`:''}${follow?'<div class="budget-card-followup">● Follow-up pendente há mais de 3 dias</div>':''}<div class="budget-card-values"><div class="budget-card-value"><small>Total</small><strong>${money(total)}</strong></div><div class="budget-card-value"><small>Lucro bruto</small><strong>${money(b.profit||0)}</strong></div><div class="budget-card-value"><small>Margem</small><strong class="${margin<10?'margin-low':''}">${margin.toFixed(1)}%</strong></div></div><div class="budget-card-actions"><button class="btn btn-primary btn-sm" data-action="share" data-id="${esc(b.id)}">Link do cliente</button>${reply?`<button class="btn btn-ghost btn-sm" data-action="response" data-id="${esc(b.id)}">Ver respostas</button>`:''}<button class="btn btn-ghost btn-sm" data-action="preview" data-id="${esc(b.id)}">Visualizar</button>${b.status!=='converted'?`<button class="btn btn-ghost btn-sm" data-action="edit" data-id="${esc(b.id)}">Editar</button>`:''}<button class="btn btn-ghost btn-sm" data-action="duplicate" data-id="${esc(b.id)}">Duplicar</button>${follow?`<button class="btn btn-ghost btn-sm" data-action="followup" data-id="${esc(b.id)}">Follow-up feito</button>`:''}${['approved','acquiring_parts'].includes(b.status)?`<button class="btn btn-primary btn-sm" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>`:''}${b.status!=='converted'?`<button class="btn btn-danger-soft btn-sm" data-action="delete" data-id="${esc(b.id)}">Excluir</button>`:''}</div></article>`;}).join('');
-    el.querySelectorAll('[data-action]').forEach(btn=>btn.onclick=()=>handleBudgetAction(btn.dataset.action,btn.dataset.id));}
+function selectedBudgetOption(b) {
+    const options = arr(b.options);
+    return options.find((option) => String(option.id) === String(b.selectedOptionId))
+        || options.find((option) => option.recommended)
+        || options[0]
+        || null;
+}
+
+function budgetStatusOptions(current) {
+    const statuses = ['draft', 'sent', 'awaiting', 'approved', 'acquiring_parts', 'rejected', 'expired', 'cancelled'];
+    return statuses.map((status) => `<option value="${status}"${status === current ? ' selected' : ''}>${esc(statusLabel(status))}</option>`).join('');
+}
+
+function budgetItemsMarkup(option) {
+    const items = arr(option?.items);
+    if (!items.length) return '<div class="budget-card-items-empty">Nenhum item nesta opção.</div>';
+    return items.map((item) => {
+        const quantity = Math.max(1, num(item.qty) || 1);
+        return `<div class="budget-card-item-row">
+            <div class="budget-card-item-name"><strong>${esc(item.name || 'Item')}</strong><small>${esc(item.kind === 'product' ? (item.sku || 'Produto') : 'Item personalizado')}</small></div>
+            <span class="budget-card-item-qty">${quantity} × ${money(item.unitPrice)}</span>
+            <strong class="budget-card-item-total">${money(item.total ?? itemTotal(item))}</strong>
+        </div>`;
+    }).join('');
+}
+
+function renderBudgetCard(b) {
+    const options = arr(b.options);
+    const option = selectedBudgetOption(b);
+    const total = normalizedBudgetTotal(b);
+    const margin = num(option?.margin ?? b.margin);
+    const followUp = isFollowUpPending(b);
+    const reply = b.customerResponse;
+    const converted = b.status === 'converted';
+    const statusControl = converted
+        ? `<span class="budget-status status-converted">${esc(statusLabel(b.status))}</span>`
+        : `<label class="budget-quick-status status-${esc(b.status || 'draft')}" title="Altere o estado sem abrir o orçamento">
+            <span class="budget-status-dot" aria-hidden="true"></span>
+            <select data-budget-status data-id="${esc(b.id)}" aria-label="Estado de ${esc(b.code || 'orçamento')}">
+                ${budgetStatusOptions(b.status)}
+                ${['approved', 'acquiring_parts'].includes(b.status) ? '<option value="__convert__">Converter em venda…</option>' : ''}
+            </select>
+            <span class="budget-status-chevron" aria-hidden="true">⌄</span>
+        </label>`;
+    const customerContact = [b.customerPhone, b.customerEmail].filter(Boolean).join(' · ');
+
+    return `<article class="budget-card-item${reply ? ' has-customer-reply' : ''}">
+        <header class="budget-card-head">
+            <div class="budget-card-identity">
+                <div class="budget-card-code">${esc(b.code || 'Orçamento')}</div>
+                <div class="budget-card-client">${esc(b.customerName || 'Sem cliente')}</div>
+                ${customerContact ? `<div class="budget-card-contact">${esc(customerContact)}</div>` : ''}
+            </div>
+            ${statusControl}
+        </header>
+        <div class="budget-card-meta" aria-label="Informações do orçamento">
+            <span><small>Origem</small>${esc(sourceLabel(b.source))}</span>
+            <span><small>Emissão</small>${dateBr(b.issuedAt || b.createdAt)}</span>
+            <span><small>Validade</small>${dateBr(b.validUntil)}</span>
+            <span><small>Opções</small>${options.length || 1}</span>
+        </div>
+        ${reply ? `<div class="budget-customer-live">${reply.finalized ? '✓ Cliente finalizou' : '● Cliente está preenchendo'} · ${esc(options.find((row) => String(row.id) === String(reply.selectedOptionId))?.name || 'opção em análise')}</div>` : ''}
+        ${b.status === 'rejected' ? `<div class="budget-card-loss"><strong>Motivo da perda</strong><span>${esc(rejectionLabel(b.rejectionReason))}${b.rejectionNote ? ` · ${esc(b.rejectionNote)}` : ''}</span></div>` : ''}
+        ${followUp ? '<div class="budget-card-followup">● Follow-up pendente há mais de 3 dias</div>' : ''}
+        <section class="budget-card-items" aria-label="Itens da proposta selecionada">
+            <div class="budget-card-section-head">
+                <div><small>Itens da proposta</small><strong>${esc(option?.name || 'Proposta principal')}</strong></div>
+                <span>${arr(option?.items).length} ${arr(option?.items).length === 1 ? 'item' : 'itens'}</span>
+            </div>
+            <div class="budget-card-items-list">${budgetItemsMarkup(option)}</div>
+        </section>
+        <div class="budget-card-values">
+            <div class="budget-card-value is-total"><small>Total da proposta</small><strong>${money(total)}</strong></div>
+            <div class="budget-card-value budget-internal-value"><small>Lucro bruto</small><strong>${money(option?.profit ?? b.profit ?? 0)}</strong></div>
+            <div class="budget-card-value budget-internal-value"><small>Margem</small><strong class="${margin < 10 ? 'margin-low' : 'margin-good'}">${margin.toFixed(1)}%</strong></div>
+        </div>
+        <footer class="budget-card-actions">
+            <div class="budget-card-primary-actions">
+                <button class="btn btn-primary btn-sm" type="button" data-action="share" data-id="${esc(b.id)}">Compartilhar</button>
+                <button class="btn btn-ghost btn-sm" type="button" data-action="preview" data-id="${esc(b.id)}">Visualizar</button>
+                ${!converted ? `<button class="btn btn-ghost btn-sm" type="button" data-action="edit" data-id="${esc(b.id)}">Editar</button>` : ''}
+            </div>
+            <details class="budget-more-actions">
+                <summary>Mais ações <span aria-hidden="true">•••</span></summary>
+                <div class="budget-more-actions-menu">
+                    ${reply ? `<button type="button" data-action="response" data-id="${esc(b.id)}">Ver respostas do cliente</button>` : ''}
+                    <button type="button" data-action="duplicate" data-id="${esc(b.id)}">Duplicar orçamento</button>
+                    ${followUp ? `<button type="button" data-action="followup" data-id="${esc(b.id)}">Marcar follow-up como feito</button>` : ''}
+                    ${['approved', 'acquiring_parts'].includes(b.status) ? `<button type="button" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>` : ''}
+                    ${!converted ? `<button class="is-danger" type="button" data-action="delete" data-id="${esc(b.id)}">Excluir orçamento</button>` : ''}
+                </div>
+            </details>
+        </footer>
+    </article>`;
+}
+
+function renderBudgetCards() {
+    const all = budgets();
+    const list = filteredBudgets();
+    const hasFilters = budgetFiltersActive();
+    const element = document.getElementById('budgetsGrid');
+    const clearButton = document.getElementById('clearBudgetFiltersBtn');
+    if (clearButton) clearButton.hidden = !hasFilters;
+    document.getElementById('budgetResultCount').textContent = hasFilters ? `${list.length} de ${all.length} orçamento(s)` : `${all.length} orçamento(s)`;
+    if (!list.length) {
+        element.innerHTML = all.length && hasFilters
+            ? '<div class="empty-state">Nenhum orçamento corresponde aos filtros.<br><button class="btn btn-ghost btn-sm" type="button" data-clear-budget-filters>Limpar filtros</button></div>'
+            : '<div class="empty-state">Nenhum orçamento cadastrado.</div>';
+        element.querySelector('[data-clear-budget-filters]')?.addEventListener('click', clearBudgetFilters);
+        return;
+    }
+    element.innerHTML = list.map(renderBudgetCard).join('');
+    element.querySelectorAll('[data-action]').forEach((button) => {
+        button.onclick = () => handleBudgetAction(button.dataset.action, button.dataset.id);
+    });
+    element.querySelectorAll('[data-budget-status]').forEach((select) => {
+        select.onchange = () => handleQuickBudgetStatus(select);
+    });
+}
 function renderAll(){renderKpis();renderInsights();renderBudgetCards();renderTemplateList();fillTemplateSelect();}
+
+async function changeBudgetStatus(id, status, details = {}) {
+    const select = [...document.querySelectorAll('[data-budget-status]')].find((row) => String(row.dataset.id) === String(id));
+    if (select) select.disabled = true;
+    try {
+        const data = await api(`/api/budgets/${encodeURIComponent(id)}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({ status, ...details })
+        });
+        upsert('budgets', data.budget);
+        renderAll();
+        showNotificationStatus(data.notifications);
+        showToast(`Estado alterado para ${statusLabel(data.budget.status)}.`, 'success');
+    } catch (error) {
+        renderBudgetCards();
+        showToast(error.message, 'error');
+    }
+}
+
+function closeQuickStatusModal() {
+    quickStatusBudgetId = '';
+    closeBudgetModal('budgetQuickStatusModal');
+}
+
+function openQuickRejectionModal(budget) {
+    quickStatusBudgetId = String(budget.id);
+    document.getElementById('budgetQuickStatusSubtitle').textContent = `${budget.code || 'Orçamento'} · ${budget.customerName || 'Sem cliente'}`;
+    document.getElementById('budgetQuickRejectionReason').value = budget.rejectionReason || '';
+    document.getElementById('budgetQuickRejectionNote').value = budget.rejectionNote || '';
+    openBudgetModal('budgetQuickStatusModal');
+    setTimeout(() => document.getElementById('budgetQuickRejectionReason')?.focus(), 60);
+}
+
+function handleQuickBudgetStatus(select) {
+    const budget = budgets().find((row) => String(row.id) === String(select.dataset.id));
+    if (!budget) return;
+    const requestedStatus = select.value;
+    if (requestedStatus === '__convert__') {
+        renderBudgetCards();
+        openConvertModal(budget);
+        return;
+    }
+    if (requestedStatus === budget.status) return;
+    if (requestedStatus === 'rejected') {
+        renderBudgetCards();
+        openQuickRejectionModal(budget);
+        return;
+    }
+    changeBudgetStatus(budget.id, requestedStatus);
+}
+
+function confirmQuickRejection() {
+    if (!quickStatusBudgetId) return;
+    const rejectionReason = document.getElementById('budgetQuickRejectionReason').value;
+    const rejectionNote = document.getElementById('budgetQuickRejectionNote').value.trim();
+    if (!rejectionReason) return showToast('Selecione o motivo da perda.', 'error');
+    const id = quickStatusBudgetId;
+    closeQuickStatusModal();
+    changeBudgetStatus(id, 'rejected', { rejectionReason, rejectionNote });
+}
+
 async function executeDuplicateBudget() {
     if (!duplicateBudgetId) return;
     const updatePrices = document.getElementById('duplicateUpdatePrices').checked;
@@ -884,7 +1143,11 @@ function bindAutocompleteInput(inputId,resultId,context){
 }
 function bindEvents(){
     document.getElementById('templateUploadImageBtn').onclick=uploadTemplateImage; document.getElementById('templateImageUrl').oninput=(e)=>updateTemplateImagePreview(e.target.value.trim());
+    document.getElementById('exportRecentBudgetsBtn').onclick=downloadRecentBudgetsJson;
     document.getElementById('openCreateBudgetModalBtn').onclick=openNewBudget; document.getElementById('closeCreateBudgetModalBtn').onclick=()=>closeBudgetModal('budgetCreateModal'); document.getElementById('cancelCreateBudgetBtn').onclick=()=>closeBudgetModal('budgetCreateModal'); document.getElementById('budgetSaveBtn').onclick=saveBudgetEditor; document.getElementById('budgetSaveAsTemplateBtn').onclick=openSaveCurrentBudgetAsTemplate;
+    document.querySelectorAll('[data-editor-step]').forEach((button)=>{button.onclick=()=>setBudgetEditorStep(button.dataset.editorStep);});
+    document.getElementById('budgetEditorPrevBtn').onclick=()=>setBudgetEditorStep(budgetEditorStep-1);
+    document.getElementById('budgetEditorNextBtn').onclick=()=>setBudgetEditorStep(budgetEditorStep+1);
     document.getElementById('budgetLoadTemplateBtn').onclick=()=>{const t=templates().find(x=>String(x.id)===String(document.getElementById('budgetTemplateSelect').value));if(t)loadTemplateIntoBudget(t);};
     document.getElementById('addBudgetOptionBtn').onclick=()=>{syncOptionHeader();syncAdjustmentsFromUi();const o=newOption(`Opção ${budgetOptionsDraft.length+1}`);budgetOptionsDraft.push(o);activeBudgetOptionId=o.id;renderOptionTabs();renderBudgetItems();};
     document.getElementById('duplicateBudgetOptionBtn').onclick=()=>{syncOptionHeader();syncAdjustmentsFromUi();const o=activeOption();if(!o)return;const c=clone(o);c.id=uuid();c.name=`${o.name} (cópia)`;c.recommended=false;c.items=c.items.map(x=>({...x,id:uuid()}));budgetOptionsDraft.push(c);activeBudgetOptionId=c.id;renderOptionTabs();renderBudgetItems();};
@@ -917,6 +1180,7 @@ function bindEvents(){
     document.getElementById('deleteTemplateBtn').onclick=()=>{if(!editingTemplateId)return;const id=editingTemplateId;const t=templates().find(x=>String(x.id)===String(id));openBudgetConfirm({title:'Excluir modelo',message:`Excluir o modelo \"${t?.name||'selecionado'}\"? Orçamentos já criados não serão alterados.`,confirmText:'Excluir modelo',danger:true,onConfirm:async()=>{try{await api(`/api/budget-templates/${encodeURIComponent(id)}`,{method:'DELETE'});window.appData.budgetTemplates=templates().filter(x=>String(x.id)!==String(id));resetTemplateEditor();showToast('Modelo excluído.','success');}catch(e){showToast(e.message,'error');}}});};
     document.getElementById('duplicateTemplateBtn').onclick=async()=>{if(!editingTemplateId)return;try{const data=await api(`/api/budget-templates/${encodeURIComponent(editingTemplateId)}/duplicate`,{method:'POST',body:JSON.stringify({})});upsert('budgetTemplates',data.template);loadTemplateEditor(data.template);showToast('Modelo duplicado.','success');}catch(e){showToast(e.message,'error');}};
     document.getElementById('closeConvertBtn').onclick=()=>closeBudgetModal('budgetConvertModal'); document.getElementById('cancelConvertBtn').onclick=()=>closeBudgetModal('budgetConvertModal'); document.getElementById('convertPayment').onchange=toggleCashReceived; document.getElementById('confirmConvertBtn').onclick=confirmConvert;
+    document.getElementById('closeQuickStatusBtn').onclick=closeQuickStatusModal; document.getElementById('cancelQuickStatusBtn').onclick=closeQuickStatusModal; document.getElementById('confirmQuickStatusBtn').onclick=confirmQuickRejection;
     document.getElementById('closeDuplicateBtn').onclick=()=>{duplicateBudgetId='';closeBudgetModal('budgetDuplicateModal');}; document.getElementById('cancelDuplicateBtn').onclick=()=>{duplicateBudgetId='';closeBudgetModal('budgetDuplicateModal');}; document.getElementById('confirmDuplicateBtn').onclick=executeDuplicateBudget;
     document.getElementById('closeSaveTemplateBtn').onclick=()=>closeBudgetModal('budgetSaveTemplateModal'); document.getElementById('cancelSaveTemplateBtn').onclick=()=>closeBudgetModal('budgetSaveTemplateModal'); document.getElementById('confirmSaveTemplateBtn').onclick=saveCurrentBudgetAsTemplate;
     const cancelConfirm=()=>{pendingBudgetConfirm=null;closeBudgetModal('budgetConfirmModal');}; document.getElementById('closeBudgetConfirmBtn').onclick=cancelConfirm; document.getElementById('cancelBudgetConfirmBtn').onclick=cancelConfirm; document.getElementById('confirmBudgetConfirmBtn').onclick=async()=>{const action=pendingBudgetConfirm;pendingBudgetConfirm=null;closeBudgetModal('budgetConfirmModal');if(action){try{await action();}catch(e){console.error(e);showToast(e.message||'Erro na operação.','error');}}};
@@ -925,7 +1189,7 @@ function bindEvents(){
     bindAutocompleteInput('budgetCustomerSearch','budgetCustomerResults','customer'); bindAutocompleteInput('budgetProductSearch','budgetProductResults','budget'); bindAutocompleteInput('templateProductSearch','templateProductResults','template');
     document.addEventListener('click',(e)=>{[['budgetCustomerAcWrap','budgetCustomerResults'],['budgetProductAcWrap','budgetProductResults'],['templateProductAcWrap','templateProductResults']].forEach(([wrap,list])=>{const w=document.getElementById(wrap);if(w&&!w.contains(e.target))document.getElementById(list).hidden=true;});});
     document.addEventListener('keydown',(e)=>{if(e.key==='Escape'&&document.querySelector('.budget-modal-overlay.open')){e.preventDefault();closeTopBudgetModal();return;}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'&&document.getElementById('budgetCreateModal').classList.contains('open')){e.preventDefault();saveBudgetEditor();}});
-    ['budgetConvertModal','budgetTemplateModal','budgetDuplicateModal','budgetSaveTemplateModal','budgetConfirmModal'].forEach(id=>document.getElementById(id)?.addEventListener('click',(e)=>{if(e.target.id===id)closeBudgetModal(id);}));
+    ['budgetConvertModal','budgetTemplateModal','budgetDuplicateModal','budgetSaveTemplateModal','budgetConfirmModal','budgetQuickStatusModal'].forEach(id=>document.getElementById(id)?.addEventListener('click',(e)=>{if(e.target.id===id)closeBudgetModal(id);}));
 }
 
 function initBudgetsPage(){

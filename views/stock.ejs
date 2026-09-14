@@ -13,61 +13,82 @@
   }
 %>
 <div class="page" id="page-estoque">
-  <div class="catalog-page-head mb-16">
+  <header class="catalog-hero card">
     <div>
+      <p class="catalog-kicker">Gestão administrativa</p>
       <h2 class="catalog-page-title">Catálogo</h2>
-      <p class="text-sm text-muted">Produtos físicos, serviços com custo de peças e itens para o PDV.</p>
+      <p class="text-sm text-muted">Produtos controlam estoque. Serviços controlam duração, mão de obra e materiais — sem misturar os dois fluxos.</p>
     </div>
-  </div>
-  <div class="flex flex-between flex-wrap gap-12 mb-16">
-    <div class="search-bar" style="flex:1;max-width:380px;">
+    <div class="catalog-hero-actions">
+      <button type="button" class="btn btn-ghost" onclick="exportCatalogJson()">↓ Exportar JSON</button>
+      <button class="btn btn-ghost" type="button" onclick="openStockAddProductModal('service')">+ Novo serviço</button>
+      <button class="btn btn-primary" type="button" onclick="openStockAddProductModal('product')">+ Novo produto</button>
+    </div>
+  </header>
+
+  <div class="catalog-kpis" id="catalogKpis"></div>
+
+  <section class="card catalog-toolbar">
+    <div class="search-bar catalog-search">
       <span>🔍</span>
       <input type="text" placeholder="Pesquisar nome, SKU, categoria..." id="stockSearch" oninput="filterStock(this.value)">
     </div>
-    <div class="filter-bar">
+    <div class="filter-bar catalog-type-tabs" aria-label="Tipo de item">
       <button class="filter-btn active" data-stock-type-filter="todos" onclick="setStockTypeFilter('todos',this)">Todos</button>
       <button class="filter-btn" data-stock-type-filter="product" onclick="setStockTypeFilter('product',this)">📦 Produtos</button>
       <button class="filter-btn" data-stock-type-filter="service" onclick="setStockTypeFilter('service',this)">🔧 Serviços</button>
-      <button class="filter-btn" onclick="setStockFilter('baixo',this)">⚠️ Crítico</button>
-      <button class="filter-btn" onclick="setStockFilter('normal',this)">✅ Normal</button>
     </div>
-    <button class="btn btn-primary" onclick="openStockAddProductModal()">+ Novo no catálogo</button>
-  </div>
+    <label class="catalog-filter-field"><span>Situação</span><select class="form-select" id="catalogStatusFilter"><option value="all">Todos</option><option value="active">Ativos</option><option value="inactive">Inativos</option><option value="critical">Estoque crítico</option></select></label>
+    <label class="catalog-filter-field"><span>Categoria</span><select class="form-select" id="catalogCategoryFilter"><option value="all">Todas</option></select></label>
+  </section>
 
-  <div class="card">
+  <section class="card catalog-group" id="catalogProductsSection">
     <div class="card-header">
       <div>
-        <div class="card-title">Produtos e serviços</div>
-        <div class="card-subtitle" id="stockCount">Carregando...</div>
+        <div class="catalog-group-title"><span>📦</span><div><div class="card-title">Produtos físicos</div><div class="card-subtitle" id="catalogProductsCount">Carregando...</div></div></div>
       </div>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="exportStockExcel()">📥 Exportar Excel</button>
+      <button class="btn btn-primary btn-sm" type="button" onclick="openStockAddProductModal('product')">+ Produto</button>
     </div>
     <div class="table-wrap">
-      <table>
+      <table class="catalog-table">
         <thead>
           <tr>
             <th>SKU</th>
-            <th>Item</th>
-            <th>Tipo</th>
+            <th>Produto</th>
             <th>Categoria</th>
-            <th>Qtd. Atual</th>
-            <th>Mín.</th>
-            <th>Preço Custo</th>
-            <th>Preço Venda</th>
+            <th>Estoque</th>
+            <th>Mínimo</th>
+            <th>Custo</th>
+            <th>Venda</th>
+            <th>Margem</th>
             <th>Status</th>
             <th>Ações</th>
           </tr>
         </thead>
-        <tbody id="stockTable"></tbody>
+        <tbody id="catalogProductsTable"></tbody>
       </table>
     </div>
-  </div>
+  </section>
+
+  <section class="card catalog-group catalog-services-group" id="catalogServicesSection">
+    <div class="card-header">
+      <div class="catalog-group-title"><span>🔧</span><div><div class="card-title">Serviços</div><div class="card-subtitle" id="catalogServicesCount">Carregando...</div></div></div>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="openStockAddProductModal('service')">+ Serviço</button>
+    </div>
+    <div class="table-wrap">
+      <table class="catalog-table">
+        <thead><tr><th>Código</th><th>Serviço</th><th>Categoria</th><th>Duração</th><th>Mão de obra</th><th>Materiais</th><th>Custo total</th><th>Venda</th><th>Status</th><th>Ações</th></tr></thead>
+        <tbody id="catalogServicesTable"></tbody>
+      </table>
+    </div>
+  </section>
+  <div class="catalog-result-count" id="stockCount" aria-live="polite"></div>
 </div>
 
 <div class="modal-overlay" id="modal-addProduct">
   <div class="modal modal-catalog">
     <div class="modal-header">
-      <div class="modal-title">+ Cadastrar no catálogo</div>
+      <div><div class="modal-title" id="catalogCreateTitle">Novo produto</div><div class="catalog-modal-subtitle" id="catalogCreateSubtitle">Cadastre um item físico com controle de estoque.</div></div>
       <button class="modal-close" onclick="closeModal('addProduct')">✕</button>
     </div>
     <div class="form-grid">
@@ -79,7 +100,7 @@
         </div>
       </div>
       <div class="form-group form-full">
-        <label class="form-label">SKU</label>
+        <label class="form-label" id="newSkuLabel">SKU / código de barras</label>
         <div class="form-readonly-hint mono" id="newSkuHint">Gerado automaticamente (8 dígitos, ideal para código de barras).</div>
       </div>
       <div class="form-group">
@@ -95,7 +116,7 @@
         </select>
       </div>
       <div class="form-group form-full">
-        <label class="form-label">Foto do produto</label>
+        <label class="form-label" id="newImageLabel">Foto do produto</label>
         <input type="file" id="newProductImage" class="form-input" accept="image/jpeg,image/png,image/gif,image/webp">
         <div class="stock-img-preview-wrap" id="newImagePreviewWrap">
           <img id="newImagePreview" class="stock-img-preview is-empty" alt="Pré-visualização">
@@ -135,7 +156,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('addProduct')">Cancelar</button>
-      <button class="btn btn-primary" onclick="addProduct()">Salvar</button>
+      <button class="btn btn-primary" id="catalogCreateSubmitBtn" onclick="addProduct()">Salvar produto</button>
     </div>
   </div>
 </div>
@@ -143,7 +164,7 @@
 <div class="modal-overlay" id="modal-editProduct">
   <div class="modal modal-catalog">
     <div class="modal-header">
-      <div class="modal-title">✏️ Editar item</div>
+      <div><div class="modal-title" id="catalogEditTitle">Editar item</div><div class="catalog-modal-subtitle" id="catalogEditSubtitle"></div></div>
       <button class="modal-close" onclick="closeModal('editProduct')">✕</button>
     </div>
     <div class="form-grid">
@@ -211,9 +232,17 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-danger" onclick="deleteProductModal()">🗑️ Excluir</button>
+      <button class="btn btn-ghost" id="catalogToggleActiveBtn" type="button">Desativar</button>
       <button class="btn btn-ghost" onclick="closeModal('editProduct')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveEditProduct()">Salvar alterações</button>
     </div>
   </div>
 </div>
 
+<div class="modal-overlay" id="modal-catalogConfirm">
+  <div class="modal catalog-confirm-modal">
+    <div class="modal-header"><div class="modal-title" id="catalogConfirmTitle">Confirmar ação</div><button class="modal-close" type="button" id="closeCatalogConfirmBtn">✕</button></div>
+    <p class="catalog-confirm-message" id="catalogConfirmMessage"></p>
+    <div class="modal-footer"><button class="btn btn-ghost" type="button" id="cancelCatalogConfirmBtn">Cancelar</button><button class="btn btn-danger" type="button" id="confirmCatalogActionBtn">Confirmar</button></div>
+  </div>
+</div>

@@ -1,5 +1,10 @@
 <div class="page" id="page-relatorios">
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;">
+  <header class="analytics-hero card">
+    <div><span class="analytics-kicker">Gestão baseada em dados</span><h2>Desempenho real da operação</h2><p>Receita, margem, produtos e meios de pagamento calculados a partir das vendas registradas.</p></div>
+    <label class="analytics-period"><span>Período</span><select class="form-select" id="reportPeriod"><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="365">Último ano</option><option value="all">Todo o histórico</option></select></label>
+  </header>
+  <div class="analytics-kpis" id="analyticsKpis"></div>
+  <div class="report-grid">
     <div class="card">
       <div class="card-header">
         <div class="card-title">📊 Vendas por Categoria</div>
@@ -8,7 +13,7 @@
     </div>
     <div class="card">
       <div class="card-header">
-        <div class="card-title">🏆 Produtos Mais Vendidos</div>
+        <div class="card-title">🏆 Itens mais vendidos</div>
       </div>
       <div id="reportTopProducts" class="flex-col gap-10"></div>
     </div>
