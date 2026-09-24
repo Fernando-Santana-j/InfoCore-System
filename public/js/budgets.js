@@ -19,8 +19,15 @@ let budgetRefreshInFlight = false;
 let budgetListRevision = '';
 let budgetEditorStep = 1;
 let quickStatusBudgetId = '';
+let budgetListSection = 'active';
+function budgetSection(budget) {
+    if (['completed', 'converted'].includes(budget.status)) return 'completed';
+    if (['archived', 'cancelled', 'rejected', 'expired'].includes(budget.status)) return 'archived';
+    return 'active';
+}
 
 const BUDGET_STATUS_LABELS = {
+    completed: 'Concluído', archived: 'Arquivado',
     draft: 'Rascunho', sent: 'Enviado', awaiting: 'Aguardando cliente', approved: 'Aprovado',
     rejected: 'Recusado', expired: 'Expirado', cancelled: 'Cancelado', acquiring_parts: 'Peças em aquisição', converted: 'Convertido em venda'
 };
@@ -73,6 +80,8 @@ function syncBudgetModalLock() {
 function openBudgetModal(id) {
     const modal = document.getElementById(id);
     if (!modal) return;
+    // Keep fixed dialogs outside animated/transformed content containers.
+    if (modal.parentElement !== document.body) document.body.appendChild(modal);
     modal.hidden = false;
     modal.setAttribute('aria-hidden', 'false');
     modal.classList.add('open');
@@ -814,7 +823,7 @@ function selectedBudgetOption(b) {
 }
 
 function budgetStatusOptions(current) {
-    const statuses = ['draft', 'sent', 'awaiting', 'approved', 'acquiring_parts', 'rejected', 'expired', 'cancelled'];
+    const statuses = ['draft', 'sent', 'awaiting', 'approved', 'acquiring_parts', 'completed', 'archived', 'rejected', 'expired', 'cancelled'];
     return statuses.map((status) => `<option value="${status}"${status === current ? ' selected' : ''}>${esc(statusLabel(status))}</option>`).join('');
 }
 
@@ -858,7 +867,11 @@ function renderBudgetCard(b) {
                 <div class="budget-card-client">${esc(b.customerName || 'Sem cliente')}</div>
                 ${customerContact ? `<div class="budget-card-contact">${esc(customerContact)}</div>` : ''}
             </div>
-            ${statusControl}
+            <div class="budget-status-actions">
+                ${statusControl}
+                ${!converted ? `<button type="button" class="btn btn-sm budget-complete-btn" data-budget-set-status="completed" data-id="${esc(b.id)}"${b.status === 'completed' ? ' disabled' : ''}>Concluir</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-budget-set-status="archived" data-id="${esc(b.id)}"${b.status === 'archived' ? ' disabled' : ''}>Arquivar</button>` : ''}
+            </div>
         </header>
         <div class="budget-card-meta" aria-label="Informações do orçamento">
             <span><small>Origem</small>${esc(sourceLabel(b.source))}</span>
@@ -902,8 +915,21 @@ function renderBudgetCard(b) {
 }
 
 function renderBudgetCards() {
-    const all = budgets();
-    const list = filteredBudgets();
+    const all = budgets().filter((b) => budgetSection(b) === budgetListSection);
+    const list = filteredBudgets().filter((b) => budgetSection(b) === budgetListSection);
+    document.querySelectorAll('#budgetStatusFilter option').forEach((option) => {
+        option.hidden = Boolean(option.value) && budgetSection({ status: option.value }) !== budgetListSection;
+    });
+    document.querySelectorAll('[data-budget-section]').forEach((button) => {
+        const section = button.dataset.budgetSection;
+        button.setAttribute('aria-pressed', String(section === budgetListSection));
+        button.querySelector('span').textContent = budgets().filter((b) => budgetSection(b) === section).length;
+        button.onclick = () => {
+            budgetListSection = section;
+            document.getElementById('budgetStatusFilter').value = '';
+            renderBudgetCards();
+        };
+    });
     const hasFilters = budgetFiltersActive();
     const element = document.getElementById('budgetsGrid');
     const clearButton = document.getElementById('clearBudgetFiltersBtn');
@@ -912,7 +938,7 @@ function renderBudgetCards() {
     if (!list.length) {
         element.innerHTML = all.length && hasFilters
             ? '<div class="empty-state">Nenhum orçamento corresponde aos filtros.<br><button class="btn btn-ghost btn-sm" type="button" data-clear-budget-filters>Limpar filtros</button></div>'
-            : '<div class="empty-state">Nenhum orçamento cadastrado.</div>';
+            : '<div class="empty-state">Nenhum orçamento nesta seção.</div>';
         element.querySelector('[data-clear-budget-filters]')?.addEventListener('click', clearBudgetFilters);
         return;
     }
@@ -923,12 +949,18 @@ function renderBudgetCards() {
     element.querySelectorAll('[data-budget-status]').forEach((select) => {
         select.onchange = () => handleQuickBudgetStatus(select);
     });
+    element.querySelectorAll('[data-budget-set-status]').forEach((button) => {
+        button.onclick = () => changeBudgetStatus(button.dataset.id, button.dataset.budgetSetStatus);
+    });
 }
 function renderAll(){renderKpis();renderInsights();renderBudgetCards();renderTemplateList();fillTemplateSelect();}
 
 async function changeBudgetStatus(id, status, details = {}) {
     const select = [...document.querySelectorAll('[data-budget-status]')].find((row) => String(row.dataset.id) === String(id));
     if (select) select.disabled = true;
+    document.querySelectorAll('[data-budget-set-status]').forEach((button) => {
+        if (String(button.dataset.id) === String(id)) button.disabled = true;
+    });
     try {
         const data = await api(`/api/budgets/${encodeURIComponent(id)}/status`, {
             method: 'PATCH',

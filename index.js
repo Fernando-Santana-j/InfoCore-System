@@ -4,6 +4,7 @@ const express = require('express')
 const fs = require('fs');
 const bodyParser = require('body-parser');
 const session = require('express-session')
+const { DEFAULT_SESSION_MAX_AGE, configureLoginSession, sessionExpiresAt } = require('./lib/session-policy');
 const path = require('path');
 const multer = require('multer')
 const cookieParser = require("cookie-parser");
@@ -17,6 +18,7 @@ const { randomUUID } = require("crypto");
 const nodemailer = require('nodemailer');
 const compression = require('compression');
 const whatsappClient = require('./lib/whatsapp');
+const { authorizeDevice, readDeviceAuthConfig } = require('./lib/device-auth');
 const { buildServiceReportFiles } = require('./lib/service-report-export');
 const {
     normalizePcDiagnostic,
@@ -25,6 +27,8 @@ const {
 } = require('./lib/pc-diagnostic');
 require('dotenv').config();
 // const config = require('./config/config.json');
+
+const deviceAuthConfig = readDeviceAuthConfig(process.env);
 
 const PRODUCTS_COLLECTION = 'products';
 const CATALOG_SCHEMA_VERSION = 2;
@@ -2252,8 +2256,7 @@ class FirestoreSessionStore extends session.Store {
     }
 
     set(sid, sess, callback) {
-        const maxAge = Number(sess?.cookie?.maxAge) || 0;
-        const expiresAt = new Date(Date.now() + (maxAge > 0 ? maxAge : 3600000));
+        const expiresAt = sessionExpiresAt(sess);
         let sessionData;
         try {
             sessionData = JSON.parse(JSON.stringify(sess || {}));
@@ -2280,13 +2283,12 @@ class FirestoreSessionStore extends session.Store {
     }
 
     touch(sid, sess, callback) {
-        const maxAge = Number(sess?.cookie?.maxAge) || 0;
-        const expiresAt = new Date(Date.now() + (maxAge > 0 ? maxAge : 3600000));
+        const expiresAt = sessionExpiresAt(sess);
         const key = String(sid);
         const cached = this.cache.get(key);
         if (cached) {
             cached.session = cloneSessionData(sess);
-            cached.expiresAt = expiresAt.getTime();
+            cached.expiresAt = expiresAt ? expiresAt.getTime() : 0;
             cached.cachedAt = Date.now();
             if (cached.lastPersistedAt + SESSION_TOUCH_INTERVAL_MS > Date.now()) {
                 return process.nextTick(() => callback && callback(null));
@@ -2311,7 +2313,7 @@ app.use(session({
     saveUninitialized: false,
     rolling: true,
     cookie: {
-        maxAge: 8 * 60 * 60 * 1000,
+        maxAge: DEFAULT_SESSION_MAX_AGE,
         httpOnly: true,
         sameSite: 'lax',
         secure: isProduction
@@ -2523,6 +2525,9 @@ app.put('/api/public/budgets/:token/response', async (req, res) => {
     const budget = await findBudgetByPublicToken(req.params.token);
     if (!budget) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
     const body = req.body || {};
+    if (['completed', 'archived', 'converted', 'cancelled', 'rejected', 'expired'].includes(budget.status)) {
+        return res.status(409).json({ error: true, message: 'Este orçamento está encerrado. Entre em contato com a loja.' });
+    }
     const option = (budget.options || []).find((o) => String(o.id) === String(body.selectedOptionId || ''));
     if (!option) return res.status(400).json({ error: true, message: 'Selecione uma opção válida.' });
     const validIds = new Set((option.items || []).map((i) => String(i.id)));
@@ -3046,7 +3051,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
             const [configs, products, salesRows, clients] = await Promise.all([
                 configsPromise,
                 loadProductsFromDb(),
-                db.findAll({ colecao: SALES_COLLECTION }).catch(() => []),
+                db.findAll({ colecao: SALES_COLLECTION }),
                 loadCustomersNormalized({ includeSalesStats: false })
             ]);
             const visibleProducts = products.map((product) => productForPdv(product, req.session.user));
@@ -3219,8 +3224,50 @@ app.post('/login', async (req, res) => {
     if (user.pass !== pass) {
         return res.json({ error: true, message: 'Senha incorreta' });
     }
-    req.session.user = publicSessionUser(user);
-    return res.json({ error: false, message: 'Login realizado com sucesso' });
+    try {
+        await new Promise((resolve, reject) => {
+            req.session.regenerate((error) => error ? reject(error) : resolve());
+        });
+        configureLoginSession(req.session, publicSessionUser(user), req.body?.remember);
+        await new Promise((resolve, reject) => {
+            req.session.save((error) => error ? reject(error) : resolve());
+        });
+        return res.json({ error: false, message: 'Login realizado com sucesso' });
+    } catch (error) {
+        console.error('Erro ao salvar sessão de login:', error);
+        return res.status(500).json({ error: true, message: 'Não foi possível manter o login. Tente novamente.' });
+    }
+});
+
+app.get('/auth/device', async (req, res) => {
+    if (!deviceAuthConfig) {
+        return res.status(404).json({ error: true, message: 'Login de dispositivo não configurado.' });
+    }
+    if (!authorizeDevice(req.get('authorization'), deviceAuthConfig.token)) {
+        return res.status(401).json({ error: true, message: 'Token de dispositivo inválido.' });
+    }
+
+    try {
+        const user = await db.findOne({
+            colecao: 'users',
+            where: ['email', '==', deviceAuthConfig.userEmail]
+        });
+        if (!user || user.error) {
+            return res.status(503).json({ error: true, message: 'Usuário do dispositivo não encontrado.' });
+        }
+
+        await new Promise((resolve, reject) => {
+            req.session.regenerate((error) => error ? reject(error) : resolve());
+        });
+        req.session.user = publicSessionUser(user);
+        await new Promise((resolve, reject) => {
+            req.session.save((error) => error ? reject(error) : resolve());
+        });
+        return res.redirect('/pdv');
+    } catch (error) {
+        console.error('Login automático do dispositivo:', error);
+        return res.status(500).json({ error: true, message: 'Não foi possível autenticar o dispositivo.' });
+    }
 });
 
 app.post('/logout', verifyLogin, (req, res) => {

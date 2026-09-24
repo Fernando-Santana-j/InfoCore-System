@@ -98,6 +98,8 @@
 }
 
 .stat-value {
+    overflow-wrap: anywhere;
+    color: var(--text);
     font-size: 1.9rem;
     font-weight: 800;
     letter-spacing: -1px;
@@ -265,9 +267,14 @@
     margin-left: 10px;
 }
 .sales-payment-icon{
+    display: inline-flex;
+    flex: 0 0 1.5rem;
     width: 1.5rem;
     height: 1.5rem;
 }
+.payment-icon svg,.sales-payment-icon svg{width:100%;height:100%;display:block}
+.stats-grid>*,.grid-dashboard>*{min-width:0}
+@media(max-width:480px){.stats-grid{grid-template-columns:1fr}.alert-banner{flex-wrap:wrap}.stat-value{font-size:1.65rem}}
 .sales-payment-content{
     display: flex;
     align-items: center;

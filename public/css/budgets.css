@@ -44,7 +44,14 @@ body.budget-modal-open{overflow:hidden}
 .budget-modal-overlay .small-modal-card{width:min(540px,94vw)!important}.budget-modal-overlay .confirm-modal-card{width:min(470px,94vw)!important}.budget-modal-overlay .pdv-budget-template-card{width:min(960px,96vw)!important;max-width:960px!important}.budget-modal-overlay .pdv-budget-template-preview{background:#fff;color:#111827;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px;overflow:auto;max-height:68vh;min-height:200px}.budget-modal-overlay .pdv-budget-template-actions{display:flex;gap:8px;flex-wrap:wrap}
 
 /* ---------- Editor ---------- */
-.budget-editor-card{width:min(1180px,96vw)!important;max-width:1180px!important;height:min(92vh,920px)}.budget-editor-body{gap:12px}.budget-editor-footer{flex-shrink:0}
+.budget-editor-card{width:min(1180px,100%)!important;max-width:1180px!important;height:auto}.budget-editor-body{gap:12px;flex:1 1 auto}.budget-editor-footer{flex-shrink:0}
+.budget-editor-body>.budget-section{flex-shrink:0;min-width:0}
+.budget-list-sections{display:flex;gap:8px;flex-wrap:wrap;padding:6px;border:1px solid var(--border);border-radius:14px;background:var(--bg2)}
+.budget-list-sections button{display:flex;align-items:center;justify-content:center;gap:10px;flex:1;padding:12px 16px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--text2);font:inherit;font-size:.82rem;font-weight:700;cursor:pointer}
+.budget-list-sections button[aria-pressed="true"]{background:var(--gold-glow);border-color:var(--gold);color:var(--gold)}
+.budget-list-sections button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.budget-list-sections span{padding:2px 8px;border-radius:20px;background:rgba(255,255,255,.06);font-size:.72rem}
+.status-completed{color:var(--green)}.status-archived{color:var(--text3)}
 .budget-section{border:1px solid var(--border);border-radius:13px;padding:14px;display:flex;flex-direction:column;gap:11px;background:linear-gradient(165deg,rgba(255,255,255,.025),rgba(255,255,255,.008))}.section-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}.section-title-row strong{font-size:.91rem}.budget-section-actions,.budget-inline-row,.budget-add-actions,.template-editor-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.budget-inline-row{align-items:flex-end}.budget-inline-row>*:first-child{flex:1}.budget-inline-action{margin-bottom:1px;flex:0 0 auto}
 .budget-field{display:flex;flex-direction:column;gap:5px;min-width:0}.budget-field>span{font-size:.69rem;line-height:1.25;color:var(--text2);font-weight:700;letter-spacing:.015em}.budget-field-grow{flex:1}.budget-form-grid{display:grid;gap:9px}.budget-form-grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.budget-form-grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.budget-form-grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.compact-field{display:flex;flex-direction:column;gap:4px;font-size:.7rem;color:var(--text2)}
 .budget-check{display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--text2);cursor:pointer}.budget-check input{width:auto;flex:0 0 auto}.budget-check-card{padding:9px 11px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.018)}.budget-check-card:hover{border-color:var(--border2);background:rgba(255,255,255,.03)}.budget-check-inline{align-self:flex-start}.budget-check-danger{border-color:rgba(244,63,94,.22);background:rgba(244,63,94,.045)}
@@ -136,7 +143,13 @@ body.budget-modal-open{overflow:hidden}
 .budget-card-item{position:relative;gap:0;padding:0;border-radius:17px;background:linear-gradient(155deg,rgba(255,255,255,.035),rgba(255,255,255,.012));box-shadow:0 10px 28px rgba(0,0,0,.08);transition:border-color .18s ease,transform .18s ease,box-shadow .18s ease}
 .budget-card-item:hover{border-color:var(--border2);transform:translateY(-1px);box-shadow:0 15px 34px rgba(0,0,0,.14)}
 .budget-card-item.has-customer-reply{box-shadow:inset 3px 0 #48d597,0 10px 28px rgba(0,0,0,.08)}
-.budget-card-head{align-items:center;padding:18px 18px 15px}
+.budget-card-head{align-items:center;padding:18px 18px 15px;flex-wrap:wrap}
+.budget-status-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:100%}
+.budget-status-actions .btn{min-height:34px;white-space:nowrap}
+.budget-status-actions .budget-quick-status{width:auto;min-width:140px;flex:1 1 140px}
+.budget-complete-btn{color:var(--green);background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3)}
+.budget-complete-btn:hover:not(:disabled){background:rgba(34,197,94,.2)}
+.budget-status-actions .btn:disabled{opacity:.45;cursor:default}
 .budget-card-identity{display:flex;flex-direction:column;gap:2px;min-width:0}
 .budget-card-code{color:var(--gold);font-size:.68rem;letter-spacing:.075em;text-transform:uppercase}
 .budget-card-client{font-size:1.02rem;line-height:1.35}

@@ -140,7 +140,7 @@ test('budget modal controller toggles hidden, aria and body lock', () => {
     setAttribute: (k, v) => attrs.set(k, String(v)),
     getAttribute: (k) => attrs.get(k)
   };
-  const body = { classList: makeClassList() };
+  const body = { classList: makeClassList(), appendChild(node) { node.parentElement = this; } };
   const document = {
     readyState: 'loading',
     body,
@@ -163,6 +163,7 @@ test('budget modal controller toggles hidden, aria and body lock', () => {
   };
   vm.runInNewContext(js, context, { filename: 'budgets.js' });
   context.openBudgetModal('budgetCreateModal');
+  assert.equal(modal.parentElement, body);
   assert.equal(modal.hidden, false);
   assert.equal(modal.getAttribute('aria-hidden'), 'false');
   assert.equal(modal.classList.contains('open'), true);
@@ -174,6 +175,20 @@ test('budget modal controller toggles hidden, aria and body lock', () => {
   assert.equal(body.classList.contains('budget-modal-open'), false);
 });
 
+test('budget sections remove closed quotes from active work and allow reopening', () => {
+  const vm = require('node:vm');
+  const context = {};
+  vm.runInNewContext(readFunction(read('public/js/budgets.js'), 'budgetSection'), context);
+  for (const status of ['draft', 'sent', 'awaiting', 'approved', 'acquiring_parts']) {
+    assert.equal(context.budgetSection({ status }), 'active');
+  }
+  for (const status of ['completed', 'converted']) assert.equal(context.budgetSection({ status }), 'completed');
+  for (const status of ['archived', 'rejected', 'expired', 'cancelled']) assert.equal(context.budgetSection({ status }), 'archived');
+  const budget = { status: 'archived' };
+  budget.status = 'draft';
+  assert.equal(context.budgetSection(budget), 'active');
+});
+
 test('budget UI avoids native browser confirm/prompt dialogs', () => {
   const js = read('public/js/budgets.js');
   assert.doesNotMatch(js, /\b(?:window\.)?confirm\s*\(/);
@@ -183,8 +198,8 @@ test('budget UI avoids native browser confirm/prompt dialogs', () => {
 
 test('budget assets are cache-busted after modal regression fix', () => {
   const layout = read('views/layout.ejs');
-  assert.match(layout, /\/css\/<%= body %>\.css\?v=15/);
-  assert.match(layout, /\/js\/<%= body %>\.js\?v=19/);
+  assert.ok(Number(layout.match(/\/css\/<%= body %>\.css\?v=(\d+)/)?.[1]) >= 16);
+  assert.ok(Number(layout.match(/\/js\/<%= body %>\.js\?v=(\d+)/)?.[1]) >= 20);
 });
 
 test('budget server forces quote snapshots and conversion only after approval', () => {

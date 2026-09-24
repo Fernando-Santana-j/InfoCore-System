@@ -10,7 +10,7 @@ const Dashboard = (() => {
         if (!domCache.has(id)) domCache.set(id, document.getElementById(id));
         return domCache.get(id);
     };
-    const fmt = (v) => typeof window.formatCurrency === 'function' ? window.formatCurrency(v || 0) : `R$ ${(v || 0).toLocaleString('pt-BR')}`;
+    const fmt = (v) => typeof window.formatCurrency === 'function' ? window.formatCurrency(asNumber(v)) : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(asNumber(v));
     const asArray = (value) => Array.isArray(value) ? value : (value && typeof value === 'object' ? Object.values(value) : []);
     const asNumber = (v) => {
         const n = Number(v);
@@ -42,19 +42,30 @@ const Dashboard = (() => {
             cartao_credito: 'credit_card',
             cartao_debito: 'debit_card'
         };
-        return map[payment] || 'money';
+        return map[payment] || String(payment || 'unknown');
+    };
+    // Local SVGs keep configured markup out of HTML and render consistently.
+    const paymentIcon = (key) => {
+        const paths = {
+            money: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M5 12h1m12 0h1"/>',
+            pix: '<path d="m12 2 10 10-10 10L2 12Z M7 7l5 5 5-5M7 17l5-5 5 5"/>',
+            credit_card: '<rect x="2" y="4" width="20" height="16" rx="3"/><path d="M2 9h20M6 15h4"/>',
+            debit_card: '<rect x="2" y="4" width="20" height="16" rx="3"/><path d="M2 9h20m4 6 2 2 4-4"/>',
+        };
+        return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[key] || paths.credit_card}</svg>`;
     };
     const getPaymentConfig = (paymentKey) => {
         const methods = window.appData?.configs?.payment_methods || {};
         const method = methods[paymentKey];
         if (method) {
             return {
-                icon: method.icon || '💳',
+                icon: paymentIcon(paymentKey),
                 name: method.name || paymentKey,
                 color: method.color || 'var(--border)'
             };
         }
-        return { icon: '💳', name: paymentKey || 'Pagamento', color: 'var(--border)' };
+        const names = { money: 'Dinheiro', credit_card: 'Crédito', debit_card: 'Débito', pix: 'Pix', unknown: 'Não informado' };
+        return { icon: paymentIcon(paymentKey), name: names[paymentKey] || paymentKey, color: 'var(--border)' };
     };
 
     const getData = () => {
@@ -72,7 +83,7 @@ const Dashboard = (() => {
         const totalSales = todaySales.reduce((sum, s) => sum + asNumber(s.total), 0);
         const catalogProducts = products.filter((p) => String(p?.itemType || '').toLowerCase() !== 'service');
         const totalItems = catalogProducts.reduce((sum, p) => sum + asNumber(p.qty), 0);
-        const lowStock = catalogProducts.filter((p) => asNumber(p.qty) < asNumber(p.min)).length;
+        const lowStock = catalogProducts.filter((p) => p.active !== false && p.trackStock !== false && asNumber(p.qty) < asNumber(p.min)).length;
 
         setText('statTotal', fmt(totalSales));
         setText('statSales', String(todaySales.length));
@@ -89,7 +100,7 @@ const Dashboard = (() => {
     };
 
     const parseSaleDate = (sale) => {
-        const raw = String(sale.date || '').trim();
+        const raw = String(sale.date || sale.createdAt || '').trim();
         if (!raw) return null;
         const isoCandidate = raw.replace(' ', 'T');
         const d = new Date(isoCandidate);
@@ -175,14 +186,15 @@ const Dashboard = (() => {
                 totalCount += 1;
             });
         } else {
-            const byProductId = new Map(products.map((p) => [p.id, p]));
+            const byProductId = new Map(products.map((p) => [String(p.id), p]));
             sales.forEach((sale) => {
                 const items = asArray(sale.items);
                 items.forEach((item) => {
-                    const product = byProductId.get(item.id);
+                    const product = byProductId.get(String(item.productId || item.id));
                     const category = item.category || product?.category || 'others';
-                    categorySalesCount[category] = (categorySalesCount[category] || 0) + 1;
-                    totalCount += 1;
+                    const quantity = Math.max(0, asNumber(item.qty ?? 1));
+                    categorySalesCount[category] = (categorySalesCount[category] || 0) + quantity;
+                    totalCount += quantity;
                 });
             });
         }
@@ -208,10 +220,10 @@ const Dashboard = (() => {
       <div>
         <div class="flex-between mb-6">
           <span class="font-bold text-sm">${name}</span>
-          <span class="mono font-bold" style="color: ${color};">${count} venda${count === 1 ? '' : 's'} (${pct}%)</span>
+          <span class="mono font-bold" style="color: ${escapeHtml(color)};">${count} unidade${count === 1 ? '' : 's'} (${pct}%)</span>
         </div>
         <div class="progress-bar">
-          <div class="progress-fill" style="width: ${pct}%; background: ${color};"></div>
+          <div class="progress-fill" style="width: ${pct}%; background: ${escapeHtml(color)};"></div>
         </div>
       </div>
     `;
@@ -230,7 +242,7 @@ const Dashboard = (() => {
 
         const paymentMethods = window.appData?.configs?.payment_methods || {};
         const keys = Object.keys(paymentMethods);
-        const baseKeys = keys.length ? keys : DEFAULT_PAYMENT_KEYS;
+        const baseKeys = [...new Set([...(keys.length ? keys : DEFAULT_PAYMENT_KEYS), ...Object.keys(counts)])];
         const total = sales.length;
 
         container.innerHTML = baseKeys.map((key) => {
@@ -238,8 +250,8 @@ const Dashboard = (() => {
             const count = counts[key] || 0;
             const pct = total > 0 ? Math.round((count / total) * 100) : 0;
             return `
-        <div class="payment-item" style="border-color: ${cfg.color}; border-width: 2px;">
-          <div class="payment-icon">${escapeHtml(cfg.icon)}</div>
+        <div class="payment-item" style="border-color: ${escapeHtml(normalizeCssColor(cfg.color))}; border-width: 2px;">
+          <div class="payment-icon">${cfg.icon}</div>
           <div class="payment-type">${escapeHtml(cfg.name)}</div>
           <div class="payment-count">${count}</div>
           <div class="payment-pct">${pct}%</div>
@@ -252,7 +264,7 @@ const Dashboard = (() => {
         const tbody = getEl('recentSales');
         if (!tbody) return;
 
-        const recent = sales.slice(0, MAX_SALES);
+        const recent = sales.slice().sort((a, b) => (parseSaleDate(b)?.getTime() || 0) - (parseSaleDate(a)?.getTime() || 0)).slice(0, MAX_SALES);
         if (recent.length === 0) {
             tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 40px 20px; color: var(--text3);">📊 Nenhuma venda registrada</td></tr>`;
             return;
@@ -260,7 +272,7 @@ const Dashboard = (() => {
 
         tbody.innerHTML = recent.map((sale) => {
             const paymentCfg = getPaymentConfig(normalizePaymentKey(sale.payment));
-            const itemCount = asArray(sale.items).length;
+            const itemCount = asArray(sale.items).reduce((sum, item) => sum + Math.max(0, asNumber(item.qty ?? 1)), 0);
             const parsedDate = parseSaleDate(sale);
             const hour = parsedDate ? parsedDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
             return `
@@ -269,7 +281,7 @@ const Dashboard = (() => {
           <td class="font-bold">${escapeHtml(sale.client || 'Balcão')}</td>
           <td class="text-muted">${itemCount} ${itemCount === 1 ? 'item' : 'itens'}</td>
           <td class="mono text-gold font-bold">${fmt(sale.total)}</td>
-          <td class="sales-payment-content"><span class="sales-payment-icon" style="margin-right: 4px;">${escapeHtml(paymentCfg.icon)}</span>${escapeHtml(paymentCfg.name)}</td>
+          <td><span class="sales-payment-content"><span class="sales-payment-icon">${paymentCfg.icon}</span>${escapeHtml(paymentCfg.name)}</span></td>
           <td class="text-muted mono">${hour}</td>
           <td><span class="tag green">✓ Pago</span></td>
         </tr>

@@ -4,6 +4,13 @@ const d = require('../lib/budget-domain');
 
 test('legacy finalized normalizes to sent', () => assert.equal(d.normalizeStatus('finalized'), 'sent'));
 test('unknown status normalizes to draft', () => assert.equal(d.normalizeStatus('x'), 'draft'));
+test('completed and archived budgets persist without expiring', () => {
+  for (const status of ['completed', 'archived']) {
+    assert.equal(d.normalizeStatus(status), status);
+    assert.equal(d.effectiveStatus(status, '2020-01-01', '2026-09-24'), status);
+    assert.notEqual(d.statusLabel(status), 'Rascunho');
+  }
+});
 test('validity cannot be before emission', () => assert.equal(d.validateDates('2026-08-29','2026-08-28').error, true));
 test('default validity can be computed', () => assert.equal(d.addDaysIso('2026-08-29',7), '2026-09-05'));
 test('fixed discount and extra are computed in cents', () => {

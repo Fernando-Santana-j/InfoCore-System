@@ -45,7 +45,7 @@ if (loginForm && submitBtn) {
             const response = await fetch("/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, pass })
+                body: JSON.stringify({ email, pass, remember: rememberField?.checked === true })
             });
 
             const session = await response.json().catch(() => ({}));

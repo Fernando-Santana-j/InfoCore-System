@@ -29,10 +29,16 @@
     </div>
   </details>
 
+  <nav class="budget-list-sections" aria-label="Seções dos orçamentos">
+    <button type="button" data-budget-section="active" aria-pressed="true">Em andamento <span>0</span></button>
+    <button type="button" data-budget-section="completed" aria-pressed="false">Concluídos <span>0</span></button>
+    <button type="button" data-budget-section="archived" aria-pressed="false">Arquivados <span>0</span></button>
+  </nav>
   <div class="card budget-filter-card">
     <label class="budget-filter-field budget-filter-search"><span>Buscar</span><input class="form-input" id="budgetSearchInput" placeholder="Código, cliente ou item..."></label>
     <label class="budget-filter-field"><span>Estado</span><select class="form-input" id="budgetStatusFilter">
       <option value="">Todos os status</option>
+      <option value="completed">Concluído</option><option value="archived">Arquivado</option>
       <option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="awaiting">Aguardando cliente</option>
       <option value="approved">Aprovado</option><option value="acquiring_parts">Peças em aquisição</option><option value="rejected">Recusado</option>
       <option value="expired">Expirado</option><option value="cancelled">Cancelado</option><option value="converted">Convertido em venda</option>
@@ -102,6 +108,7 @@
             <option value="whatsapp">WhatsApp</option><option value="facebook">Facebook</option><option value="other">Outro</option>
           </select></label>
           <label class="budget-field"><span>Status</span><select class="form-input" id="budgetStatus">
+            <option value="completed">Concluído</option><option value="archived">Arquivado</option>
             <option value="draft">Rascunho</option><option value="sent">Enviado</option><option value="awaiting">Aguardando cliente</option>
             <option value="approved">Aprovado</option><option value="acquiring_parts">Peças em aquisição</option><option value="rejected">Recusado</option>
             <option value="expired">Expirado</option><option value="cancelled">Cancelado</option>
