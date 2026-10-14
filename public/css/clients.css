@@ -455,3 +455,32 @@
     color: var(--gold);
     font-weight: 700;
 }
+
+.interest-panel { margin:0 0 22px; padding:24px; }
+.interest-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; }
+.interest-heading h3 { margin:0 0 8px; }
+.interest-filters { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr); gap:14px; margin:18px 0; }
+.interest-filters label,.interest-dialog label { display:grid; gap:7px; font-size:.85rem; color:var(--text2); min-width:0; }
+.interest-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:12px; max-height:520px; overflow-y:auto; }
+.interest-card { display:flex; flex-direction:column; gap:10px; padding:18px; border:1px solid var(--border); border-radius:14px; background:var(--bg2); min-width:0; overflow-wrap:anywhere; }
+.interest-card p { white-space:pre-wrap; margin:0; font-size:.85rem; line-height:1.5; }
+.interest-card small { color:var(--text2); }
+.interest-badge { padding:5px 8px; background:var(--gold-bg); color:var(--gold); border-radius:7px; font-size:.72rem; }
+.interest-client { border:0; padding:0; background:transparent; color:var(--gold); cursor:pointer; font:inherit; text-align:left; align-self:flex-start; text-decoration:underline; text-underline-offset:3px; }
+.interest-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:auto; }
+.interest-budget { font-weight:700; }
+.interest-empty { padding:24px; color:var(--text2); text-align:center; grid-column:1/-1; }
+.interest-empty p { line-height:1.6; }
+.interest-dialog { color:var(--text); background:var(--bg2); border:1px solid var(--border); border-radius:18px; width:min(600px,calc(100vw - 28px)); max-height:calc(100dvh - 28px); padding:24px; margin:auto; overflow:auto; }
+.interest-dialog::backdrop { background:#0009; backdrop-filter:blur(4px); }
+.interest-dialog form { display:grid; gap:16px; }
+.interest-dialog .interest-filters { margin:0; }
+.interest-dialog .form-input { width:100%; min-width:0; }
+.interest-dialog footer { justify-content:flex-end; }
+@media(max-width:600px) {
+ .interest-panel { padding:16px; }
+ .interest-filters { grid-template-columns:1fr; }
+ .interest-dialog { padding:18px; }
+ .interest-dialog .form-input,.interest-filters .form-input { font-size:16px; }
+ .interest-actions .btn { min-height:44px; flex:1; }
+}

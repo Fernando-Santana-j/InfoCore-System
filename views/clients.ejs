@@ -3,7 +3,7 @@
     <div class="crm-hero-copy">
       <p class="crm-kicker">Relacionamento · Atendimento</p>
       <h2 class="crm-title">Clientes CRM</h2>
-      <p class="crm-subtitle">Cadastre dados, observações internas e acompanhe requisitos que cada cliente solicitou.</p>
+      <p class="crm-subtitle">Guarde contatos, acompanhe atendimentos e encontre quem está procurando um produto.</p>
     </div>
     <div class="crm-hero-actions">
       <div class="search-bar search-bar--stretch">
@@ -13,6 +13,12 @@
       <button class="btn btn-primary" type="button" onclick="openNewCustomerForm()"><span aria-hidden="true">✨</span> Novo cliente</button>
     </div>
   </div>
+
+  <section class="card interest-panel" aria-labelledby="interestPanelTitle">
+    <div class="interest-heading"><div><p class="crm-kicker">Oportunidades de venda</p><h3 id="interestPanelTitle">Produtos procurados</h3><p class="crm-subtitle">Chegou um notebook? Pesquise aqui quem estava procurando.</p></div><button type="button" class="btn btn-ghost btn-sm" id="interestRefresh">Atualizar</button></div>
+    <div class="interest-filters"><label>Buscar interesse<input class="form-input" type="search" id="interestSearch" placeholder="Notebook, memória, nome ou telefone…"></label><label>Etapa<select class="form-input" id="interestFilter"><option value="active">Pendentes</option><option value="waiting">Aguardando produto</option><option value="contacted">Cliente avisado</option><option value="done">Atendidos</option><option value="cancelled">Cancelados</option><option value="all">Todos</option></select></label></div>
+    <p id="interestCount" class="text-muted" role="status"></p><div id="interestList" class="interest-list"></div>
+  </section>
 
   <div class="crm-shell">
     <aside class="card crm-list-card">
@@ -109,3 +115,15 @@
     </div>
   </div>
 </div>
+
+<dialog id="interestDialog" class="interest-dialog" aria-labelledby="interestDialogTitle">
+  <form id="interestForm">
+    <header class="interest-heading"><div><p class="crm-kicker" id="interestCustomerLabel"></p><h3 id="interestDialogTitle">Registrar interesse</h3></div><button class="btn btn-ghost" type="button" id="interestClose" aria-label="Fechar interesse">✕</button></header>
+    <p class="text-muted">Registre o que o cliente procura para entrar em contato quando estiver disponível.</p>
+    <label>Produto procurado *<input class="form-input" name="title" maxlength="120" required placeholder="Ex.: notebook para estudar"></label>
+    <label>Detalhes e preferências<textarea class="form-input" name="notes" maxlength="1000" rows="3" placeholder="Marca, memória, tamanho, novo ou usado, prazo desejado…"></textarea></label>
+    <div class="interest-filters"><label>Valor máximo (opcional)<input class="form-input" name="maxBudget" type="number" min="0" max="10000000" step="0.01" inputmode="decimal" placeholder="R$"></label><label>Etapa<select class="form-input" name="status"><option value="waiting">Aguardando produto</option><option value="contacted">Cliente avisado</option><option value="done">Atendido</option><option value="cancelled">Cancelado</option></select></label></div>
+    <p role="status" id="interestSaveStatus"></p>
+    <footer class="interest-actions"><button class="btn btn-ghost" type="button" id="interestCancel">Cancelar</button><button class="btn btn-primary" type="submit">Salvar interesse</button></footer>
+  </form>
+</dialog>

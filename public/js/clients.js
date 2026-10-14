@@ -47,7 +47,8 @@ function getFilteredClients(q) {
         String(c.name || '').toLowerCase().includes(term) ||
         String(c.email || '').toLowerCase().includes(term) ||
         String(c.phone || '').includes(term) ||
-        String(c.doc || '').includes(term));
+        String(c.doc || '').includes(term) ||
+        (c.interests || []).some(i => [i.title,i.notes].join(' ').toLowerCase().includes(term)));
 }
 
 function badgeClass(st) {
@@ -184,7 +185,8 @@ function buildDetailMarkup(c) {
         </div>
         <div class="crm-actions">
           <button class="btn btn-ghost btn-sm" type="button" data-action="edit">✏️ Editar</button>
-          <button class="btn btn-primary btn-sm" type="button" data-action="request">📌 Nova requisição</button>
+          <button class="btn btn-primary btn-sm" type="button" data-action="interest">+ Registrar interesse</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-action="request">Nova requisição</button>
           <button class="btn btn-ghost btn-sm text-danger-btn" type="button" data-action="delete-customer">Excluir cliente</button>
         </div>
       </div>
@@ -248,6 +250,7 @@ function bindDetailActions(clientId) {
     const wrap = document.getElementById('clientDetailMount');
     if (!wrap) return;
 
+    wrap.querySelector('[data-action="interest"]')?.addEventListener('click', () => window.CustomerInterests.open(clientId));
     wrap.querySelectorAll('[data-action="edit"]').forEach((btn) =>
         btn.addEventListener('click', () => openEditCustomer(clientId)));
 
@@ -316,6 +319,7 @@ async function removeCustomer(clientId) {
     try {
         await apiJson(`/api/customers/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
         window.appData.customers = (window.appData.customers || []).filter((c) => c.id !== clientId);
+        window.CustomerInterests?.render();
         selectedId = null;
 
         const q = document.getElementById('clientSearch')?.value || '';
@@ -336,6 +340,7 @@ function upsertCustomerInState(c) {
     const idx = window.appData.customers.findIndex((x) => x.id === c.id);
     if (idx >= 0) window.appData.customers[idx] = c;
     else window.appData.customers.push(c);
+    window.CustomerInterests?.render();
 }
 
 function openNewCustomerForm() {

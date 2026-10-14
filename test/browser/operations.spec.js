@@ -465,3 +465,31 @@ test('intake autocomplete supports keyboard, empty results and mobile selection'
   await expect(page.locator('#requestCustomerId')).toHaveValue('');
   expect(await page.locator('.request-modal-card').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBeTruthy();
 });
+
+test('client product interests persist, search locally, offer WhatsApp and retain completed history',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.goto('/clients');
+ await page.locator('[data-action=interest]').click();
+ await page.locator('#interestForm [name=title]').fill('Notebook para estudar');
+ await page.locator('#interestForm [name=notes]').fill('16 GB, pode ser usado');
+ await page.locator('#interestForm [name=maxBudget]').fill('2000');
+ await page.getByRole('button',{name:'Salvar interesse',exact:true}).click();
+ await expect(page.locator('#interestDialog')).not.toBeVisible();
+ await page.reload();
+ await expect(page.locator('.interest-card')).toBeVisible();
+ let calls=0;page.on('request',r=>{if(r.url().includes('/api/'))calls++});
+ await page.locator('#interestSearch').fill('notebook');
+ await expect(page.locator('.interest-card')).toContainText('Maria');
+ await expect(page.locator('.interest-card')).toContainText('2.000,00');
+ expect(calls).toBe(0);
+ const wa=page.getByRole('link',{name:'Abrir WhatsApp ↗'});
+ await expect(wa).toHaveAttribute('href',/^https:\/\/wa.me\/5579999999999\?text=/);
+ await page.screenshot({path:'test-results/client-interests-mobile.png',fullPage:true,animations:'disabled'});
+ await page.getByRole('button',{name:'Editar / atualizar etapa'}).click();
+ await page.locator('#interestForm [name=status]').selectOption('done');
+ await page.getByRole('button',{name:'Salvar interesse',exact:true}).click();
+ await expect(page.locator('.interest-card')).toHaveCount(0);
+ await page.locator('#interestFilter').selectOption('done');
+ await expect(page.locator('.interest-card')).toContainText('Notebook para estudar');
+ expect(await page.locator('body').evaluate(el=>el.scrollWidth<=innerWidth+1)).toBeTruthy();
+});

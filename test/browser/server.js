@@ -143,6 +143,7 @@ const deps = {
 };
 require("../../lib/operations-routes")(app, deps);
 require("../../lib/register-routes")(app, deps);
+require("../../lib/customer-interests")(app, deps);
 app.post(
   "/api/budgets/:id/public-link",
   require("../../lib/budget-public-link")({
@@ -197,6 +198,7 @@ async function appData(user = admin) {
     whatsapp: {},
   };
 }
+app.get("/api/customers", async(req,res)=>res.json({customers:await models.findAll({colecao:"customers"})}));
 app.get("/api/bootstrap/:scope", async (req, res) => res.json(await appData(req.session.user)));
 app.get("/api/services/work-templates", (req, res) =>
   res.json({ templates: [] }),

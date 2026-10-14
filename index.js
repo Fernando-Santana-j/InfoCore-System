@@ -340,6 +340,7 @@ function normalizeCustomerRow(row, aggregatedStats) {
         address: r.address != null ? String(r.address).trim() : '',
         notes: r.notes != null ? String(r.notes).trim() : '',
         requests,
+        interests: Array.isArray(r.interests) ? r.interests : [],
         purchases,
         spent,
         createdAt: createdAt ? createdAt.toISOString() : null,
@@ -1226,7 +1227,7 @@ function paymentLabelForCashFlow(payment) {
 async function loadCustomersNormalized(options = {}) {
     const includeSalesStats = options.includeSalesStats !== false;
     const [rows, sales] = await Promise.all([
-        db.findAll({ colecao: CUSTOMERS_COLLECTION }),
+        db.findAll({ colecao: CUSTOMERS_COLLECTION, fresh: options.fresh === true }),
         includeSalesStats
             ? db.findAll({ colecao: SALES_COLLECTION })
             : Promise.resolve([])
@@ -2915,6 +2916,7 @@ function verifyLogin(req, res, next) {
 
 require('./lib/operations-routes')(app, { firestore, models: db, verifyLogin, verifyAdminApi, normalizeService: normalizeServiceOrderRow, budgetForUser, saleForUser, QRCode, whatsapp:whatsappClient });
 require('./lib/register-routes')(app, { firestore, models: db, verifyLogin, verifyAdminApi });
+require('./lib/customer-interests')(app, {firestore,models:db,verifyLogin});
 const requestWorkflow = require('./lib/budget-requests').install(app,{firestore,models:db,verifyLogin,verifyAdminApi,buildBudget:buildBudgetRecordFromBody,buildService:serviceOrderFirestorePayload});
 
 app.get('/api/work/database-usage', verifyAdminApi, (req, res) => {
@@ -5578,7 +5580,7 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
 
 app.get('/api/customers', verifyLogin, async (req, res) => {
     try {
-        const customers = await loadCustomersNormalized();
+        const customers = await loadCustomersNormalized({fresh:req.query.refresh === '1'});
         return res.json({ error: false, customers });
     } catch (e) {
         console.error(e);
