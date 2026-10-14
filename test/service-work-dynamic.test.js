@@ -46,7 +46,7 @@ test('o fluxo dinâmico oferece edição, exclusão e reordenação persistentes
     assert.match(view, /id="svcDeleteConfirmBtn"/);
 });
 
-test('a página Oficina cria OS vazia com orçamento novo, existente ou sem orçamento', () => {
+test('a página Oficina exige orçamento aprovado e oferece solicitação para nova entrada', () => {
     const view = read('views/services.ejs');
     const js = read('public/js/services.js');
     const server = read('index.js');
@@ -54,8 +54,9 @@ test('a página Oficina cria OS vazia com orçamento novo, existente ou sem orç
     assert.match(view, /id="btnCreateService"/);
     assert.match(view, /id="svcCreateModal"/);
     assert.match(view, /data-mode="existing"/);
-    assert.match(view, /data-mode="new"/);
-    assert.match(view, /data-mode="none"/);
+    assert.doesNotMatch(view, /data-mode="new"/);
+    assert.doesNotMatch(view, /data-mode="none"/);
+    assert.match(view, /href="\/budget-requests"/);
     assert.match(js, /allowEmpty:\s*true/);
     assert.match(js, /skipBudget:\s*createServiceMode === 'none'/);
     assert.match(js, /existingBudgetId:/);

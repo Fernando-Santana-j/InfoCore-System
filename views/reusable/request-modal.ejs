@@ -1,0 +1,8 @@
+<div class="pdv-modal-overlay" id="serviceIntakeModal" role="dialog" aria-modal="true" aria-labelledby="requestModalTitle">
+  <div class="pdv-modal-card request-modal-card">
+    <header class="pdv-modal-header"><div><h2 id="requestModalTitle">Solicitação de orçamento</h2><p class="text-muted">Descreva o atendimento para a análise da equipe técnica.</p></div><button type="button" class="pdv-modal-close" id="closeServiceIntakeModalBtn" aria-label="Fechar solicitação">✕</button></header>
+    <div class="pdv-modal-body request-embedded"><%- include('../budget-requests') %></div>
+    <footer class="pdv-modal-footer"><button type="button" class="btn btn-ghost btn-sm" id="cancelServiceIntakeBtn">Voltar</button><button type="submit" class="btn btn-primary" form="requestForm" id="requestModalSubmit">Enviar solicitação</button></footer>
+  </div>
+</div>
+

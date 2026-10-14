@@ -244,6 +244,7 @@ function paymentLabel(payment) {
     const methods = window.appData?.configs?.payment_methods || {};
     if (methods[key]?.name) return methods[key].name;
     const labels = {
+        mixed: 'Pagamento dividido',
         money: 'Dinheiro',
         credit_card: 'Cartão de crédito',
         debit_card: 'Cartão de débito',
@@ -297,7 +298,7 @@ function renderSaleDetailModal(s) {
 
     const paymentKey = resolveSalePayment(s);
     const gatewayStatus = s?.paymentGateway?.status ? ` (${s.paymentGateway.status})` : '';
-    document.getElementById('saleDetailPayment').textContent = `${paymentLabel(paymentKey)}${gatewayStatus}`;
+    document.getElementById('saleDetailPayment').textContent = `${paymentLabel(paymentKey)}${gatewayStatus}${Array.isArray(s.payments) && s.payments.length ? " · " + s.payments.map(p => `${paymentLabel(p.method)}: ${formatCurrency(p.amount)}`).join(" + ") : ""}`;
 
     const cashWrap = document.getElementById('saleDetailCashWrap');
     const isCash = paymentKey === 'money';

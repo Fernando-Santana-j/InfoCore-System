@@ -27,24 +27,26 @@ test('normal login retains eight-hour expiry and requires explicit remember opt-
 
 function makeStore() {
     const records = new Map();
+    const stats = {reads:0, writes:0, failure:null};
     const collection = { doc: (id) => ({
-        get: async () => ({ exists: records.has(id), data: () => records.get(id) }),
-        set: async (data, options) => records.set(id, options?.merge ? { ...records.get(id), ...data } : data),
+        get: async () => {stats.reads++; if(stats.failure) throw stats.failure; return { exists: records.has(id), data: () => records.get(id) };},
+        set: async (data, options) => {stats.writes++; if(stats.failure) throw stats.failure; return records.set(id, options?.merge ? { ...records.get(id), ...data } : data);},
         delete: async () => records.delete(id)
     }) };
     const source = fs.readFileSync(require.resolve('../index.js'), 'utf8');
     const start = source.indexOf('class FirestoreSessionStore');
-    const end = source.indexOf('\napp.use(session({', start);
+    const end = source.indexOf('\napp.use(', start);
     const context = {
         session, firestore: { collection: () => collection }, sessionExpiresAt,
         cloneSessionData: (value) => JSON.parse(JSON.stringify(value)),
         toDateSafe: (value) => value ? new Date(value) : null,
         FieldValue: { serverTimestamp: () => new Date() },
         SESSION_CACHE_TTL_MS: 30000, SESSION_CACHE_MAX: 500, SESSION_TOUCH_INTERVAL_MS: 300000,
+        databaseAvailability: require("../lib/database-availability").createAvailability({log:()=>{}}),
         process, Date
     };
     vm.runInNewContext(`${source.slice(start, end)}\nthis.Store = FirestoreSessionStore;`, context);
-    return { records, Store: context.Store };
+    return { records, stats, Store: context.Store };
 }
 const call = (store, method, ...args) => new Promise((resolve, reject) => {
     store[method](...args, (error, result) => error ? reject(error) : resolve(result));
@@ -75,5 +77,36 @@ test('normal sessions still expire in the persistent store', async () => {
     await call(new Store(), 'set', 'normal', value);
     records.get('normal').expiresAt = new Date('2020-01-01');
     assert.equal(await call(new Store(), 'get', 'normal'), null);
-    assert.equal(records.has('normal'), false);
+    assert.equal(records.has('normal'), true); // Expired sessions are denied without requiring a cleanup write.
+});
+
+
+test('concurrent session reads share a lookup and quota never authenticates from expired cache', async () => {
+    const {records,stats,Store}=makeStore();
+    const value={cookie:new session.Cookie()};configureLoginSession(value,{id:'u1'},true);
+    await call(new Store(),'set','s',value);
+    const store=new Store();
+    const values=await Promise.all(Array.from({length:20},()=>call(store,'get','s')));
+    assert.equal(stats.reads,1);assert.ok(values.every(v=>v.user.id==='u1'));
+    store.cache.get('s').cachedAt=0;
+    stats.failure=Object.assign(new Error('Quota exceeded'),{code:8});
+    await assert.rejects(call(store,'get','s'),e=>e.code===8);
+    await assert.rejects(call(store,'get','s'),e=>e.databaseUnavailable===true);
+    assert.equal(stats.reads,2);assert.equal(store.pendingGets.size,0);
+});
+
+test('failed session persistence is reported and never cached as a successful login', async () => {
+    const {stats,Store}=makeStore();const store=new Store();
+    stats.failure=Object.assign(new Error('Quota exceeded'),{code:8});
+    await assert.rejects(call(store,'set','new',{cookie:{},user:{id:'u'}}));
+    assert.equal(store.cache.has('new'),false);
+});
+
+
+test('remembered sessions never write just to refresh a nonexistent expiry',async()=>{
+    const {stats,Store}=makeStore();const store=new Store();
+    const value={cookie:new session.Cookie()};configureLoginSession(value,{id:'u1'},true);
+    await call(store,'set','s',value);store.cache.clear();
+    await Promise.all(Array.from({length:20},()=>call(store,'touch','s',value)));
+    assert.equal(stats.writes,1);
 });

@@ -19,25 +19,31 @@
       <span class="nav-icon" aria-hidden="true">📊</span>
       <span class="nav-label">Dashboard</span>
     </a>
+    <% if (appData.user.type !== 'technician') { %>
     <a href="/pdv" class="nav-item<%= navActive('/pdv') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">🛒</span>
       <span class="nav-label">PDV</span>
     </a>
-    <% if (appData.user.type === 'admin') { %>
+    <% } %>
+    <% if (['admin','technician'].includes(appData.user.type)) { %>
     <a href="/services" class="nav-item<%= navActive('/services') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">🧰</span>
       <span class="nav-label">Oficina</span>
     </a>
     <% } %>
+    <% if (appData.user.type !== 'technician') { %>
+    <a href="/attendances" class="nav-item<%= navActive('/attendances') ? ' active' : '' %>"><span class="nav-icon" aria-hidden="true">⏸</span><span class="nav-label">Atendimentos</span></a>
     <a href="/budgets" class="nav-item<%= navActive('/budgets') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">📋</span>
       <span class="nav-label">Orçamentos</span>
     </a>
-    <a href="/budget-links" class="nav-item<%= navActive('/budget-links') ? ' active' : '' %>"><span class="nav-icon" aria-hidden="true">🔗</span><span class="nav-label">Links de propostas</span></a>
     <a href="/clients" class="nav-item<%= navActive('/clients') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">👥</span>
       <span class="nav-label">Clientes CRM</span>
     </a>
+    <% } %>
+    <a href="/budget-requests" class="nav-item<%= navActive('/budget-requests') ? ' active' : '' %>"><span class="nav-icon" aria-hidden="true">📝</span><span class="nav-label">Solicitações de orçamento</span></a>
+    <% if (appData.user.type === 'technician') { %><a href="/budgets" class="nav-item<%= navActive('/budgets') ? ' active' : '' %>"><span class="nav-icon">📋</span><span class="nav-label">Orçamentos</span></a><% } %>
     <div class="nav-section-label">Gestão</div>
     <% if (appData.user.type === 'admin') { %>
     <a href="/stock" class="nav-item<%= navActive('/stock') ? ' active' : '' %>">
@@ -46,10 +52,12 @@
       <span class="badge" id="lowStockBadge" style="display:none">!</span>
     </a>
     <% } %>
+    <% if (appData.user.type !== 'technician') { %>
     <a href="/cash-flow" class="nav-item<%= navActive('/cash-flow') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">📒</span>
       <span class="nav-label">Fluxo de caixa</span>
     </a>
+    <% } %>
     <% if (appData.user.type === 'admin') { %>
     <a href="/analytics" class="nav-item<%= navActive('/analytics') ? ' active' : '' %>">
       <span class="nav-icon" aria-hidden="true">📈</span>
@@ -67,7 +75,7 @@
       <div class="user-avatar" aria-hidden="true"><%= (appData.user.name || 'IC').slice(0, 2).toUpperCase() %></div>
       <div class="user-info">
         <div class="user-name"><%= appData.user.name %></div>
-        <div class="user-role"><%= appData.user.type === 'admin' ? 'Administrador' : 'Caixa' %></div>
+        <div class="user-role"><%= appData.user.type === 'admin' ? 'Administrador' : appData.user.type === 'technician' ? 'Técnico' : 'Caixa' %></div>
       </div>
       <button type="button" class="user-logout-btn" id="logoutBtn" title="Sair da plataforma" aria-label="Sair da plataforma">↪</button>
     </div>

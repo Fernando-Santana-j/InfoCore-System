@@ -3,3 +3,14 @@ node_modules
 config
 uploads
 data/whatsapp-session
+
+backups/
+test-results/
+playwright-report/
+firestore-debug.log
+firebase-debug.log
+ui-debug.log
+
+private-uploads/
+
+data/contingency/

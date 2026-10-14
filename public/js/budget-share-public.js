@@ -154,19 +154,7 @@
     }
 
     function initChoices() {
-        const option = selectedOption();
-        list(option?.items).forEach((item) => {
-            const key = String(item.id || '');
-            const existing = plainObject(state.choices[key]);
-            if (!Object.prototype.hasOwnProperty.call(state.choices, key)) {
-                state.choices[key] = { included: true, qty: Math.max(1, Math.trunc(number(item.qty, 1))) };
-                return;
-            }
-            state.choices[key] = {
-                included: existing.included !== false,
-                qty: clamp(Math.trunc(number(existing.qty, item.qty || 1)) || 1, 1, 99)
-            };
-        });
+        state.choices = window.BudgetPermissions.sanitize(budget, selectedOption() || {items: []}, state.choices);
     }
 
     function invalidateFinalization() {
@@ -186,7 +174,7 @@
         persistLocalState();
         setSaveState('Alterações pendentes', 'pending');
         window.clearTimeout(saveTimer);
-        if (!immediate) saveTimer = window.setTimeout(() => { void saveNow(); }, 650);
+        if (!immediate) saveTimer = window.setTimeout(() => { void saveNow(); }, 3000);
     }
 
     async function parseJsonResponse(response) {
@@ -295,13 +283,13 @@
 
         const title = byId('optionsTitle');
         const hint = byId('optionsHint');
-        if (title) title.textContent = options.length === 1 ? 'Sua configuração' : 'Escolha a configuração';
+        if (title) title.textContent = options.length === 1 ? 'Sua proposta' : 'Escolha uma opção';
         if (hint) hint.textContent = options.length === 1
             ? 'Confira tudo o que foi preparado para você.'
             : 'Compare as opções e selecione a que combina com você.';
 
         if (!options.length) {
-            grid.innerHTML = '<div class="custom-card">Nenhuma configuração foi adicionada a esta proposta.</div>';
+            grid.innerHTML = '<div class="custom-card">Nenhuma opção foi adicionada a este orçamento.</div>';
             return;
         }
 
@@ -319,7 +307,7 @@
                 <span class="option-media">${imageMarkup}${item.recommended ? '<span class="recommended-badge">★ RECOMENDADO</span>' : ''}<span class="selected-badge">✓ SELECIONADO</span></span>
                 <span class="option-content">
                   <span class="option-title">${esc(item.name || `Opção ${index + 1}`)}</span>
-                  <span class="option-description" id="${descriptionId}">${esc(item.description || 'Uma configuração preparada pela nossa equipe.')}</span>
+                  <span class="option-description" id="${descriptionId}">${esc(item.description || 'Itens e serviços preparados pela nossa equipe.')}</span>
                   <span class="option-footer"><span class="option-price-wrap"><small>A partir de</small><span class="option-price">${money(item.total)}</span></span><span class="option-select-label">${selected ? 'Sua escolha' : 'Selecionar'} →</span></span>
                 </span>
               </label>
@@ -357,10 +345,12 @@
         activeGalleryIndex = clamp(activeGalleryIndex, 0, Math.max(0, currentGallery.length - 1));
 
         if (!currentGallery.length) {
-            host.innerHTML = `<div class="gallery-stage">${galleryPlaceholderMarkup()}</div>`;
+            host.hidden = true;
+            host.innerHTML = '';
             return;
         }
 
+        host.hidden = false;
         const active = currentGallery[activeGalleryIndex];
         const thumbs = currentGallery.length > 1 ? `<div class="gallery-thumbnails" role="list" aria-label="Escolher foto">
           ${currentGallery.map((image, index) => `<button class="gallery-thumb${index === activeGalleryIndex ? ' active' : ''}" type="button" role="listitem" data-gallery-index="${index}" aria-label="Ver foto ${index + 1}: ${esc(image.caption || image.alt)}"${index === activeGalleryIndex ? ' aria-current="true"' : ''}><img src="${esc(image.url)}" alt="" loading="lazy" decoding="async"></button>`).join('')}
@@ -480,22 +470,24 @@
         const host = byId('itemList');
         if (!host) return;
         const items = list(selectedOption()?.items);
+        if (byId('customizeHint')) byId('customizeHint').textContent = budget.customerCanEdit === false ? 'Itens e quantidades definidos pela loja. Solicite alterações nas observações.' : 'Ajuste os itens conforme as permissões indicadas. Controles desativados são definidos pela loja.';
         host.innerHTML = items.map((item, index) => {
             const key = String(item.id || '');
             const choice = state.choices[key] || { included: true, qty: 1 };
             const amounts = itemAmounts(item, choice.qty);
+            const permissions = window.BudgetPermissions.rules(budget, item);
             const tags = [
                 conditionLabel(item.condition),
-                item.warranty ? `Garantia: ${item.warranty}` : '',
-                item.note || '',
+                String(item.warranty || '').trim() ? `Garantia: ${String(item.warranty).trim()}` : '',
+                String(item.note || '').trim(),
                 item.specialOrder ? 'Sob encomenda' : ''
             ].filter(Boolean);
             const checkboxId = `public-item-${index}`;
             return `<div class="item-row${choice.included ? '' : ' off'}" data-item-index="${index}">
-              <label class="item-check" for="${checkboxId}"><input class="item-toggle" id="${checkboxId}" type="checkbox"${choice.included ? ' checked' : ''} aria-label="Incluir ${esc(item.name)}"><span class="item-check-visual" aria-hidden="true"></span></label>
-              <div class="item-copy"><strong class="item-name">${esc(item.name || 'Item')}</strong>${tags.length ? `<div class="item-tags">${tags.map((tag) => `<span class="item-tag${tag === 'Sob encomenda' ? ' special-order' : ''}">${esc(tag)}</span>`).join('')}</div>` : ''}</div>
+              <label class="item-check" for="${checkboxId}"><input class="item-toggle" id="${checkboxId}" type="checkbox"${choice.included ? ' checked' : ''} aria-label="Incluir ${esc(item.name)}"${permissions.remove ? '' : ' disabled'}><span class="item-check-visual" aria-hidden="true"></span></label>
+              <div class="item-copy">${(item.images?.length ? item.images : [item.imageUrl]).map(safeImageUrl).filter(Boolean).length ? `<div class="public-item-photos">${(item.images?.length ? item.images : [item.imageUrl]).map(safeImageUrl).filter(Boolean).slice(0,4).map((url,index)=>`<a class="public-item-photo" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Ampliar foto ${index+1} de ${esc(item.name)}"><img src="${esc(url)}" alt="${esc(item.name)} · foto ${index+1}" width="96" height="96" loading="lazy" decoding="async"><small>Ampliar ↗</small></a>`).join('')}</div>` : ''}<strong class="item-name">${esc(item.name || 'Item')}</strong>${tags.length ? `<div class="item-tags">${tags.map((tag) => `<span class="item-tag${tag === 'Sob encomenda' ? ' special-order' : ''}">${esc(tag)}</span>`).join('')}</div>` : ''}${!permissions.remove || (!permissions.decrease && !permissions.increase) ? `<span class="item-rule">${[!permissions.remove ? 'Item obrigatório' : '', !permissions.decrease && !permissions.increase ? 'Quantidade fixa' : ''].filter(Boolean).join(' · ')}</span>` : ''}</div>
               <div class="item-actions">
-                <div class="qty-control" role="group" aria-label="Quantidade de ${esc(item.name)}"><button type="button" data-delta="-1" aria-label="Diminuir quantidade de ${esc(item.name)}"${choice.qty <= 1 ? ' disabled' : ''}>−</button><output aria-label="Quantidade">${choice.qty}</output><button type="button" data-delta="1" aria-label="Aumentar quantidade de ${esc(item.name)}"${choice.qty >= 99 ? ' disabled' : ''}>+</button></div>
+                <div class="qty-control" role="group" aria-label="Quantidade de ${esc(item.name)}"><button type="button" data-delta="-1" aria-label="Diminuir quantidade de ${esc(item.name)}"${choice.qty <= permissions.min ? ' disabled' : ''}>−</button><output aria-label="Quantidade">${choice.qty}</output><button type="button" data-delta="1" aria-label="Aumentar quantidade de ${esc(item.name)}"${choice.qty >= permissions.max ? ' disabled' : ''}>+</button></div>
                 <div class="item-price-block"><strong>${money(amounts.total)}</strong>${amounts.discount > 0 ? `<del>${money(amounts.gross)}</del>` : ''}</div>
               </div>
             </div>`;
@@ -517,7 +509,8 @@
             row.querySelectorAll('[data-delta]').forEach((button) => {
                 button.addEventListener('click', () => {
                     const delta = number(button.dataset.delta);
-                    state.choices[key].qty = clamp(state.choices[key].qty + delta, 1, 99);
+                    const permissions = window.BudgetPermissions.rules(budget, item);
+                    state.choices[key].qty = clamp(state.choices[key].qty + delta, permissions.min, permissions.max);
                     invalidateFinalization();
                     renderItems();
                     renderSummary();
@@ -619,6 +612,7 @@
         const mobileTotal = byId('mobileSummaryTotal');
         if (totalElement) totalElement.textContent = money(amounts.total);
         if (mobileTotal) mobileTotal.textContent = money(amounts.total);
+        if (byId('overviewTotal')) byId('overviewTotal').textContent = money(amounts.total);
 
         const summaryOption = byId('summaryOption');
         if (summaryOption) {
@@ -663,6 +657,7 @@
             conditionBlock('i', 'Observações da proposta', String(budget.notes || '').trim(), { full: true })
         ].filter(Boolean);
         section.hidden = !blocks.length;
+        if (byId('conditionsNav')) byId('conditionsNav').hidden = !blocks.length;
         host.innerHTML = blocks.join('');
     }
 
@@ -686,7 +681,7 @@
 
         [desktopButton, mobileButton].forEach((button) => {
             if (!button) return;
-            button.disabled = finishInFlight;
+            button.disabled = finishInFlight || confirmed;
             button.classList.toggle('is-finalized', confirmed);
         });
 
@@ -713,7 +708,7 @@
             }
         } else {
             if (desktopButton) desktopButton.innerHTML = 'Finalizar minhas escolhas <span aria-hidden="true">→</span>';
-            if (mobileButton) mobileButton.innerHTML = 'Finalizar <span aria-hidden="true">→</span>';
+            if (mobileButton) mobileButton.innerHTML = 'Revisar <span aria-hidden="true">→</span>';
             if (feedback && !feedback.textContent.includes('alteradas')) {
                 feedback.textContent = '';
                 feedback.className = 'finish-feedback';
@@ -898,7 +893,12 @@
             handleEditableChange();
         });
         byId('finishBtn')?.addEventListener('click', finishSelections);
-        byId('mobileFinishBtn')?.addEventListener('click', finishSelections);
+        byId('mobileFinishBtn')?.addEventListener('click', () => {
+            byId('summaryCard')?.scrollIntoView({ behavior: reduceMotion ? 'instant' : 'smooth', block: 'start' });
+            const title = byId('summaryTitle');
+            title?.setAttribute('tabindex', '-1');
+            title?.focus({preventScroll:true});
+        });
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden' && dirty) void saveNow({ keepalive: true });

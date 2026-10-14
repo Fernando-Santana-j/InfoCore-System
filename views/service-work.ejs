@@ -1,5 +1,6 @@
 <div class="svc-work-page" id="svcWorkPage">
   <header class="svc-work-top" id="svcWorkTop"></header>
+  <section id="serviceRequestOrigin" hidden></section>
   <nav class="svc-work-stepper" id="svcWorkStepper" aria-label="Etapas do reparo"></nav>
   <main class="svc-work-main" id="svcWorkMain"></main>
   <footer class="svc-work-footer" id="svcWorkFooter"></footer>
@@ -87,7 +88,7 @@
       <label class="svc-share-opt"><input type="checkbox" id="svcShareOptQr" checked> QR Code no envio</label>
       <label class="svc-share-opt"><input type="checkbox" id="svcShareOptPdf"> Anexar PDF (URL)</label>
       <label class="svc-share-opt"><input type="checkbox" id="svcShareOptImage"> Anexar imagem (URL)</label>
-      <label class="svc-share-opt"><input type="checkbox" id="svcShareOptDelivered"> Marcar como entregue</label>
+      <p class="text-sm text-muted">Confirme a entrega pelo checklist na ficha do atendimento.</p><input type="checkbox" id="svcShareOptDelivered" hidden disabled>
     </div>
     <div class="svc-share-link-box" id="svcShareLinkBox" hidden>
       <label class="form-label">Link público</label>

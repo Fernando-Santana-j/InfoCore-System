@@ -1,26 +1,28 @@
 <div class="page" id="page-pdv">
-  <header class="pdv-page-hero">
-    <div><p>Operação de caixa</p><h2>PDV</h2><span>Venda rápida de produtos e serviços, com leitura de código e atalhos de teclado.</span></div>
-    <div class="pdv-role-chip"><span class="pdv-role-dot"></span><strong><%= appData.user.type === 'admin' ? 'Modo administrador' : 'Caixa ativo' %></strong><small><%= appData.user.name %></small></div>
-  </header>
   <div class="pdv-layout">
     <div class="pdv-products">
       <div class="pdv-toolbar">
-        <div class="search-bar">
-          <span aria-hidden="true">🔍</span>
-          <input type="text" placeholder="Buscar ou escanear código… (Enter adiciona)" id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
+        <div class="pdv-input-fields">
+          <input type="text" id="pdvBarcodeCapture" class="visually-hidden" tabindex="-1" aria-label="Leitor de código de barras" autocomplete="off" spellcheck="false">
+          <label class="pdv-input-field" for="pdvSearch">
+            <span>Pesquisar produtos <kbd>F4</kbd></span>
+            <div class="search-bar">
+              <span aria-hidden="true">🔍</span>
+              <input type="text" placeholder="Pesquisar por nome ou código…" id="pdvSearch" autocomplete="off" oninput="filterPDV(this.value)">
+            </div>
+          </label>
         </div>
-        <div class="pdv-scan-status" id="pdvScanIndicator" title="Leitor USB ativo em toda a tela do PDV">
-          <span class="pdv-scan-dot" aria-hidden="true"></span>
-          Leitor ativo
+        <div class="pdv-scan-status" id="pdvScanIndicator" title="Leitura automática de códigos com 8 números">
+          <span class="pdv-scan-dot" aria-hidden="true"></span> Leitor ativo
         </div>
-        <input type="text" id="pdvBarcodeCapture" class="visually-hidden" tabindex="-1" aria-hidden="true" autocomplete="off">
+        <small id="pdvLastScan" role="status" aria-live="polite"></small>
         <div class="filter-bar">
           <button class="filter-btn active" onclick="setPDVFilter('todos',this)">Todos</button>
           <button class="filter-btn" onclick="setPDVFilter('produtos',this)">📦 Produtos</button>
           <button class="filter-btn" onclick="setPDVFilter('servicos',this)">🔧 Serviços</button>
         </div>
-        <button type="button" class="btn btn-ghost btn-sm" id="btnOpenServiceIntakeModal">🧰 Ordem de serviço</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnOpenServiceIntakeModal">+ Solicitar análise</button>
+        <% if (appData.user.type === 'admin') { %><a class="btn btn-ghost btn-sm" href="/budgets?new=1">+ Novo orçamento</a><% } %>
         <% if (appData.user.type === 'admin') { %>
         <a class="btn btn-ghost btn-sm" href="/stock" title="Cadastrar produtos e serviços">📋 Catálogo</a>
         <% } %>
@@ -31,7 +33,7 @@
 
     <div class="cart-panel">
       <div class="cart-header">
-        <div class="cart-header-row"><div><div class="cart-title">🛒 Venda atual</div><div class="text-xs text-muted mt-4" id="cartCount">0 itens</div></div><div class="pdv-held-actions"><button type="button" class="btn btn-ghost btn-sm" id="btnHoldSale" title="Atalho F8">Suspender</button><button type="button" class="btn btn-ghost btn-sm" id="btnResumeSale" hidden>Retomar <span id="heldSaleBadge">1</span></button></div></div>
+        <div class="cart-header-row"><div><div class="cart-title">🛒 Venda atual</div><div class="text-xs text-muted mt-4" id="cartCount">0 itens</div></div><div class="pdv-held-actions"><button type="button" class="btn btn-ghost btn-sm" id="btnHoldSale" title="Atalho F8">Suspender</button></div></div>
         <label class="pdv-customer-field"><span>Cliente</span><input class="form-input" id="pdvCustomerName" list="pdvCustomerOptions" placeholder="Balcão ou nome do cliente" autocomplete="off"><datalist id="pdvCustomerOptions"></datalist></label>
       </div>
       <div class="cart-items" id="cartItems">
@@ -133,16 +135,32 @@
       <button class="pdv-modal-close" id="closeConfirmActionModalBtn">✕</button>
     </div>
     <div class="pdv-modal-body">
+
       <p class="text-sm text-muted" id="confirmActionMessage">Deseja continuar?</p>
       <div class="pdv-stock-warning" id="confirmStockWarning" hidden></div>
       <div class="pdv-confirm-summary" id="confirmActionSummary">
         <div class="pdv-confirm-totals" id="confirmActionTotals"></div>
+        <div id="splitPaymentSection" class="pdv-split-section">
+          <label><input type="checkbox" id="splitPaymentEnabled"> Dividir entre meios de pagamento</label>
+          <div id="splitPaymentFields" hidden>
+            <p class="pdv-split-hint">Informe somente valores já recebidos. Pix e cartões devem ser conferidos fora deste fluxo; nenhuma nova cobrança será gerada.</p>
+            <div class="pdv-split-shortcuts"><button type="button" class="btn btn-ghost btn-sm" id="splitHalfBtn">Metade Pix + metade dinheiro</button><button type="button" class="btn btn-ghost btn-sm" id="splitClearBtn">Limpar valores</button></div>
+            <div class="pdv-split-grid">
+              <% for (const [key, label] of [['pix','Pix'], ['money','Dinheiro'], ['debit_card','Débito'], ['credit_card','Crédito']]) { %>
+                <label class="work-field"><%= label %> (R$)<input class="form-input" data-split-method="<%= key %>" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0,00"><button type="button" class="pdv-split-fill" data-split-fill="<%= key %>">Completar restante em <%= label %></button></label>
+              <% } %>
+            </div>
+            <div class="pdv-split-status"><span id="splitPaymentAllocated"></span><p id="splitPaymentBalance" role="status" aria-live="polite"></p></div>
+            <label><input type="checkbox" id="splitPaymentConfirmed"> Conferi e recebi todos os valores informados.</label>
+          </div>
+        </div>
         <div id="pdvCreditInstallmentsSection" class="pdv-installments-section" hidden>
           <label class="pdv-installments-label">Parcelas no cartão de crédito</label>
           <p class="text-xs text-muted pdv-installments-hint">Juros por conta do cliente na maquininha.</p>
           <div class="pdv-installments-grid" id="creditInstallmentsButtons" role="group" aria-label="Número de parcelas"></div>
         </div>
         <div id="pdvCashPaymentSection" class="pdv-cash-section" hidden>
+<label class="work-field">Sinal recebido (somente venda em dinheiro; vazio = pagamento integral)<input id="workInitialReceived" class="form-input" type="number" min="0" step="0.01" placeholder="Pagamento integral"></label>
           <label class="pdv-cash-label" for="pdvCashReceivedInput">Valor recebido (R$) <span class="text-muted" style="font-weight:500;">— opcional</span></label>
           <input class="form-input" type="number" id="pdvCashReceivedInput" min="0" step="0.01" inputmode="decimal" autocomplete="off" placeholder="Vazio = pagou o valor exato" aria-describedby="pdvCashPaymentHint">
           <div class="pdv-cash-change-row">
@@ -198,168 +216,7 @@
   </div>
 </div>
 
-<div class="pdv-modal-overlay" id="serviceIntakeModal">
-  <div class="pdv-modal-card pdv-service-modal-card">
-    <div class="pdv-modal-header pdv-service-modal-header">
-      <div>
-        <div class="pdv-modal-title">Nova ordem de serviço</div>
-        <p class="pdv-service-subtitle">Preencha os dados, marque os serviços e finalize em um clique.</p>
-      </div>
-      <button type="button" class="pdv-modal-close" id="closeServiceIntakeModalBtn" aria-label="Fechar">✕</button>
-    </div>
-    <div class="pdv-modal-body pdv-service-modal-body">
-      <nav class="pdv-service-steps" aria-label="Etapas da OS">
-        <span class="pdv-service-step is-active" data-step="1"><span class="pdv-service-step-num">1</span><span class="pdv-service-step-label">Dados</span></span>
-        <span class="pdv-service-step" data-step="2"><span class="pdv-service-step-num">2</span><span class="pdv-service-step-label">Serviços</span></span>
-        <span class="pdv-service-step" data-step="3"><span class="pdv-service-step-num">3</span><span class="pdv-service-step-label">Orçamento</span></span>
-      </nav>
-
-      <section class="pdv-service-pane is-active" data-pane="1">
-        <header class="pdv-service-pane-head">
-          <span class="pdv-service-pane-icon">👤</span>
-          <div>
-            <h4 class="pdv-service-pane-title">Cliente e aparelho</h4>
-            <p class="pdv-service-pane-desc">Campos com * são obrigatórios.</p>
-          </div>
-        </header>
-        <div class="pdv-service-field-stack">
-          <div class="pdv-service-field">
-            <label class="form-label" for="svcCustomerSearch">Buscar no CRM</label>
-            <div class="budget-ac-wrap" id="svcCustomerAcWrap">
-              <span class="budget-ac-icon">👤</span>
-              <input class="form-input budget-ac-input" id="svcCustomerSearch" type="search" placeholder="Nome, telefone ou e-mail..." autocomplete="off">
-              <div class="budget-ac-list" id="svcCustomerResults" hidden></div>
-            </div>
-          </div>
-          <div class="budget-customer-selected" id="svcCustomerSelected" hidden>
-            <div class="budget-customer-chip pdv-service-customer-chip">
-              <span id="svcCustomerChipName"></span>
-              <button type="button" class="btn btn-ghost btn-sm" id="svcCustomerClearBtn">Trocar</button>
-            </div>
-          </div>
-          <input type="hidden" id="svcCustomerId" value="">
-          <div class="pdv-service-grid-2">
-            <div class="pdv-service-field">
-              <label class="form-label" for="svcCustomerName">Nome *</label>
-              <input class="form-input" id="svcCustomerName" placeholder="Nome completo" required>
-            </div>
-            <div class="pdv-service-field">
-              <label class="form-label" for="svcCustomerPhone">WhatsApp *</label>
-              <input class="form-input" id="svcCustomerPhone" placeholder="(00) 00000-0000" required inputmode="tel">
-            </div>
-            <div class="pdv-service-field">
-              <label class="form-label" for="svcDeviceType">Tipo de aparelho *</label>
-              <select class="form-input" id="svcDeviceType" required>
-                <option value="Celular">📱 Celular</option>
-                <option value="Notebook">💻 Notebook</option>
-                <option value="Computador">🖥️ Computador</option>
-                <option value="Tablet">Tablet</option>
-                <option value="Outro">Outro</option>
-              </select>
-            </div>
-            <div class="pdv-service-field">
-              <label class="form-label" for="svcPriority">Prioridade</label>
-              <select class="form-input" id="svcPriority">
-                <option value="normal">Normal</option>
-                <option value="high">Alta</option>
-                <option value="urgent">Urgente</option>
-              </select>
-            </div>
-            <div class="pdv-service-field pdv-service-field--full">
-              <label class="form-label" for="svcDeviceBrandModel">Marca e modelo *</label>
-              <input class="form-input" id="svcDeviceBrandModel" placeholder="Ex.: Samsung Galaxy A54" required>
-            </div>
-            <div class="pdv-service-field pdv-service-field--full">
-              <label class="form-label" for="svcCustomerEmail">E-mail</label>
-              <input class="form-input" id="svcCustomerEmail" placeholder="email@exemplo.com" type="email">
-            </div>
-            <div class="pdv-service-field pdv-service-field--full">
-              <label class="form-label" for="svcAccessories">Acessórios recebidos</label>
-              <input class="form-input" id="svcAccessories" placeholder="Carregador, capa, chip...">
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="pdv-service-pane" data-pane="2">
-        <header class="pdv-service-pane-head pdv-service-pane-head--checklist">
-          <span class="pdv-service-pane-icon">🔧</span>
-          <div>
-            <h4 class="pdv-service-pane-title">Serviços e defeitos</h4>
-            <p class="pdv-service-pane-desc">Selecione um ou mais templates (na ordem desejada) ou marque os itens manualmente.</p>
-          </div>
-          <span class="pdv-service-defect-badge" id="svcDefectCount">0 marcados</span>
-        </header>
-        <div class="pdv-svc-templates" id="svcWorkTemplatesPicker">
-          <p class="pdv-svc-templates-label">Serviços padrão da oficina — clique para adicionar na sequência</p>
-          <div class="pdv-svc-templates-grid" id="svcWorkTemplatesGrid"></div>
-        </div>
-        <div class="pdv-svc-templates-seq-wrap" id="svcAppliedTemplatesSequence" hidden></div>
-        <div class="pdv-service-field pdv-service-field--relato">
-          <label class="form-label" for="svcIssueReport">Relato do problema</label>
-          <textarea class="form-input" id="svcIssueReport" rows="2" placeholder="Descreva o que o cliente relatou (obrigatório se nenhum item estiver marcado)"></textarea>
-        </div>
-        <div class="pdv-service-checklist" id="svcChecklistGrid"></div>
-      </section>
-
-      <section class="pdv-service-pane" data-pane="3">
-        <header class="pdv-service-pane-head">
-          <span class="pdv-service-pane-icon">🧾</span>
-          <div>
-            <h4 class="pdv-service-pane-title">Orçamento vinculado</h4>
-            <p class="pdv-service-pane-desc">Monte o orçamento rascunho como na central de orçamentos — itens, descontos e observações.</p>
-          </div>
-        </header>
-        <div class="pdv-svc-review pdv-svc-review--compact" id="svcReviewSummary"></div>
-        <div class="pdv-svc-budget-section">
-          <div class="pdv-service-field">
-            <label class="form-label" for="svcBudgetNotes">Observações do orçamento</label>
-            <textarea class="form-input" id="svcBudgetNotes" rows="2" placeholder="Prazo, garantia, condições, peças..."></textarea>
-          </div>
-          <div class="pdv-service-field">
-            <label class="form-label" for="svcBudgetValidUntil">Validade</label>
-            <input class="form-input" id="svcBudgetValidUntil" type="date">
-          </div>
-          <div class="budget-product-section">
-            <label class="form-label" for="svcBudgetProductSearch">Adicionar produto</label>
-            <div class="budget-ac-wrap" id="svcBudgetProductAcWrap">
-              <span class="budget-ac-icon" aria-hidden="true">🔍</span>
-              <input class="form-input budget-ac-input" id="svcBudgetProductSearch" type="search" placeholder="Nome, SKU, código de barras..." autocomplete="off">
-              <div class="budget-ac-list" id="svcBudgetProductResults" hidden></div>
-            </div>
-            <div class="budget-add-actions">
-              <button class="btn btn-ghost btn-sm" type="button" id="svcBudgetAddProductBtn">+ Adicionar selecionado</button>
-              <button class="btn btn-ghost btn-sm" type="button" id="svcBudgetAddCustomBtn">+ Item personalizado</button>
-            </div>
-          </div>
-          <div class="budget-items-table-wrap pdv-svc-budget-table">
-            <div class="budget-items-table-head">
-              <span>Item</span>
-              <span>Qtd</span>
-              <span>Valor unit.</span>
-              <span>Total</span>
-              <span></span>
-            </div>
-            <div id="svcBudgetItemsList" class="budget-items-table-body"></div>
-          </div>
-          <div class="budget-adjustments-row">
-            <label>Desconto (R$)<input class="form-input" id="svcBudgetDiscountInput" type="number" min="0" step="0.01" value="0"></label>
-            <label>Acréscimo (R$)<input class="form-input" id="svcBudgetExtraInput" type="number" min="0" step="0.01" value="0"></label>
-          </div>
-          <div id="svcBudgetTotalsBox" class="pdv-svc-budget-totals"></div>
-        </div>
-      </section>
-    </div>
-    <div class="pdv-modal-footer pdv-service-footer">
-      <div class="pdv-service-footer-hint" id="svcStepHint">Etapa 1 de 3 — Dados</div>
-      <div class="pdv-service-footer-actions">
-        <button type="button" class="btn btn-ghost btn-sm" id="svcPrevStepBtn">← Voltar</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="cancelServiceIntakeBtn">Cancelar</button>
-        <button type="button" class="btn btn-primary btn-sm" id="svcNextStepBtn">Próximo →</button>
-      </div>
-    </div>
-  </div>
-</div>
+<%- include('reusable/request-modal') %>
 
 <div class="pdv-modal-overlay" id="paymentResultModal">
   <div class="pdv-modal-card pdv-payment-result-card">

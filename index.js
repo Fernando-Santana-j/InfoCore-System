@@ -46,6 +46,7 @@ const INFOCORE_COLLECTION = 'infocore';
 const SHARED_NOTES_DOC = 'shared_notes';
 const { FieldValue } = require('firebase-admin/firestore');
 const budgetDomain = require('./lib/budget-domain');
+const { operationalFields, canDeliver } = require('./lib/operations-domain');
 const {
     normalizeStatus: normalizeBudgetStatus,
     normalizeOptions: normalizeBudgetOptions,
@@ -63,6 +64,7 @@ const PAYMENT_KEYS = new Set(['money', 'credit_card', 'debit_card', 'pix']);
 
 function normalizePaymentKey(payment) {
     const map = {
+        mixed: 'mixed',
         money: 'money',
         credit_card: 'credit_card',
         debit_card: 'debit_card',
@@ -152,9 +154,12 @@ function normalizeBudgetRow(row) {
         rejectionReason: r.rejectionReason != null ? String(r.rejectionReason) : '',
         rejectionNote: r.rejectionNote != null ? String(r.rejectionNote) : '',
         notes: r.notes != null ? String(r.notes) : '',
+        requestId: String(r.requestId || ''),
+        intake: r.intake && typeof r.intake === 'object' ? r.intake : null,
         internalNotes: r.internalNotes != null ? String(r.internalNotes) : '',
         paymentTerms: r.paymentTerms != null ? String(r.paymentTerms) : '',
         deadline: r.deadline != null ? String(r.deadline) : '',
+        customerCanEdit: r.customerCanEdit !== false,
         warrantyText: r.warrantyText != null ? String(r.warrantyText) : '',
         includedServices: Array.isArray(r.includedServices) ? r.includedServices.map((x) => String(x || '').trim()).filter(Boolean) : [],
         issuedAt: r.issuedAt != null ? String(r.issuedAt) : (createdAtDate ? createdAtDate.toISOString().slice(0, 10) : ''),
@@ -251,6 +256,7 @@ function normalizeSaleRow(row) {
         createdAt: createdAtDate ? createdAtDate.toISOString() : null,
         client: r.client != null ? String(r.client) : 'Balcao',
         payment,
+        payments: Array.isArray(r.payments) ? r.payments.map(p => ({ method: p.method, amount: Number(p.amount) || 0 })) : [],
         paymentGateway,
         cashier: r.cashier && typeof r.cashier === 'object' ? {
             name: r.cashier.name != null ? String(r.cashier.name) : '',
@@ -274,6 +280,10 @@ function normalizeSaleRow(row) {
         extra: Number(r.extra) || 0,
         total: Number(r.total) || 0,
         adjustments: r.adjustments && typeof r.adjustments === 'object' ? r.adjustments : null,
+        initialAmountPaid: Number(r.initialAmountPaid ?? r.amountPaid ?? r.total) || 0,
+        amountPaid: Number(r.amountPaid ?? r.total) || 0,
+        balance: Math.max(0, Math.round((Number(r.total || 0) - Number(r.amountPaid ?? r.total ?? 0))*100)/100),
+        refundedTotal: Number(r.refundedTotal) || 0,
         cashReceived: Number.isFinite(Number(r.cashReceived)) ? Number(r.cashReceived) : null,
         change: Number.isFinite(Number(r.change)) ? Number(r.change) : null
     };
@@ -497,6 +507,10 @@ function normalizeServiceOrderRow(row) {
         id: r.id != null ? String(r.id) : '',
         code: r.code != null ? String(r.code) : serviceDisplayCode(),
         budgetId: r.budgetId != null ? String(r.budgetId) : '',
+        requestId: String(r.requestId || ''),
+        intake: r.intake && typeof r.intake === 'object' ? r.intake : null,
+        serialNumber: String(r.serialNumber || ''),
+        physicalCondition: String(r.physicalCondition || ''),
         customerId: r.customerId != null ? String(r.customerId) : '',
         customerName: r.customerName != null ? String(r.customerName).trim() : '',
         customerPhone: r.customerPhone != null ? String(r.customerPhone).trim() : '',
@@ -519,8 +533,8 @@ function normalizeServiceOrderRow(row) {
             : [],
         status: allowedStatuses.has(status) ? status : 'open',
         priority: String(r.priority || 'normal') === 'high' ? 'high' : (String(r.priority || '') === 'urgent' ? 'urgent' : 'normal'),
-        createdAt: r.createdAt || null,
-        updatedAt: r.updatedAt || null,
+        createdAt: toDateSafe(r.createdAt)?.toISOString() || null,
+        updatedAt: toDateSafe(r.updatedAt)?.toISOString() || null,
         createdBy: r.createdBy && typeof r.createdBy === 'object' ? {
             name: r.createdBy.name != null ? String(r.createdBy.name) : '',
             email: r.createdBy.email != null ? String(r.createdBy.email) : ''
@@ -532,8 +546,16 @@ function normalizeServiceOrderRow(row) {
         workTemplateName: r.workTemplateName != null ? String(r.workTemplateName).trim() : '',
         shareToken: r.shareToken != null ? String(r.shareToken).trim() : '',
         shareCreatedAt: r.shareCreatedAt || null,
+        ...operationalFields(r),
         pcDiagnostic: normalizePcDiagnostic(r.pcDiagnostic)
     };
+}
+
+function serviceForUser(row, user) {
+    const service = normalizeServiceOrderRow(row);
+    if (user?.type === 'admin') return service;
+    const { hourlyCost, reworkCost, partsCost, ...safe } = service;
+    return safe;
 }
 
 function normalizeServiceWorkTemplateRow(row) {
@@ -567,7 +589,7 @@ function normalizeServiceWorkTemplateRow(row) {
 }
 
 async function loadServiceWorkTemplatesNormalized() {
-    const rows = await db.findAll({ colecao: SERVICE_WORK_TEMPLATES_COLLECTION }).catch(() => []);
+    const rows = await db.findAll({ colecao: SERVICE_WORK_TEMPLATES_COLLECTION });
     const list = Array.isArray(rows) ? rows.map(normalizeServiceWorkTemplateRow).filter((t) => t.name) : [];
     list.sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
     return list;
@@ -581,7 +603,7 @@ function getPublicBaseUrl(req) {
         ? String(process.env.APP_PUBLIC_BASE_URL).replace(/\/$/, '')
         : '';
     // Prioriza o host da requisição para links gerados durante o uso (evita APP_PUBLIC_BASE_URL desatualizado).
-    return process.env.APP_PUBLIC_BASE_URL;
+    return envBase || reqBase;
 }
 
 function serviceShareUrl(shareToken, req) {
@@ -1044,6 +1066,7 @@ function buildServiceBudgetNotes(serviceRow, budgetRawNotes) {
 }
 
 async function createLinkedBudgetForService(serviceDraft, sessionUser, budgetBody = null) {
+    if (sessionUser?.type !== 'admin') return {error:true,message:'Somente administradores podem criar orçamentos. Registre uma solicitação de orçamento.'};
     const serviceId = String(serviceDraft.id || '').trim();
     const budgetId = randomUUID();
     const osCode = String(serviceDraft.code || serviceDisplayCode());
@@ -1122,10 +1145,7 @@ async function createLinkedBudgetForService(serviceDraft, sessionUser, budgetBod
 }
 
 async function loadServiceOrdersNormalized() {
-    const rows = await db.findAll({ colecao: SERVICE_ORDERS_COLLECTION }).catch((err) => {
-        console.error('[OS] Erro ao listar ordens:', err);
-        return [];
-    });
+    const rows = await db.findAll({ colecao: SERVICE_ORDERS_COLLECTION });
     const list = Array.isArray(rows) ? rows.map((row) => {
         const id = row?.id != null ? String(row.id) : '';
         return normalizeServiceOrderRow({ ...row, id });
@@ -1144,6 +1164,11 @@ function serviceOrderFirestorePayload(row) {
         id: n.id,
         code: n.code,
         budgetId: n.budgetId,
+        requestId: n.requestId,
+        intake: n.intake,
+        serialNumber: n.serialNumber,
+        serial: n.serial || n.serialNumber,
+        physicalCondition: n.physicalCondition,
         customerId: n.customerId,
         customerName: n.customerName,
         customerPhone: n.customerPhone,
@@ -1189,6 +1214,7 @@ function entryInMonth(entry, monthKey) {
 function paymentLabelForCashFlow(payment) {
     const key = normalizePaymentKey(payment);
     const labels = {
+        mixed: 'Pagamento dividido',
         money: 'Dinheiro',
         pix: 'PIX',
         credit_card: 'Cartão de crédito',
@@ -1200,9 +1226,9 @@ function paymentLabelForCashFlow(payment) {
 async function loadCustomersNormalized(options = {}) {
     const includeSalesStats = options.includeSalesStats !== false;
     const [rows, sales] = await Promise.all([
-        db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []),
+        db.findAll({ colecao: CUSTOMERS_COLLECTION }),
         includeSalesStats
-            ? db.findAll({ colecao: SALES_COLLECTION }).catch(() => [])
+            ? db.findAll({ colecao: SALES_COLLECTION })
             : Promise.resolve([])
     ]);
     const saleMap = salesTotalsByClientKey(Array.isArray(sales) ? sales : []);
@@ -1236,11 +1262,14 @@ function buildCashFlowPayloadFromSale(saleId, saleRecord) {
     const date = createdAtDate
         ? createdAtDate.toISOString().slice(0, 10)
         : new Date().toISOString().slice(0, 10);
-    const cfId = randomUUID();
+    const cfId = `sale-${saleId}`;
     return {
         id: cfId,
         type: 'income',
-        amount: total,
+        amount: Number(saleRecord.initialAmountPaid ?? saleRecord.amountPaid ?? total),
+        payment: saleRecord.payment,
+        ...(saleRecord.payments ? { payments: saleRecord.payments } : {}),
+        operator: saleRecord.cashier?.email || "",
         cost: costTotal,
         profit,
         category: 'Vendas PDV',
@@ -1332,7 +1361,7 @@ async function enrichBudgetItemsWithCost(rawItems, maps, { preferProvidedProduct
 async function createCashFlowFromBudget(budget) {
     const budgetId = budget?.id != null ? String(budget.id).trim() : '';
     if (!budgetId) return null;
-    const cfRows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const cfRows = await db.findAll({ colecao: CASH_FLOW_COLLECTION });
     const exists = (Array.isArray(cfRows) ? cfRows : []).some(
         (e) => String(e.budgetId || '').trim() === budgetId
     );
@@ -1373,7 +1402,7 @@ async function rebuildAllFinancialData() {
         }
     };
 
-    const salesRows = await db.findAll({ colecao: SALES_COLLECTION }).catch(() => []);
+    const salesRows = await db.findAll({ colecao: SALES_COLLECTION });
     const salesMap = new Map();
     for (const sale of Array.isArray(salesRows) ? salesRows : []) {
         const id = sale?.id != null ? String(sale.id).trim() : '';
@@ -1383,12 +1412,12 @@ async function rebuildAllFinancialData() {
         const profit = Math.round((total - fin.costTotal) * 100) / 100;
         const enriched = { ...sale, items: fin.items, costTotal: fin.costTotal, profit };
         salesMap.set(id, enriched);
-        batch.set(firestore.collection(SALES_COLLECTION).doc(id), enriched);
+        batch.update(firestore.collection(SALES_COLLECTION).doc(id), {items:fin.items,costTotal:fin.costTotal,profit});
         ops++;
         await commitIfNeeded();
     }
 
-    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []);
+    const budgetRows = await db.findAll({ colecao: BUDGETS_COLLECTION });
     const budgetMap = new Map();
     for (const budget of Array.isArray(budgetRows) ? budgetRows : []) {
         const id = budget?.id != null ? String(budget.id).trim() : '';
@@ -1403,7 +1432,7 @@ async function rebuildAllFinancialData() {
         }
     }
 
-    const cfRows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const cfRows = await db.findAll({ colecao: CASH_FLOW_COLLECTION });
     const linkedSales = new Set();
     const linkedBudgets = new Set();
 
@@ -1411,6 +1440,7 @@ async function rebuildAllFinancialData() {
         const cfId = String(entry.id || '').trim();
         if (!cfId) continue;
 
+        if (entry.source === 'sale_receipt') continue;
         const saleId = String(entry.saleId || '').trim();
         const budgetId = String(entry.budgetId || '').trim();
         let patch = null;
@@ -1418,7 +1448,7 @@ async function rebuildAllFinancialData() {
         if (saleId && salesMap.has(saleId)) {
             const sale = salesMap.get(saleId);
             linkedSales.add(saleId);
-            const amount = Number(sale.total) || Number(entry.amount) || 0;
+            const amount = Number(sale.initialAmountPaid ?? sale.amountPaid ?? sale.total ?? entry.amount) || 0;
             patch = {
                 amount,
                 cost: sale.costTotal,
@@ -1462,8 +1492,8 @@ async function rebuildAllFinancialData() {
 async function hydrateCashFlowEntriesFromProducts(entries) {
     const maps = await loadProductCostMaps();
     const [salesRows, budgetRows] = await Promise.all([
-        db.findAll({ colecao: SALES_COLLECTION }).catch(() => []),
-        db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
+        db.findAll({ colecao: SALES_COLLECTION }),
+        db.findAll({ colecao: BUDGETS_COLLECTION })
     ]);
     const salesMap = new Map(
         (Array.isArray(salesRows) ? salesRows : []).map((s) => [String(s.id || '').trim(), s])
@@ -1537,7 +1567,7 @@ async function ensureFinancialRebuildOnce() {
 async function loadCashFlowNormalized() {
     await ensureFinancialRebuildOnce().catch((e) => console.error('rebuild financeiro:', e));
     await syncMissingBudgetsToCashFlow().catch((e) => console.error('sync orçamentos→fluxo:', e));
-    const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION });
     const raw = Array.isArray(rows) ? rows : [];
     // Custo e lucro são históricos e já ficam persistidos no lançamento. Além
     // de ser contabilmente mais correto, isso evita reler produtos, vendas e
@@ -1597,7 +1627,7 @@ function budgetHtmlValue(value) {
         .replace(/'/g, '&#39;');
 }
 
-function buildBudgetRowsHtmlFromItems(items, compact = false) {
+function buildBudgetRowsHtmlFromItems(items, compact = false, includeImages = false) {
     const list = Array.isArray(items) ? items : [];
     const pad = compact ? '4px 6px' : '8px';
     const fs = compact ? 'font-size:.68rem;' : '';
@@ -1613,7 +1643,7 @@ function buildBudgetRowsHtmlFromItems(items, compact = false) {
             : '';
         return `
 <tr>
-  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;${fs}">${budgetHtmlValue(item.name || '')}${details}</td>
+  <td style="padding:${pad};border-bottom:1px solid #e5e7eb;${fs}">${includeImages && item.imageUrl ? (item.images?.length ? item.images : [item.imageUrl]).slice(0,4).map(url=>`<img src="${budgetHtmlValue(url)}" alt="" style="display:inline-block;width:64px;height:64px;object-fit:contain;margin:0 6px 6px 0">`).join('') : ''}${budgetHtmlValue(item.name || '')}${details}</td>
   <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:center;${fs}">${budgetHtmlValue(item.qty || 0)}</td>
   <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;${fs}">${moneyBr(item.unitPrice || 0)}</td>
   <td style="padding:${pad};border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;${fs}">${moneyBr(item.total != null ? item.total : ((Number(item.qty) || 0) * (Number(item.unitPrice) || 0)))}</td>
@@ -1621,7 +1651,7 @@ function buildBudgetRowsHtmlFromItems(items, compact = false) {
     }).join('');
 }
 
-function buildBudgetOptionHtml(option, compact = false, multi = false) {
+function buildBudgetOptionHtml(option, compact = false, multi = false, includeImages = false) {
     if (!option) return '';
     const recommended = option.recommended
         ? '<span style="display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:.62rem;font-weight:800;vertical-align:middle;">RECOMENDADO PELA INFOCORE</span>'
@@ -1639,7 +1669,7 @@ function buildBudgetOptionHtml(option, compact = false, multi = false) {
     <th style="padding:${compact ? '5px 6px' : '10px 12px'};text-align:right;font-size:${compact ? '.65rem' : '.78rem'};font-weight:600;width:110px;">Unitário</th>
     <th style="padding:${compact ? '5px 6px' : '10px 12px'};text-align:right;font-size:${compact ? '.65rem' : '.78rem'};font-weight:600;width:110px;">Total</th>
   </tr></thead>
-  <tbody>${buildBudgetRowsHtmlFromItems(option.items, compact)}</tbody>
+  <tbody>${buildBudgetRowsHtmlFromItems(option.items, compact, includeImages)}</tbody>
 </table>
 <div style="margin-top:7px;display:flex;justify-content:flex-end;">
   <div style="min-width:${compact ? '190px' : '270px'};background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:${compact ? '6px 8px' : '10px 12px'};">
@@ -1659,7 +1689,7 @@ function buildBudgetRowsHtml(budget, compact = false) {
     const normalized = normalizeBudgetRow(budget || {});
     const options = normalized.options || [];
     const multi = options.length > 1;
-    return options.map((o) => buildBudgetOptionHtml(o, compact, multi)).join('');
+    return options.map((o) => buildBudgetOptionHtml(o, compact, multi, budget.includeItemImages === true)).join('');
 }
 
 function buildBudgetRowsText(budget) {
@@ -1733,8 +1763,8 @@ function budgetTemplateData(budget, req, options = {}) {
         statusBadgeHtml,
         signatureTerms: scalar(signatureTerms),
         issuedAt: formatDateBr(normalized.issuedAt || normalized.createdAt || budgetTodayIso()),
-        itemsRowsHtml: buildBudgetRowsHtml(normalized, compact),
-        optionsHtml: buildBudgetRowsHtml(normalized, compact),
+        itemsRowsHtml: buildBudgetRowsHtml({...normalized,includeItemImages:budget.includeItemImages === true}, compact),
+        optionsHtml: buildBudgetRowsHtml({...normalized,includeItemImages:budget.includeItemImages === true}, compact),
         itemsRowsText: buildBudgetRowsText(normalized),
         includedServicesHtml,
         conditionLinesHtml: conditionLines || '-',
@@ -1974,6 +2004,8 @@ function normalizeProduct(row) {
         unitCostTotal: productUnitCost(d),
         price: Number(d.price) || 0,
         qty: Number.parseInt(String(d.qty), 10) || 0,
+        reservedQty: Number(d.reservedQty) || 0,
+        availableQty: (Number.parseInt(String(d.qty), 10) || 0) - (Number(d.reservedQty) || 0),
         min: Number.parseInt(String(d.min), 10) || 0,
         trackStock: productTracksStock({ ...d, itemType }),
         active: d.active !== false,
@@ -2148,16 +2180,16 @@ function computeBudgetFinancials(budgetRecord) {
 async function loadProductsFromDb() {
     try {
         const list = await fetchProductRows();
-        await reconcileProductBarcodeSkus(list);
+        // Reading the catalog must not start a data migration or write SKUs.
         return list.map(normalizeProduct);
     } catch (e) {
-        console.error('Erro ao carregar produtos:', e);
-        return [];
+        throw e;
     }
 }
 
 //TODO------------Configs--------------
 
+const databaseAvailability = require('./lib/database-availability');
 const app = express();
 
 app.set('views', path.join(__dirname, '/views'))
@@ -2197,7 +2229,15 @@ app.use((req, res, next) => {
     next();
 });
 
-const SESSION_CACHE_TTL_MS = 30000;
+// Liveness does not depend on Firestore or a remote session.
+app.get('/health/live', (req, res) => res.json({status:'ok'}));
+app.get('/health/ready', (req, res) => {
+    const state = databaseAvailability.state();
+    res.status(state.available ? 200 : 503).json({status:state.available ? 'ready' : 'database_unavailable', retryAfter:state.retryAfter});
+});
+app.use(databaseAvailability.gate);
+
+const SESSION_CACHE_TTL_MS = 120000;
 const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 const SESSION_CACHE_MAX = 500;
 
@@ -2210,6 +2250,7 @@ class FirestoreSessionStore extends session.Store {
         super();
         this.collection = firestore.collection('sessions');
         this.cache = new Map();
+        this.pendingGets = new Map();
     }
 
     cacheSet(sid, sessionData, expiresAt, lastPersistedAt = Date.now()) {
@@ -2234,25 +2275,29 @@ class FirestoreSessionStore extends session.Store {
             }
             this.cache.delete(key);
         }
-        this.collection.doc(String(sid)).get()
-            .then((doc) => {
-                if (!doc.exists) return callback(null, null);
-                const data = doc.data() || {};
-                const expiresAt = toDateSafe(data.expiresAt);
-                if (expiresAt && expiresAt.getTime() <= Date.now()) {
-                    return this.destroy(sid, () => callback(null, null));
-                }
-                const sessionData = data.session && typeof data.session === 'object' ? data.session : null;
-                if (sessionData) {
-                    const maxAge = Number(sessionData?.cookie?.originalMaxAge) || 0;
-                    const lastPersistedAt = expiresAt && maxAge > 0
-                        ? expiresAt.getTime() - maxAge
-                        : Date.now();
-                    this.cacheSet(key, sessionData, expiresAt, lastPersistedAt);
-                }
-                return callback(null, sessionData ? cloneSessionData(sessionData) : null);
-            })
-            .catch((err) => callback(err));
+        if (!this.pendingGets.has(key)) {
+            const read = databaseAvailability.run(() => this.collection.doc(key).get())
+                .then((doc) => {
+                    if (!doc.exists) { this.cache.delete(key); return null; }
+                    const data = doc.data() || {};
+                    const expiresAt = toDateSafe(data.expiresAt);
+                    if (expiresAt && expiresAt.getTime() <= Date.now()) {
+                        this.cache.delete(key);
+                        return null; // TTL cleanup must not turn an expired login into a write.
+                    }
+                    const value = data.session && typeof data.session === 'object' ? data.session : null;
+                    if (value) {
+                        const maxAge = Number(value.cookie?.originalMaxAge) || 0;
+                        this.cacheSet(key, value, expiresAt, expiresAt && maxAge > 0 ? expiresAt.getTime() - maxAge : Date.now());
+                    }
+                    return value;
+                }).finally(() => this.pendingGets.delete(key));
+            this.pendingGets.set(key, read);
+        }
+        this.pendingGets.get(key).then(
+            (value) => callback(null, value ? cloneSessionData(value) : null),
+            (err) => callback(err)
+        );
     }
 
     set(sid, sess, callback) {
@@ -2263,11 +2308,11 @@ class FirestoreSessionStore extends session.Store {
         } catch (e) {
             return callback && callback(e);
         }
-        this.collection.doc(String(sid)).set({
+        databaseAvailability.run(() => this.collection.doc(String(sid)).set({
             session: sessionData,
             updatedAt: FieldValue.serverTimestamp(),
             expiresAt
-        })
+        }))
             .then(() => {
                 this.cacheSet(sid, sessionData, expiresAt);
                 callback && callback(null);
@@ -2277,36 +2322,32 @@ class FirestoreSessionStore extends session.Store {
 
     destroy(sid, callback) {
         this.cache.delete(String(sid));
-        this.collection.doc(String(sid)).delete()
+        databaseAvailability.run(() => this.collection.doc(String(sid)).delete())
             .then(() => callback && callback(null))
             .catch((err) => callback && callback(err));
     }
 
     touch(sid, sess, callback) {
         const expiresAt = sessionExpiresAt(sess);
+        if (!expiresAt) return process.nextTick(() => callback && callback(null));
         const key = String(sid);
         const cached = this.cache.get(key);
         if (cached) {
-            cached.session = cloneSessionData(sess);
-            cached.expiresAt = expiresAt ? expiresAt.getTime() : 0;
-            cached.cachedAt = Date.now();
             if (cached.lastPersistedAt + SESSION_TOUCH_INTERVAL_MS > Date.now()) {
                 return process.nextTick(() => callback && callback(null));
             }
-            cached.lastPersistedAt = Date.now();
-        } else {
-            this.cacheSet(key, sess, expiresAt);
+
         }
-        this.collection.doc(String(sid)).set({
+        databaseAvailability.run(() => this.collection.doc(String(sid)).set({
             updatedAt: FieldValue.serverTimestamp(),
             expiresAt
-        }, { merge: true })
-            .then(() => callback && callback(null))
+        }, { merge: true }))
+            .then(() => { this.cacheSet(key, sess, expiresAt); callback && callback(null); })
             .catch((err) => callback && callback(err));
     }
 }
 
-app.use(session({
+app.use(require('./lib/public-budget-storage').withoutPublicSessions(session({
     secret: process.env.SECRET || 'infocore-fajg3bi2bt3fi3nt2fajbf2',
     store: new FirestoreSessionStore(),
     resave: false,
@@ -2318,7 +2359,7 @@ app.use(session({
         sameSite: 'lax',
         secure: isProduction
     }
-}));
+})));
 app.use(cookieParser());
 
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
@@ -2343,7 +2384,16 @@ app.use((req, res, next) => {
     ].some((prefix) => String(req.path || '').startsWith(prefix));
     if (mutation && dataPrefix && !readOnlyPost) {
         res.once('finish', () => {
-            if (res.statusCode < 400) db.clearCache();
+            if (res.statusCode < 400 && !res.locals.databaseUnchanged) {
+                require('./lib/cache-dependencies')(req.path).forEach(collection => db.invalidate(collection));
+                if (req.session?.user && !req.path.startsWith('/api/public')) {
+                    firestore.collection('audit_events').doc(randomUUID()).set({
+                        action: `${method} ${req.path}`, actor: req.session.user.email || req.session.user.name || '',
+                        at: new Date().toISOString(), targetId: String(req.params?.id || ''),
+                        details: { fields: Object.keys(req.body || {}).filter(k=>!['pass','password','token'].includes(k)).slice(0,50) }
+                    }).catch(error=>console.error('Falha ao registrar auditoria:',error.message));
+                }
+            }
         });
     }
     next();
@@ -2414,6 +2464,9 @@ function publicBudgetOption(option = {}) {
                 ? { type: item.discount.type, value: Number(item.discount.value) || 0, amount: Number(item.discount.amount) || 0 }
                 : { type: 'fixed', value: 0, amount: 0 },
             condition: String(item.condition || ''),
+            images: item.images || [],
+            imageUrl: item.imageUrl || '',
+            customerPermissions: item.customerPermissions,
             warranty: String(item.warranty || ''),
             note: String(item.note || '')
         })),
@@ -2443,6 +2496,7 @@ function publicBudgetView(budget = {}) {
         validUntil: String(budget.validUntil || ''),
         paymentTerms: String(budget.paymentTerms || ''),
         deadline: String(budget.deadline || ''),
+        customerCanEdit: budget.customerCanEdit !== false,
         warrantyText: String(budget.warrantyText || ''),
         includedServices: Array.isArray(budget.includedServices)
             ? budget.includedServices.map((item) => String(item || '')).filter(Boolean)
@@ -2483,23 +2537,22 @@ app.get('/p/escolha/:token', async (req,res)=>{
     const showcase=await findShowcaseByToken(req.params.token);
     if(!showcase||showcase.status==='closed')return res.status(404).send('<!doctype html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px"><h1>Link encerrado ou inválido</h1></body></html>');
     const configs=await getConfigsSafe(); if(!configs.storePhone)configs.storePhone=whatsappClient.getStatus()?.phone||'';
-    const responseSnap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();
+    const response=await require('./lib/public-budget-storage').readResponse(firestore,BUDGET_PUBLIC_RESPONSES_COLLECTION,showcase);
     const budget=publicBudgetView({id:showcase.id,code:'SELEÇÃO',title:showcase.title,customerName:showcase.customerName,validUntil:'',options:showcase.options,recommendedOptionId:showcase.options.find(o=>o.recommended)?.id||showcase.options[0]?.id||''});
     setPrivateShareHeaders(res);
-    return res.render('budget-share-public',{layout:false,budget,configs,response:customerBudgetResponse(responseSnap.exists?responseSnap.data():{}),token:req.params.token,publicApiBase:'/api/public/showcases'});
+    return res.render('budget-share-public',{layout:false,budget,configs,response:customerBudgetResponse(response),token:req.params.token,publicApiBase:'/api/public/showcases'});
 });
 
-app.get('/api/public/showcases/:token',async(req,res)=>{setPrivateShareHeaders(res);const s=await findShowcaseByToken(req.params.token);if(!s)return res.status(404).json({error:true,message:'Link não encontrado.'});const snap=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(s.id).get();return res.json({error:false,response:customerBudgetResponse(snap.exists?snap.data():{})});});
+app.get('/api/public/showcases/:token',async(req,res)=>{setPrivateShareHeaders(res);const s=await findShowcaseByToken(req.params.token);if(!s)return res.status(404).json({error:true,message:'Link não encontrado.'});const response=await require('./lib/public-budget-storage').readResponse(firestore,BUDGET_PUBLIC_RESPONSES_COLLECTION,s);return res.json({error:false,response:customerBudgetResponse(response)});});
 app.put('/api/public/showcases/:token/response',async(req,res)=>{
     setPrivateShareHeaders(res);
     const showcase=await findShowcaseByToken(req.params.token);if(!showcase||showcase.status==='closed')return res.status(404).json({error:true,message:'Link não encontrado.'});
     const body=req.body||{},option=showcase.options.find(o=>String(o.id)===String(body.selectedOptionId||''));if(!option)return res.status(400).json({error:true,message:'Selecione uma opção válida.'});
-    const ids=new Set((option.items||[]).map(i=>String(i.id))),choices={};Object.entries(body.choices&&typeof body.choices==='object'?body.choices:{}).forEach(([id,v])=>{if(ids.has(String(id)))choices[id]={included:v?.included!==false,qty:Math.min(99,Math.max(0,Math.trunc(Number(v?.qty)||0)))}});
-    const payload={showcaseId:showcase.id,selectedOptionId:option.id,selectedOptionName:option.name,choices,requestedItems:(Array.isArray(body.requestedItems)?body.requestedItems:[]).map(x=>({name:String(x?.name||'').trim().slice(0,120),details:String(x?.details||'').trim().slice(0,500)})).filter(x=>x.name).slice(0,20),notes:String(body.notes||'').trim().slice(0,3000),customerName:String(body.customerName||showcase.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||showcase.customerPhone||'').trim().slice(0,30),finalized:body.finalized===true,updatedAt:FieldValue.serverTimestamp()};if(payload.finalized)payload.finalizedAt=FieldValue.serverTimestamp();
-    await Promise.all([
-        firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).set(payload,{merge:true}),
-        firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(showcase.id).set({customerResponse:payload,updatedAt:FieldValue.serverTimestamp()},{merge:true})
-    ]);const fresh=await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(showcase.id).get();return res.json({error:false,response:customerBudgetResponse(fresh.data()||{})});
+    const choices = require('./public/js/budget-permissions').sanitize(showcase, option, body.choices);
+    const payload={showcaseId:showcase.id,selectedOptionId:option.id,selectedOptionName:option.name,choices,requestedItems:(Array.isArray(body.requestedItems)?body.requestedItems:[]).map(x=>({name:String(x?.name||'').trim().slice(0,120),details:String(x?.details||'').trim().slice(0,500)})).filter(x=>x.name).slice(0,20),notes:String(body.notes||'').trim().slice(0,3000),customerName:String(body.customerName||showcase.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||showcase.customerPhone||'').trim().slice(0,30),finalized:body.finalized===true,updatedAt:new Date()};if(payload.finalized)payload.finalizedAt=new Date();
+    const saved = await require('./lib/public-budget-storage').saveResponse(firestore, BUDGET_PUBLIC_RESPONSES_COLLECTION, BUDGET_SHOWCASES_COLLECTION, showcase, payload, {updatedAt:new Date()});
+    if (saved === showcase.customerResponse && res.locals) res.locals.databaseUnchanged = true;
+    return res.json({error:false,response:customerBudgetResponse(saved)});
 });
 
 app.get('/p/orcamento/:token', async (req, res) => {
@@ -2507,17 +2560,17 @@ app.get('/p/orcamento/:token', async (req, res) => {
     if (!budget) return res.status(404).send('<!doctype html><html lang="pt-BR"><body style="font-family:system-ui;text-align:center;padding:48px"><h1>Link inválido</h1><p>Solicite um novo link à loja.</p></body></html>');
     const configs = await getConfigsSafe();
     if (!configs.storePhone) configs.storePhone = whatsappClient.getStatus()?.phone || '';
-    const responseSnap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
+    const response = await require('./lib/public-budget-storage').readResponse(firestore,BUDGET_PUBLIC_RESPONSES_COLLECTION,budget);
     setPrivateShareHeaders(res);
-    return res.render('budget-share-public', { layout: false, budget: publicBudgetView(budget), configs, response: customerBudgetResponse(responseSnap.exists ? responseSnap.data() : {}), token: req.params.token });
+    return res.render('budget-share-public', { layout: false, budget: publicBudgetView(budget), configs, response: customerBudgetResponse(response), token: req.params.token });
 });
 
 app.get('/api/public/budgets/:token', async (req, res) => {
     setPrivateShareHeaders(res);
     const budget = await findBudgetByPublicToken(req.params.token);
     if (!budget) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
-    const snap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
-    return res.json({ error: false, response: customerBudgetResponse(snap.exists ? snap.data() : {}) });
+    const response = await require('./lib/public-budget-storage').readResponse(firestore,BUDGET_PUBLIC_RESPONSES_COLLECTION,budget);
+    return res.json({ error: false, response: customerBudgetResponse(response) });
 });
 
 app.put('/api/public/budgets/:token/response', async (req, res) => {
@@ -2530,21 +2583,16 @@ app.put('/api/public/budgets/:token/response', async (req, res) => {
     }
     const option = (budget.options || []).find((o) => String(o.id) === String(body.selectedOptionId || ''));
     if (!option) return res.status(400).json({ error: true, message: 'Selecione uma opção válida.' });
-    const validIds = new Set((option.items || []).map((i) => String(i.id)));
-    const choices = {};
-    Object.entries(body.choices && typeof body.choices === 'object' ? body.choices : {}).forEach(([id, value]) => {
-        if (validIds.has(String(id))) choices[String(id)] = { included: value?.included !== false, qty: Math.min(99, Math.max(0, Math.trunc(Number(value?.qty) || 0))) };
-    });
+    const choices = require('./public/js/budget-permissions').sanitize(budget, option, body.choices);
     const requestedItems = (Array.isArray(body.requestedItems) ? body.requestedItems : []).map((x) => ({ name: String(x?.name || '').trim().slice(0, 120), details: String(x?.details || '').trim().slice(0, 500) })).filter((x) => x.name).slice(0, 20);
     const finalized = body.finalized === true;
-    const payload = { budgetId: budget.id, budgetCode: budget.code || '', selectedOptionId: option.id, selectedOptionName: option.name || '', choices, requestedItems, notes: String(body.notes || '').trim().slice(0, 3000), customerName: String(body.customerName || budget.customerName || '').trim().slice(0, 120), customerPhone: String(body.customerPhone || budget.customerPhone || '').trim().slice(0, 30), finalized, updatedAt: FieldValue.serverTimestamp() };
-    if (finalized) payload.finalizedAt = FieldValue.serverTimestamp();
-    await Promise.all([
-        firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).set(payload, { merge: true }),
-        firestore.collection(BUDGETS_COLLECTION).doc(budget.id).set({ customerResponse: payload, customerResponseUpdatedAt: FieldValue.serverTimestamp(), status: finalized ? 'awaiting' : (budget.status === 'draft' ? 'sent' : budget.status), updatedAt: FieldValue.serverTimestamp() }, { merge: true })
-    ]);
-    const fresh = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(budget.id).get();
-    return res.json({ error: false, response: customerBudgetResponse(fresh.data() || {}) });
+    const payload = { budgetId: budget.id, budgetCode: budget.code || '', selectedOptionId: option.id, selectedOptionName: option.name || '', choices, requestedItems, notes: String(body.notes || '').trim().slice(0, 3000), customerName: String(body.customerName || budget.customerName || '').trim().slice(0, 120), customerPhone: String(body.customerPhone || budget.customerPhone || '').trim().slice(0, 30), finalized, updatedAt: new Date() };
+    if (finalized) payload.finalizedAt = new Date();
+    const saved = await require('./lib/public-budget-storage').saveResponse(firestore, BUDGET_PUBLIC_RESPONSES_COLLECTION, BUDGETS_COLLECTION, budget, payload, {
+        customerResponseUpdatedAt:new Date(), status:finalized ? 'awaiting' : (budget.status === 'draft' ? 'sent' : budget.status), updatedAt:new Date()
+    });
+    if (saved === budget.customerResponse && res.locals) res.locals.databaseUnchanged = true;
+    return res.json({ error:false, response:customerBudgetResponse(saved) });
 });
 
 
@@ -2857,8 +2905,21 @@ function verifyLogin(req, res, next) {
         }
         return res.redirect('/login');
     }
+    if (req.session.user.type === 'technician') {
+        const p = req.path;
+        const permitted = p === '/budgets' || p === '/api/bootstrap/budgets' || (p.startsWith('/api/budgets') && (req.method === 'GET' || p === '/api/budgets/template' || p === '/api/budgets/image' || req.method === 'PATCH' || p.endsWith('/public-link'))) || p === '/budget-requests' || p === '/api/bootstrap/budget-requests' || p.startsWith('/api/budget-requests') || p === '/dashboard' || p === '/logout' || p === '/api/bootstrap/services' || p === '/api/work/overview' || p === '/api/account/password' || p.startsWith('/api/diagnostico/sessao/') || (req.method === 'GET' && p.startsWith('/api/service-work-templates')) || p.startsWith('/api/services') || p.startsWith('/api/work/services/') || p.startsWith('/api/work/equipment/') || p.startsWith('/api/work/purchases/') || p.startsWith('/services');
+        if (!permitted) return res.status(403).json({error:true,message:'Perfil técnico: acesso restrito à oficina.'});
+    }
     next();
 }
+
+require('./lib/operations-routes')(app, { firestore, models: db, verifyLogin, verifyAdminApi, normalizeService: normalizeServiceOrderRow, budgetForUser, saleForUser, QRCode, whatsapp:whatsappClient });
+require('./lib/register-routes')(app, { firestore, models: db, verifyLogin, verifyAdminApi });
+const requestWorkflow = require('./lib/budget-requests').install(app,{firestore,models:db,verifyLogin,verifyAdminApi,buildBudget:buildBudgetRecordFromBody,buildService:serviceOrderFirestorePayload});
+
+app.get('/api/work/database-usage', verifyAdminApi, (req, res) => {
+    res.json({metrics:db.getReadMetrics(), note:'Contadores deste processo para consultas de coleções via models. Não incluem sessões, consultas diretas, transações, outros servidores ou faturamento oficial.'});
+});
 
 app.get('/api/shared-notes', verifyLogin, async (req, res) => {
     try {
@@ -2895,6 +2956,12 @@ app.put('/api/shared-notes', verifyLogin, async (req, res) => {
     }
 });
 
+function verifyWorkshop(req,res,next) {
+    if (!req.session.user) return res.redirect('/login');
+    if (!['admin','technician'].includes(req.session.user.type)) return res.redirect('/dashboard');
+    next();
+}
+
 function verifyAdmin(req, res, next) {
     if (!req.session.user) {
         return res.redirect('/login');
@@ -2915,6 +2982,25 @@ function verifyAdminApi(req, res, next) {
     next();
 }
 
+async function verifyBudgetEditor(req,res,next) {
+    if (!req.session.user) return res.status(401).json({error:true,message:'Entre novamente.'});
+    if (req.session.user.type === 'admin') return next();
+    if (req.session.user.type === 'technician') {
+        try {
+            const id = String(req.params.id || req.query.budgetId || '');
+            if (id) {
+                const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
+                const budget = snap.exists ? snap.data() : null;
+                if (budget?.requestId) {
+                    const request = await firestore.collection('budget_requests').doc(budget.requestId).get();
+                    if (request.exists && request.data().status === 'converted' && request.data().budgetId === id) return next();
+                }
+            }
+        } catch { return res.status(500).json({error:true,message:'Não foi possível verificar a permissão.'}); }
+    }
+    return res.status(403).json({error:true,message:'Somente ADM ou técnico com solicitação aprovada podem editar este orçamento.'});
+}
+
 function isBudgetFinalized(row) {
     return normalizeBudgetStatus(row?.status) === 'converted';
 }
@@ -2922,7 +3008,7 @@ function isBudgetFinalized(row) {
 async function deleteCashFlowEntriesForBudget(budgetId) {
     const bid = String(budgetId || '').trim();
     if (!bid) return;
-    const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION }).catch(() => []);
+    const rows = await db.findAll({ colecao: CASH_FLOW_COLLECTION });
     const batch = firestore.batch();
     let ops = 0;
     for (const row of Array.isArray(rows) ? rows : []) {
@@ -2975,7 +3061,7 @@ async function fetchBudgetNormalized(id) {
 }
 
 async function loadBudgetTemplatesNormalized() {
-    const rows = await db.findAll({ colecao: BUDGET_TEMPLATES_COLLECTION }).catch(() => []);
+    const rows = await db.findAll({ colecao: BUDGET_TEMPLATES_COLLECTION });
     return (Array.isArray(rows) ? rows : [])
         .map((row) => normalizeBudgetTemplate(row))
         .sort((a, b) => String(a.category || '').localeCompare(String(b.category || ''), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
@@ -2992,7 +3078,7 @@ async function getConfigsSafe() {
             .then((raw) => {
                 const configs = raw && raw.error !== true ? raw : {};
                 configsCache = configs;
-                configsCacheExpiresAt = Date.now() + 60000;
+                configsCacheExpiresAt = Date.now() + 300000;
                 return configs;
             })
             .finally(() => { configsPending = null; });
@@ -3045,6 +3131,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
         // Configurações e dados da página começam a carregar juntos, eliminando
         // uma ida sequencial ao Firestore em todo bootstrap.
+        if (!['dashboard','budget-requests','attendances','pdv','budgets','budget-links','stock','products','clients','services','cashflow','analytics','config'].includes(scope)) return res.status(404).json({error:true,message:'Página não suportada.'});
         const configsPromise = getConfigsSafe();
 
         if (scope === 'dashboard') {
@@ -3064,27 +3151,13 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
             return res.json({ configs, products: visibleProducts, sales, clients });
         }
 
+        if (scope === 'budget-requests') return res.json({configs:await configsPromise});
+        if (scope === 'attendances') return res.json({ configs: await configsPromise });
         if (scope === 'pdv') {
-            const [configs, productRows, budgetRows, customers, serviceWorkTemplates] = await Promise.all([
-                configsPromise,
-                loadProductsFromDb(),
-                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
-                loadCustomersNormalized({ includeSalesStats: false }),
-                loadServiceWorkTemplatesNormalized().then((templates) => templates.filter((x) => x.active))
+            const [configs, productRows, customers] = await Promise.all([
+                configsPromise, loadProductsFromDb(), loadCustomersNormalized({ includeSalesStats: false })
             ]);
-            const products = productRows.map((product) => productForPdv(product, req.session.user));
-            const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
-            return res.json({
-                configs,
-                products,
-                budgets,
-                customers,
-                serviceChecklistTemplates: {
-                    base: SERVICE_CHECKLIST_BASE,
-                    byDevice: SERVICE_CHECKLIST_BY_DEVICE
-                },
-                serviceWorkTemplates
-            });
+            return res.json({configs, products:productRows.map(product => productForPdv(product, req.session.user)), customers});
         }
 
         if (scope === 'budgets') {
@@ -3103,7 +3176,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
 
         if (scope === 'budget-links') {
-            const [configs,rows,budgetTemplates]=await Promise.all([configsPromise,db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]),loadBudgetTemplatesNormalized()]);
+            const [configs,rows,budgetTemplates]=await Promise.all([configsPromise,db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}),loadBudgetTemplatesNormalized()]);
             const showcases=(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase).sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||'')));
             return res.json({configs,showcases,budgetTemplates:budgetTemplates.map((row)=>budgetTemplateForUser(row,req.session.user))});
         }
@@ -3122,7 +3195,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
             const [configs, customers, budgetRows] = await Promise.all([
                 configsPromise,
                 loadCustomersNormalized(),
-                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => [])
+                db.findAll({ colecao: BUDGETS_COLLECTION })
             ]);
             const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
             return res.json({ configs, customers, budgets });
@@ -3133,11 +3206,11 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
                 configsPromise,
                 loadServiceOrdersNormalized(),
                 loadServiceWorkTemplatesNormalized(),
-                db.findAll({ colecao: BUDGETS_COLLECTION }).catch(() => []),
+                db.findAll({ colecao: BUDGETS_COLLECTION }),
                 loadCustomersNormalized({ includeSalesStats: false })
             ]);
             const budgets = Array.isArray(budgetRows) ? budgetRows.map((row) => budgetForUser(row, req.session.user)) : [];
-            return res.json({ configs, services, serviceWorkTemplates, budgets, customers });
+            return res.json({ configs, services: services.map(s => serviceForUser(s, req.session.user)), serviceWorkTemplates, budgets, customers });
         }
 
         if (scope === 'cashflow') {
@@ -3150,7 +3223,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
             const [configs, products, salesRows, clients] = await Promise.all([
                 configsPromise,
                 loadProductsFromDb(),
-                db.findAll({ colecao: SALES_COLLECTION }).catch(() => []),
+                db.findAll({ colecao: SALES_COLLECTION }),
                 loadCustomersNormalized()
             ]);
             const sales = Array.isArray(salesRows) ? salesRows.map(normalizeSaleRow) : [];
@@ -3164,6 +3237,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
 
         return res.status(404).json({ error: true, message: 'Página não suportada.' });
     } catch (err) {
+        if (databaseAvailability.observe(err)) return databaseAvailability.respond(err, req, res, () => {});
         console.error('bootstrap', err);
         return res.status(500).json({ error: true, message: 'Erro ao carregar dados da página.' });
     }
@@ -3295,6 +3369,7 @@ app.get('/login', (req, res) => {
 });
 
 app.get('/dashboard', verifyLogin, (req, res) => {
+    if (req.session.user.type === 'technician') return res.redirect('/services');
     renderAppShell(res, 'dashboard', req.session.user);
 });
 
@@ -3302,11 +3377,18 @@ app.get('/pdv', verifyLogin, (req, res) => {
     renderAppShell(res, 'pdv', req.session.user);
 });
 
+app.get('/attendances', verifyLogin, (req, res) => {
+    if (req.session.user.type === 'technician') return res.redirect('/services');
+    renderAppShell(res, 'attendances', req.session.user);
+});
+
+app.get('/budget-requests', verifyLogin, (req,res)=>renderAppShell(res,'budget-requests',req.session.user));
+
 app.get('/budgets', verifyLogin, (req, res) => {
     renderAppShell(res, 'budgets', req.session.user);
 });
 
-app.get('/budget-links', verifyLogin, (req,res)=>renderAppShell(res,'budget-links',req.session.user));
+app.get('/budget-links', verifyLogin, (req,res)=>req.session.user.type === 'admin' ? renderAppShell(res,'budget-links',req.session.user) : res.redirect('/budget-requests'));
 
 app.get('/stock', verifyLogin, (req, res) => {
     if (req.session.user.type !== 'admin') {
@@ -3315,11 +3397,11 @@ app.get('/stock', verifyLogin, (req, res) => {
     renderAppShell(res, 'stock', req.session.user);
 });
 
-app.get('/services', verifyAdmin, (req, res) => {
+app.get('/services', verifyWorkshop, (req, res) => {
     renderAppShell(res, 'services', req.session.user);
 });
 
-app.get('/services/:id', verifyAdmin, async (req, res) => {
+app.get('/services/:id', verifyWorkshop, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.redirect('/services');
     const configs = await getConfigsSafe();
@@ -3330,7 +3412,7 @@ app.get('/services/:id', verifyAdmin, async (req, res) => {
     res.render('layout', {
         body: 'service-work',
         bootstrap: '',
-        appData: { configs, user: publicSessionUser(req.session.user), service }
+        appData: { configs, user: publicSessionUser(req.session.user), service: serviceForUser(service, req.session.user) }
     });
 });
 
@@ -3527,10 +3609,19 @@ app.patch('/api/products/:id', verifyAdminApi, uploadProductImageIfMultipart, as
     }
 
     try {
-        await db.update(PRODUCTS_COLLECTION, id, patch);
+        await firestore.runTransaction(async tx => {
+            const ref = firestore.collection(PRODUCTS_COLLECTION).doc(id);
+            const current = await tx.get(ref);
+            const reserved = Number(current.data()?.reservedQty || 0);
+            if (reserved > 0 && ((typeof patch.qty === 'number' && patch.qty < reserved) || patch.itemType === 'service' || patch.trackStock === false || patch.active === false)) {
+                throw new Error('Este produto possui peças reservadas para a oficina. Libere as reservas antes desta alteração.');
+            }
+            tx.update(ref, patch);
+        });
+        db.invalidate(PRODUCTS_COLLECTION);
     } catch (e) {
         console.error(e);
-        return res.status(500).json({ error: true, message: 'Erro ao atualizar produto.' });
+        return res.status(500).json({ error: true, message: e.message || 'Erro ao atualizar produto.' });
     }
 
     const fresh = await firestore.collection(PRODUCTS_COLLECTION).doc(id).get();
@@ -3549,7 +3640,13 @@ app.delete('/api/products/:id', verifyAdminApi, async (req, res) => {
     }
 
     try {
-        await db.delete(PRODUCTS_COLLECTION, id);
+        await firestore.runTransaction(async tx => {
+            const ref = firestore.collection(PRODUCTS_COLLECTION).doc(id);
+            const current = await tx.get(ref);
+            if (Number(current.data()?.reservedQty || 0) > 0) throw new Error('Libere as peças reservadas antes de excluir.');
+            tx.delete(ref);
+        });
+        db.invalidate(PRODUCTS_COLLECTION);
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: true, message: 'Erro ao excluir produto.' });
@@ -3560,7 +3657,7 @@ app.delete('/api/products/:id', verifyAdminApi, async (req, res) => {
 
 app.get('/api/budgets', verifyLogin, async (req, res) => {
     try {
-        const rows = await db.findAll({ colecao: BUDGETS_COLLECTION });
+        const rows = await db.findAll({ colecao: BUDGETS_COLLECTION, fresh: req.query.refresh === '1' });
         const budgets = Array.isArray(rows) ? rows.map((row) => budgetForUser(row, req.session.user)) : [];
         budgets.sort((a, b) => {
             const ad = new Date(a.updatedAt || a.createdAt || 0).getTime() || 0;
@@ -3574,15 +3671,7 @@ app.get('/api/budgets', verifyLogin, async (req, res) => {
     }
 });
 
-app.post('/api/budgets/:id/public-link', verifyLogin, async (req, res) => {
-    const id = String(req.params.id || '').trim();
-    const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
-    if (!snap.exists) return res.status(404).json({ error: true, message: 'Orçamento não encontrado.' });
-    const current = snap.data() || {};
-    const token = String(current.publicToken || randomUUID());
-    await firestore.collection(BUDGETS_COLLECTION).doc(id).set({ publicToken: token, publicLinkCreatedAt: FieldValue.serverTimestamp(), status: normalizeBudgetStatus(current.status) === 'draft' ? 'sent' : current.status, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    return res.json({ error: false, token, url: `${req.protocol}://${req.get('host')}/p/orcamento/${token}`, budget: budgetForUser(await fetchBudgetNormalized(id), req.session.user) });
-});
+app.post('/api/budgets/:id/public-link', verifyBudgetEditor, require('./lib/budget-public-link')({firestore,models:db,fetchBudgetNormalized,budgetForUser}));
 
 app.get('/api/budgets/:id/customer-response', verifyLogin, async (req, res) => {
     const snap = await firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(String(req.params.id || '')).get();
@@ -3594,13 +3683,13 @@ app.post('/api/budget-templates/image', verifyAdminApi, uploadBudgetImage, valid
     return res.json({ error: false, imageUrl: `/uploads/${req.file.filename}` });
 });
 
-app.post('/api/budgets/image', verifyLogin, uploadBudgetImage, validateBudgetImageSignature, (req, res) => {
+app.post('/api/budgets/image', verifyBudgetEditor, uploadBudgetImage, validateBudgetImageSignature, (req, res) => {
     if (!req.file) return res.status(400).json({ error: true, message: 'Selecione uma imagem.' });
     return res.json({ error: false, imageUrl: `/uploads/${req.file.filename}` });
 });
 
-app.get('/api/budget-showcases',verifyLogin,async(_req,res)=>{const rows=await db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION}).catch(()=>[]);return res.json({error:false,showcases:(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase)});});
-app.post('/api/budget-showcases',verifyLogin,async(req,res)=>{
+app.get('/api/budget-showcases',verifyLogin,async(req,res)=>{const rows=await db.findAll({colecao:BUDGET_SHOWCASES_COLLECTION,fresh:req.query.refresh === '1'});return res.json({error:false,showcases:(Array.isArray(rows)?rows:[]).map(normalizeBudgetShowcase)});});
+app.post('/api/budget-showcases',verifyAdminApi,async(req,res)=>{
     const body=req.body||{},ids=[...new Set((Array.isArray(body.templateIds)?body.templateIds:[]).map(String))].slice(0,12);if(!ids.length)return res.status(400).json({error:true,message:'Selecione ao menos um modelo.'});
     const templateSnaps=await Promise.all(ids.map((id)=>firestore.collection(BUDGET_TEMPLATES_COLLECTION).doc(id).get()));
     const templates=templateSnaps.flatMap((snap,index)=>snap.exists&&snap.data()?.active!==false?[normalizeBudgetTemplate({id:ids[index],...snap.data()})]:[]);if(!templates.length)return res.status(400).json({error:true,message:'Nenhum modelo válido selecionado.'});
@@ -3610,7 +3699,7 @@ app.post('/api/budget-showcases',verifyLogin,async(req,res)=>{
     },i));
     const payload={id,token,title:String(body.title||'Seleção de orçamentos').trim().slice(0,120),customerName:String(body.customerName||'').trim().slice(0,120),customerPhone:String(body.customerPhone||'').trim().slice(0,30),templateIds:ids,options,status:'open',createdAt:FieldValue.serverTimestamp(),updatedAt:FieldValue.serverTimestamp()};await db.create(BUDGET_SHOWCASES_COLLECTION,id,payload);const snap=await firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id).get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...snap.data()}),url:`${req.protocol}://${req.get('host')}/p/escolha/${token}`});
 });
-app.patch('/api/budget-showcases/:id',verifyLogin,async(req,res)=>{const id=String(req.params.id||''),status=req.body?.status==='closed'?'closed':'open';const ref=firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id),snap=await ref.get();if(!snap.exists)return res.status(404).json({error:true,message:'Link não encontrado.'});await ref.set({status,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await ref.get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...fresh.data()})});});
+app.patch('/api/budget-showcases/:id',verifyAdminApi,async(req,res)=>{const id=String(req.params.id||''),status=req.body?.status==='closed'?'closed':'open';const ref=firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id),snap=await ref.get();if(!snap.exists)return res.status(404).json({error:true,message:'Link não encontrado.'});await ref.set({status,updatedAt:FieldValue.serverTimestamp()},{merge:true});const fresh=await ref.get();return res.json({error:false,showcase:normalizeBudgetShowcase({id,...fresh.data()})});});
 app.delete('/api/budget-showcases/:id',verifyLogin,async(req,res)=>{const id=String(req.params.id||'');await Promise.all([firestore.collection(BUDGET_SHOWCASES_COLLECTION).doc(id).delete(),firestore.collection(BUDGET_PUBLIC_RESPONSES_COLLECTION).doc(id).delete()]);return res.json({error:false});});
 
 function autoCustomerNotesFromBudget({ code, status, validUntil, total, budgetNotes }) {
@@ -3629,7 +3718,7 @@ function autoCustomerNotesFromBudget({ code, status, validUntil, total, budgetNo
 }
 
 async function findCustomerByContact({ name, phone, email, doc }) {
-    const rows = await db.findAll({ colecao: CUSTOMERS_COLLECTION }).catch(() => []);
+    const rows = await db.findAll({ colecao: CUSTOMERS_COLLECTION });
     const list = Array.isArray(rows) ? rows : [];
     const phoneNorm = sanitizePhone(phone);
     const emailNorm = String(email || '').trim().toLowerCase();
@@ -3833,6 +3922,7 @@ async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus
         internalNotes,
         paymentTerms: body.paymentTerms != null ? String(body.paymentTerms).trim() : '',
         deadline: body.deadline != null ? String(body.deadline).trim() : '',
+        customerCanEdit: body.customerCanEdit == null ? existing?.customerCanEdit !== false : body.customerCanEdit !== false,
         warrantyText: body.warrantyText != null ? String(body.warrantyText).trim() : '',
         includedServices: Array.isArray(body.includedServices)
             ? body.includedServices.map((x) => String(x || '').trim()).filter(Boolean)
@@ -3851,6 +3941,7 @@ async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus
 
     const serviceOrderId = body.serviceOrderId != null ? String(body.serviceOrderId).trim() : '';
     if (serviceOrderId) payload.serviceOrderId = serviceOrderId;
+    if (existing?.requestId) { payload.requestId = existing.requestId; payload.intake = existing.intake || null; }
     if (existing?.saleId) payload.saleId = String(existing.saleId);
     if (existing?.convertedOptionId) payload.convertedOptionId = String(existing.convertedOptionId);
     if (existing?.sentAt) payload.sentAt = existing.sentAt;
@@ -3870,7 +3961,7 @@ async function buildBudgetRecordFromBody(body, { id, code, createdAt, prevStatus
     };
 }
 
-app.post('/api/budgets', verifyLogin, async (req, res) => {
+app.post('/api/budgets', verifyAdminApi, async (req, res) => {
     const built = await buildBudgetRecordFromBody(req.body || {}, {
         id: randomUUID(),
         code: null,
@@ -3899,7 +3990,7 @@ app.post('/api/budgets', verifyLogin, async (req, res) => {
     }
 });
 
-app.patch('/api/budgets/:id/status', verifyLogin, async (req, res) => {
+app.patch('/api/budgets/:id/status', verifyBudgetEditor, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     try {
@@ -3950,7 +4041,7 @@ app.patch('/api/budgets/:id/status', verifyLogin, async (req, res) => {
     }
 });
 
-app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
+app.patch('/api/budgets/:id', verifyBudgetEditor, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
 
@@ -3990,7 +4081,7 @@ app.patch('/api/budgets/:id', verifyLogin, async (req, res) => {
     }
 });
 
-app.delete('/api/budgets/:id', verifyLogin, async (req, res) => {
+app.delete('/api/budgets/:id', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
@@ -4010,9 +4101,14 @@ app.delete('/api/budgets/:id', verifyLogin, async (req, res) => {
     }
 });
 
-app.post('/api/budgets/template', verifyLogin, (req, res) => {
+app.post('/api/budgets/template', verifyLogin, async (req, res) => {
     const kind = String(req.body?.kind || 'image').trim().toLowerCase();
-    const budget = req.body?.budget;
+    let budget = req.body?.budget;
+    if (req.session.user.type !== 'admin') {
+        const saved = budget?.id ? await fetchBudgetNormalized(String(budget.id)) : null;
+        if (!saved) return res.status(404).json({error:true,message:'Orçamento não encontrado.'});
+        budget = {...saved, includeItemImages: budget.includeItemImages === true};
+    }
     if (!budget || typeof budget !== 'object') {
         return res.status(400).json({ error: true, message: 'Orçamento inválido para template.' });
     }
@@ -4033,7 +4129,7 @@ app.post('/api/budgets/template', verifyLogin, (req, res) => {
 });
 
 // Endpoint legado: "finalizar" agora significa enviar o orçamento, sem lançar receita.
-app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
+app.patch('/api/budgets/:id/finalize', verifyBudgetEditor, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     try {
@@ -4057,7 +4153,7 @@ app.patch('/api/budgets/:id/finalize', verifyLogin, async (req, res) => {
     }
 });
 
-app.patch('/api/budgets/:id/follow-up', verifyLogin, async (req, res) => {
+app.patch('/api/budgets/:id/follow-up', verifyBudgetEditor, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     const snap = await firestore.collection(BUDGETS_COLLECTION).doc(id).get();
@@ -4079,7 +4175,7 @@ app.patch('/api/budgets/:id/follow-up', verifyLogin, async (req, res) => {
     }
 });
 
-app.post('/api/budgets/:id/duplicate', verifyLogin, async (req, res) => {
+app.post('/api/budgets/:id/duplicate', verifyAdminApi, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: true, message: 'ID inválido.' });
     try {
@@ -4116,6 +4212,7 @@ app.post('/api/budgets/:id/duplicate', verifyLogin, async (req, res) => {
             internalNotes: original.internalNotes,
             paymentTerms: original.paymentTerms,
             deadline: original.deadline,
+            customerCanEdit: original.customerCanEdit !== false,
             warrantyText: original.warrantyText,
             includedServices: original.includedServices,
             options,
@@ -4280,12 +4377,12 @@ app.post('/api/budgets/:id/save-as-template', verifyAdminApi, async (req, res) =
     }
 });
 
-app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
+app.post('/api/budgets/:id/convert-sale', verifyAdminApi, async (req, res) => {
     const budgetId = String(req.params.id || '').trim();
     if (!budgetId) return res.status(400).json({ error: true, message: 'ID inválido.' });
     const payment = normalizePaymentKey(req.body?.payment || 'money');
     if (!PAYMENT_KEYS.has(payment)) return res.status(400).json({ error: true, message: 'Forma de pagamento inválida.' });
-    const allowInsufficientStock = req.body?.allowInsufficientStock === true;
+    const allowInsufficientStock = req.body?.allowInsufficientStock === true && req.session.user?.type === 'admin';
     if (req.body?.paymentConfirmed !== true) {
         return res.status(400).json({ error: true, message: 'Confirme que o pagamento foi recebido/aprovado antes de registrar a venda.' });
     }
@@ -4310,9 +4407,16 @@ app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
             // que duas linhas do mesmo produto usem o mesmo saldo inicial e a última
             // atualização sobrescreva a anterior.
             const productNeeds = budgetDomain.aggregateProductQuantities(option.items);
+            const consumedReservations = budget.serviceOrderId
+                ? (await tx.get(firestore.collection('work_reservations').where('serviceId', '==', budget.serviceOrderId))).docs
+                    .map(d => ({ ...d.data(), id: d.id })).filter(r => r.status === 'consumed' && !r.billedSaleId)
+                : [];
+            const consumedQty = new Map();
+            consumedReservations.forEach(r => consumedQty.set(r.productId, (consumedQty.get(r.productId) || 0) + r.qty));
+
 
             const productMap = new Map();
-            for (const [productId, neededQty] of productNeeds) {
+            for (const [productId, requestedQty] of productNeeds) {
                 const ref = firestore.collection(PRODUCTS_COLLECTION).doc(productId);
                 const snap = await tx.get(ref);
                 if (!snap.exists) {
@@ -4320,9 +4424,10 @@ app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
                     throw Object.assign(new Error(`Produto não encontrado: ${example?.name || productId}`), { httpStatus: 400 });
                 }
                 const data = snap.data() || {};
+                const neededQty = Math.max(0, requestedQty - (consumedQty.get(productId) || 0));
                 const stock = Number.parseInt(String(data.qty), 10) || 0;
                 const tracksStock = productTracksStock(data);
-                if (tracksStock && stock < neededQty && !allowInsufficientStock) {
+                if (tracksStock && (Number(data.reservedQty || 0) > 0 || !allowInsufficientStock) && stock - Number(data.reservedQty || 0) < neededQty) {
                     throw Object.assign(new Error(`Estoque insuficiente para "${data.name || productId}". Necessário: ${neededQty}. Disponível: ${stock}.`), { httpStatus: 409, stockInsufficient: true });
                 }
                 productMap.set(productId, { ref, id: productId, data, stock, tracksStock, neededQty });
@@ -4355,14 +4460,22 @@ app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
                     costCents += toCents(lineCostFromUnit(item.unitCost, qty));
                 }
             }
+            const registerRef = firestore.collection('register_active').doc(require('./lib/operations-domain').hash(String(req.session.user.email || req.session.user.id || req.session.user.name)));
+            const registerSnap = await tx.get(registerRef);
             // Todas as leituras da transação já ocorreram; agora as baixas podem ser aplicadas.
             for (const row of productMap.values()) {
                 if (row.tracksStock) tx.update(row.ref, { qty: row.stock - row.neededQty });
             }
 
             const saleId = randomUUID();
+            consumedReservations.forEach(r => {
+                if (productNeeds.has(r.productId)) tx.update(firestore.collection('work_reservations').doc(r.id), { billedSaleId: saleId });
+            });
             const code = saleDisplayCode();
             const total = Number(option.total) || 0;
+            const receivedAmount = req.body.initialReceived == null || req.body.initialReceived === '' ? total : Number(req.body.initialReceived);
+            if (!Number.isFinite(receivedAmount) || receivedAmount < 0 || receivedAmount > total) throw Object.assign(new Error('Sinal deve ficar entre zero e o total da venda.'),{httpStatus:400});
+            const initialAmountPaid = Math.round(receivedAmount*100)/100;
             const costTotal = fromCents(costCents);
             const profit = Math.round((total - costTotal) * 100) / 100;
             const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
@@ -4374,14 +4487,18 @@ app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
                 subtotal: Number(option.subtotal) || 0,
                 discount: Number(option.discount?.amount) || 0,
                 extra: Number(option.extra?.amount) || 0,
-                total, costTotal, profit, createdAt: FieldValue.serverTimestamp()
+                total, initialAmountPaid, amountPaid: initialAmountPaid, costTotal, profit, createdAt: FieldValue.serverTimestamp()
             };
             if (user && (user.name || user.email)) saleRecord.cashier = { name: String(user.name || ''), email: String(user.email || '') };
             if (payment === 'money') {
-                const received = req.body?.cashReceived == null || req.body?.cashReceived === '' ? total : Number(req.body.cashReceived);
-                if (!Number.isFinite(received) || received + 1e-6 < total) throw Object.assign(new Error('Valor recebido menor que o total.'), { httpStatus: 400 });
+                const received = req.body?.cashReceived == null || req.body?.cashReceived === '' ? initialAmountPaid : Number(req.body.cashReceived);
+                if (!Number.isFinite(received) || received + 1e-6 < initialAmountPaid) throw Object.assign(new Error('Valor recebido menor que o total.'), { httpStatus: 400 });
                 saleRecord.cashReceived = Math.round(received * 100) / 100;
-                saleRecord.change = Math.round((saleRecord.cashReceived - total) * 100) / 100;
+                saleRecord.change = Math.round((saleRecord.cashReceived - initialAmountPaid) * 100) / 100;
+            }
+            if (registerSnap.exists && payment === 'money') {
+                tx.update(registerRef,{netCash:Math.round((Number(registerSnap.data().netCash || 0)+initialAmountPaid)*100)/100});
+                saleRecord.registerId = registerSnap.data().id;
             }
             const saleRef = firestore.collection(SALES_COLLECTION).doc(saleId);
             tx.set(saleRef, saleRecord);
@@ -4393,6 +4510,7 @@ app.post('/api/budgets/:id/convert-sale', verifyLogin, async (req, res) => {
             }, { merge: true });
             result = { saleId, saleCode: code, optionId: option.id, cashFlowId: cfPayload.id };
         });
+        [SALES_COLLECTION,PRODUCTS_COLLECTION,CASH_FLOW_COLLECTION,BUDGETS_COLLECTION].forEach(db.invalidate);
         return res.json({ error: false, ...result, budget: budgetForUser(await fetchBudgetNormalized(budgetId), req.session.user) });
     } catch (e) {
         console.error(e);
@@ -4429,7 +4547,7 @@ const POINT_FAILURE_REASON = {
 
 let cachedPointTerminal = null;
 let activePointOrderId = null;
-const pendingPointSales = new Map();
+const pendingPointSales = require('./lib/durable-payments')(firestore);
 const PIX_PENDING_STATUSES = new Set(['pending', 'in_process']);
 const MP_TERMINAL_BUSY_CODES = new Set([
     'already_queued_order_on_terminal',
@@ -4607,7 +4725,7 @@ async function cancelAllKnownPendingSales() {
     const pointOrderIds = new Set();
     const qrOrderIds = new Set();
     if (activePointOrderId) pointOrderIds.add(activePointOrderId);
-    for (const pending of pendingPointSales.values()) {
+    for (const pending of await pendingPointSales.values()) {
         if (pending?.mode === 'point' && pending?.pointOrderId) {
             pointOrderIds.add(pending.pointOrderId);
         }
@@ -4630,7 +4748,7 @@ async function cancelAllKnownPendingSales() {
         }
     }
     await waitForMpOrdersIdle([...pointOrderIds, ...qrOrderIds]);
-    pendingPointSales.clear();
+    await pendingPointSales.clear();
     await syncActivePointOrderTracking([...pointOrderIds, ...qrOrderIds]);
 }
 
@@ -4655,7 +4773,7 @@ async function waitPointOrderFinal(orderId) {
 }
 
 async function postPointOrder(payload) {
-    return api.post('/v1/orders', payload, { headers: { 'X-Idempotency-Key': randomUUID() } });
+    return api.post('/v1/orders', payload, { headers: { 'X-Idempotency-Key': require('./lib/payment-recovery').gatewayKey(payload) } });
 }
 
 async function createPointOrder({ amount, payment, saleCode, installments = 1 }) {
@@ -4669,7 +4787,7 @@ async function createPointOrderUnlocked({ amount, payment, saleCode, installment
     const defaultType = POINT_PAYMENT_TYPE_MAP[payment];
     if (!defaultType && payment !== 'pix') throw new Error('Forma de pagamento não suportada na maquininha.');
 
-    await cancelAllKnownPendingSales();
+    // Existing payments remain tracked until reconciled.
     const terminalId = await resolvePointTerminalId();
     const payload = {
         type: 'point',
@@ -4702,7 +4820,7 @@ async function createPointOrderUnlocked({ amount, payment, saleCode, installment
     const maxAttempts = 4;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (attempt > 0) {
-            await cancelAllKnownPendingSales();
+            // Existing payments remain tracked until reconciled.
             await sleep(600 + attempt * 700);
         }
         try {
@@ -4763,7 +4881,7 @@ async function createInstoreQrOrder({ amount, saleCode, saleId }) {
     if (!MP_QR_EXTERNAL_POS_ID) {
         throw new Error('QR de loja/caixa não configurado. Defina MERCADOPAGO_QR_EXTERNAL_POS_ID (external_id do caixa).');
     }
-    await cancelAllKnownPendingSales();
+    // Existing payments remain tracked until reconciled.
     const amtStr = toMoneyAmount(amount);
     const externalReference = String(saleId || saleCode || randomUUID()).slice(0, 64);
     const payload = {
@@ -4783,7 +4901,7 @@ async function createInstoreQrOrder({ amount, saleCode, saleId }) {
         }
     };
     const { data: createdOrder } = await api.post('/v1/orders', payload, {
-        headers: { "X-Idempotency-Key": randomUUID() }
+        headers: { "X-Idempotency-Key": require('./lib/payment-recovery').gatewayKey(payload) }
     });
     const qrData = createdOrder?.type_response?.qr_data ? String(createdOrder.type_response.qr_data) : '';
     let qrBase64 = '';
@@ -4794,7 +4912,7 @@ async function createInstoreQrOrder({ amount, saleCode, saleId }) {
 }
 
 async function createOnlinePixPayment({ amount, saleCode }) {
-    await cancelAllKnownPendingSales();
+    // Existing payments remain tracked until reconciled.
     const payerEmail = process.env.MERCADOPAGO_PIX_PAYER_EMAIL || 'fernandoj132sj@gmail.com';
     const payload = {
         transaction_amount: fromCents(toCents(amount)),
@@ -4803,7 +4921,7 @@ async function createOnlinePixPayment({ amount, saleCode }) {
         external_reference: saleCode,
         payer: { email: payerEmail }
     };
-    const { data } = await api.post('/v1/payments', payload, { headers: { "X-Idempotency-Key": randomUUID() } });
+    const { data } = await api.post('/v1/payments', payload, { headers: { "X-Idempotency-Key": require('./lib/payment-recovery').gatewayKey(payload) } });
     return data;
 }
 
@@ -4821,22 +4939,12 @@ async function finalizeSaleInDb({ saleId, saleRecord, stockUpdates }) {
         profit: financials.profit
     };
 
-    const batch = firestore.batch();
-    const saleRef = firestore.collection(SALES_COLLECTION).doc(saleId);
-    batch.set(saleRef, enrichedRecord);
-
-    const updatedProducts = [];
-    for (const u of stockUpdates) {
-        const ref = firestore.collection(PRODUCTS_COLLECTION).doc(u.id);
-        batch.update(ref, { qty: u.nextQty });
-        updatedProducts.push(normalizeProduct({ ...u.p, id: u.id, qty: u.nextQty }));
-    }
-
     const cfPayload = buildCashFlowPayloadFromSale(saleId, enrichedRecord);
-    const cfRef = firestore.collection(CASH_FLOW_COLLECTION).doc(cfPayload.id);
-    batch.set(cfRef, cfPayload);
-
-    await batch.commit();
+    const result = await require('./lib/sale-transaction').commitSale({
+        firestore, saleId, record: enrichedRecord, stockUpdates, cashFlow: cfPayload
+    });
+    const updatedProducts = result.products.map(normalizeProduct);
+    [SALES_COLLECTION, PRODUCTS_COLLECTION, CASH_FLOW_COLLECTION].forEach(db.invalidate);
     const cashFlowEntry = normalizeCashFlowRow({
         ...cfPayload,
         createdAt: new Date().toISOString()
@@ -4844,7 +4952,7 @@ async function finalizeSaleInDb({ saleId, saleRecord, stockUpdates }) {
     return { updatedProducts, cashFlowEntry };
 }
 
-app.post('/api/sales', verifyLogin, async (req, res) => {
+app.post('/api/sales', verifyLogin, require('./lib/request-idempotency')(firestore, saleForUser), async (req, res) => {
     const body = req.body || {};
     const rawItems = Array.isArray(body.items) ? body.items : [];
     if (rawItems.length === 0) {
@@ -4852,7 +4960,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     }
 
     const payment = normalizePaymentKey(body.payment);
-    if (!PAYMENT_KEYS.has(payment)) {
+    if (!PAYMENT_KEYS.has(payment) && payment !== 'mixed') {
         return res.status(400).json({ error: true, message: 'Forma de pagamento inválida.' });
     }
 
@@ -4868,7 +4976,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     const client = clientLabel || 'Balcão';
     const saleNotes = body.notes != null ? String(body.notes).trim().slice(0, 500) : '';
 
-    const allowInsufficientStock = body.allowInsufficientStock === true;
+    const allowInsufficientStock = body.allowInsufficientStock === true && req.session.user?.type === 'admin';
     const user = req.session.user && typeof req.session.user === 'object' ? req.session.user : null;
     const isAdminSale = user?.type === 'admin';
     const resolvedItems = [];
@@ -4925,7 +5033,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         }
         const tracksStock = productTracksStock(p);
         const stock = Number.parseInt(String(p.qty), 10) || 0;
-        if (tracksStock && stock < qty && !allowInsufficientStock) {
+        if (tracksStock && (Number(p.reservedQty || 0) > 0 || !allowInsufficientStock) && stock - Number(p.reservedQty || 0) < qty) {
             return res.status(400).json({
                 error: true,
                 stockInsufficient: true,
@@ -4959,7 +5067,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
             lineTotal,
             lineCost
         });
-        if (tracksStock) stockUpdates.push({ id, nextQty, p });
+        if (tracksStock) stockUpdates.push({ id, nextQty, p, quantity: qty });
     }
 
     const subtotal = fromCents(subtotalCents);
@@ -4971,6 +5079,9 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     const code = saleDisplayCode();
     const saleRecord = {
         id: saleId,
+        allowInsufficientStock,
+        customerId: String(body.customerId || ""),
+        cashier: { name: String(user?.name || ""), email: String(user?.email || "") },
         code,
         client,
         payment,
@@ -4987,6 +5098,20 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         profit,
         createdAt: FieldValue.serverTimestamp()
     };
+    if (payment === 'mixed') {
+        try {
+            saleRecord.payments = require('./lib/split-payments').validateSplitPayments(body.payments, total, body.paymentsConfirmed);
+            saleRecord.paymentConfirmation = 'operator';
+        } catch (error) { return res.status(400).json({ error: true, message: error.message }); }
+    }
+    saleRecord.amountPaid = total;
+    if (payment === 'money' && body.initialReceived != null) {
+        const paid = Number(body.initialReceived);
+        if (!Number.isFinite(paid) || paid < 0 || paid > total) return res.status(400).json({error:true,message:'Sinal deve ficar entre zero e o total.'});
+        saleRecord.amountPaid = Math.round(paid * 100) / 100;
+    }
+    saleRecord.initialAmountPaid = saleRecord.amountPaid;
+    await req.saleRequestRef.update({saleId});
     if (saleNotes) saleRecord.notes = saleNotes;
 
     if (payment === 'credit_card') {
@@ -4994,6 +5119,13 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         saleRecord.installmentsCost = 'buyer';
     }
 
+    if (payment !== 'money' && payment !== 'mixed') {
+        await pendingPointSales.set(saleId, {
+            owner: String(user?.email || user?.id || ''), mode: 'creation_pending', intendedMode: payment === 'pix' ? (MP_QR_EXTERNAL_POS_ID ? 'mp_qr_instore' : 'pix_online') : 'point', saleId, saleRecord,
+            stockUpdates, resolvedItems, discountAmount, extraAmount, subtotal, total, client, payment, code, createdAtMs: Date.now()
+        });
+        req.paymentStarted = true;
+    }
     let pointPaymentInfo = null;
     if (payment === 'money') {
         const raw = body.cashReceived;
@@ -5001,7 +5133,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         let receivedRounded;
         let changeRounded;
         if (str === '') {
-            receivedRounded = Math.round(total * 100) / 100;
+            receivedRounded = Math.round(saleRecord.amountPaid * 100) / 100;
             changeRounded = 0;
         } else {
             const rawReceived = Number(raw);
@@ -5009,15 +5141,15 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 return res.status(400).json({ error: true, message: 'Valor recebido inválido.' });
             }
             receivedRounded = Math.round(rawReceived * 100) / 100;
-            if (receivedRounded + 1e-6 < total) {
+            if (receivedRounded + 1e-6 < saleRecord.amountPaid) {
                 return res.status(400).json({ error: true, message: 'Valor recebido menor que o total da venda.' });
             }
-            changeRounded = Math.round((receivedRounded - total) * 100) / 100;
+            changeRounded = Math.round((receivedRounded - saleRecord.amountPaid) * 100) / 100;
         }
         saleRecord.cashReceived = receivedRounded;
         saleRecord.change = changeRounded;
     } else if (payment === 'pix') {
-        const pendingToken = randomUUID();
+        const pendingToken = saleId;
         if (MP_QR_EXTERNAL_POS_ID) {
             let qrResult;
             try {
@@ -5037,7 +5169,8 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 });
             }
             const qrOrder = qrResult.order;
-            pendingPointSales.set(pendingToken, {
+            await pendingPointSales.set(pendingToken, {
+                owner: String(user?.email || user?.id || ""),
                 mode: 'mp_qr_instore',
                 saleId,
                 saleRecord,
@@ -5086,7 +5219,8 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 }
             });
         }
-        pendingPointSales.set(pendingToken, {
+        await pendingPointSales.set(pendingToken, {
+                owner: String(user?.email || user?.id || ""),
             mode: 'pix_online',
             saleId,
             saleRecord,
@@ -5115,7 +5249,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 qrTicketUrl: pixPayment?.point_of_interaction?.transaction_data?.ticket_url || ''
             }
         });
-    } else {
+    } else if (payment !== 'mixed') {
         let pointOrder;
         try {
             pointOrder = await createPointOrder({
@@ -5142,8 +5276,9 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
                 }
             });
         }
-        const pendingToken = randomUUID();
-        pendingPointSales.set(pendingToken, {
+        const pendingToken = saleId;
+        await pendingPointSales.set(pendingToken, {
+                owner: String(user?.email || user?.id || ""),
             mode: 'point',
             saleId,
             saleRecord,
@@ -5212,6 +5347,7 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
         total,
         adjustments: saleRecord.adjustments
     };
+    if (saleRecord.payments) saleResponse.payments = saleRecord.payments;
     if (saleRecord.cashReceived != null) saleResponse.cashReceived = saleRecord.cashReceived;
     if (saleRecord.change != null) saleResponse.change = saleRecord.change;
 
@@ -5224,14 +5360,41 @@ app.post('/api/sales', verifyLogin, async (req, res) => {
     });
 });
 
+app.post('/api/sales/pending/:token/recover', verifyAdminApi, async (req,res) => {
+    try {
+        const token = String(req.params.token);
+        const pending = await pendingPointSales.get(token);
+        if (!pending || pending.mode !== 'creation_pending') return res.status(409).json({error:true,message:'Esta pendência já possui vínculo ou não existe.'});
+        const providerId = String(req.body.providerId || '').trim();
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(providerId)) return res.status(400).json({error:true,message:'Informe o identificador da cobrança existente no Mercado Pago.'});
+        const provider = pending.intendedMode === 'pix_online' ? await getOnlinePixPaymentStatus(providerId) : await getPointOrderStatus(providerId);
+        require('./lib/payment-recovery').validateRecoveredPayment(pending, provider);
+        const patch = {mode:pending.intendedMode};
+        if (pending.intendedMode === 'pix_online') patch.pixPaymentId = providerId;
+        else if (pending.intendedMode === 'mp_qr_instore') patch.qrOrderId = providerId;
+        else patch.pointOrderId = providerId;
+        await firestore.runTransaction(async tx => {
+            const ref = firestore.collection('payment_pending').doc(token);
+            const snap = await tx.get(ref);
+            if (!snap.exists || snap.data().mode !== 'creation_pending') throw new Error('Pendência atualizada por outro operador.');
+            tx.update(ref, patch);
+            tx.create(firestore.collection('audit_events').doc(randomUUID()), {action:'payment.recovered',targetId:pending.saleId,actor:req.session.user.email || '',at:new Date().toISOString(),details:{providerId,mode:patch.mode}});
+        });
+        return res.json({error:false,message:'Cobrança vinculada. Consulte a pendência para confirmar e reconciliar a venda.'});
+    } catch(e) { return res.status(400).json({error:true,message:e.message || 'Não foi possível recuperar o vínculo.'}); }
+});
+
 app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
     const token = String(req.params.token || '').trim();
-    const pending = pendingPointSales.get(token);
-    if (!pending) {
+    const pending = await pendingPointSales.get(token);
+    if (!pending || (pending.owner !== String(req.session.user.email || req.session.user.id || '') && req.session.user.type !== 'admin')) {
         return res.status(404).json({ error: true, message: 'Pagamento pendente não encontrado.' });
     }
 
     try {
+        if (pending.mode === 'creation_pending') {
+            return res.json({error:false,pending:true,requiresReview:true,payment:{status:'unknown'},message:`Criação sem confirmação para ${pending.code}. Verifique a referência no Mercado Pago antes de uma nova cobrança.`});
+        }
         if (pending.mode === 'pix_online') {
             const pix = await getOnlinePixPaymentStatus(pending.pixPaymentId);
             const pixStatus = String(pix?.status || '');
@@ -5251,7 +5414,7 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
             }
             if (pixStatus !== 'approved') {
                 const reason = String(pix?.status_detail || 'Pagamento PIX não aprovado.');
-                pendingPointSales.delete(token);
+                await pendingPointSales.delete(token);
                 return res.status(400).json({
                     error: true,
                     pending: false,
@@ -5283,7 +5446,7 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
             }
             if (status !== 'processed') {
                 const reason = extractPointReason(order);
-                pendingPointSales.delete(token);
+                await pendingPointSales.delete(token);
                 return res.status(400).json({
                     error: true,
                     pending: false,
@@ -5316,7 +5479,7 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
 
             if (status !== 'processed') {
                 const reason = extractPointReason(order);
-                pendingPointSales.delete(token);
+                await pendingPointSales.delete(token);
                 return res.status(400).json({
                     error: true,
                     pending: false,
@@ -5373,7 +5536,7 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
             saleRecord: pending.saleRecord,
             stockUpdates: pending.stockUpdates
         });
-        pendingPointSales.delete(token);
+        await pendingPointSales.delete(token);
 
         const saleResponse = {
             id: pending.saleId,
@@ -5399,16 +5562,16 @@ app.get('/api/sales/pending/:token', verifyLogin, async (req, res) => {
             error: false,
             pending: false,
             sale: saleResponse,
-            products: updatedProducts,
+            products: updatedProducts.map(p => productForPdv(p, req.session.user)),
             payment: successPayment,
-            cashFlowEntry
+            cashFlowEntry: cashFlowForUser(cashFlowEntry, req.session.user)
         });
     } catch (e) {
         console.error('Falha ao verificar pagamento pendente:', e?.response?.data || e);
         return res.status(502).json({
             error: true,
             pending: true,
-            message: 'Erro ao consultar status do pagamento.'
+            message: e?.response ? 'Consulta ao provedor indisponível. Não repita a cobrança antes de verificar a pendência.' : (e.message || 'Não foi possível reconciliar o pagamento; a pendência foi preservada.')
         });
     }
 });
@@ -5673,7 +5836,7 @@ app.patch('/api/cash-flow/:id', verifyLogin, async (req, res) => {
     }
 
     const prev = snap.data() || {};
-    if (isPdvCashFlowEntry(prev)) {
+    if (isPdvCashFlowEntry(prev) || prev.source === 'sale_receipt') {
         return res.status(403).json({
             error: true,
             message: 'Lançamentos de venda do PDV não podem ser editados. Altere na venda ou exclua a venda no sistema.'
@@ -5726,7 +5889,7 @@ app.delete('/api/cash-flow/:id', verifyLogin, async (req, res) => {
     }
 
     const prev = snap.data() || {};
-    if (isPdvCashFlowEntry(prev)) {
+    if (isPdvCashFlowEntry(prev) || prev.source === 'sale_receipt') {
         return res.status(403).json({
             error: true,
             message: 'Lançamentos gerados por vendas do PDV não podem ser excluídos aqui.'
@@ -5856,7 +6019,7 @@ app.delete('/api/service-work-templates/:id', verifyLogin, async (req, res) => {
 });
 
 app.post('/api/services/template', verifyLogin, async (req, res) => {
-    if (req.session.user?.type !== 'admin') {
+    if (!['admin','technician'].includes(req.session.user?.type)) {
         return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
     }
     const kind = String(req.body?.kind || 'image').trim();
@@ -5885,7 +6048,7 @@ app.post('/api/services/template', verifyLogin, async (req, res) => {
 });
 
 app.post('/api/services/:id/share', verifyLogin, async (req, res) => {
-    if (req.session.user?.type !== 'admin') {
+    if (!['admin','technician'].includes(req.session.user?.type)) {
         return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
     }
     const id = String(req.params.id || '').trim();
@@ -5895,6 +6058,7 @@ app.post('/api/services/:id/share', verifyLogin, async (req, res) => {
     }
     let service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
     const body = req.body || {};
+    if (body.markDelivered && !canDeliver(service)) return res.status(400).json({error:true,message:'Confirme o checklist de entrega na ficha de atendimento.'});
     const report = await dispatchServiceShare(service, req, {
         sendWhatsapp: Boolean(body.sendWhatsapp),
         includeLink: body.includeLink !== false,
@@ -5929,15 +6093,15 @@ app.post('/api/services/:id/share', verifyLogin, async (req, res) => {
 });
 
 app.get('/api/services', verifyLogin, async (req, res) => {
-    if (req.session.user?.type !== 'admin') {
+    if (!['admin','technician'].includes(req.session.user?.type)) {
         return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
     }
     const services = await loadServiceOrdersNormalized();
-    return res.json({ error: false, services });
+    return res.json({ error: false, services: services.map(s => serviceForUser(s, req.session.user)) });
 });
 
 app.get('/api/services/:id', verifyLogin, async (req, res) => {
-    if (req.session.user?.type !== 'admin') {
+    if (!['admin','technician'].includes(req.session.user?.type)) {
         return res.status(403).json({ error: true, message: 'Acesso restrito ao administrador.' });
     }
     const id = String(req.params.id || '').trim();
@@ -5949,14 +6113,17 @@ app.get('/api/services/:id', verifyLogin, async (req, res) => {
         return res.status(404).json({ error: true, message: 'Ordem de serviço não encontrada.' });
     }
     const service = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
-    return res.json({ error: false, service });
+    return res.json({ error: false, service: serviceForUser(service, req.session.user) });
 });
 
 app.post('/api/services', verifyLogin, async (req, res) => {
+    if (!['admin', 'technician'].includes(req.session.user?.type)) return res.status(403).json({error:true,message:'Registre uma solicitação. A equipe técnica decide sobre a abertura da OS.'});
     const body = req.body || {};
     const allowEmpty = body.allowEmpty === true;
     const skipBudget = body.skipBudget === true;
+    if (req.session.user?.type !== 'admin' && !skipBudget && !body.existingBudgetId) return res.status(403).json({error:true,message:'Crie uma solicitação de orçamento ou uma OS sem orçamento.'});
     const existingBudgetId = String(body.existingBudgetId || '').trim();
+    if (!existingBudgetId || skipBudget) return res.status(400).json({error:true,message:'Selecione um orçamento aprovado. Para uma nova entrada, registre uma solicitação.'});
     if (skipBudget && existingBudgetId) {
         return res.status(400).json({ error: true, message: 'Escolha vincular um orçamento ou criar a OS sem orçamento.' });
     }
@@ -5968,6 +6135,11 @@ app.post('/api/services', verifyLogin, async (req, res) => {
             return res.status(404).json({ error: true, message: 'Orçamento selecionado não foi encontrado.' });
         }
         existingBudget = normalizeBudgetRow({ id: existingBudgetId, ...(budgetSnap.data() || {}) });
+        if (existingBudget.requestId) {
+            req.params.id = existingBudget.requestId;
+            return requestWorkflow.createService(req, res);
+        }
+        if (!['approved', 'acquiring_parts'].includes(existingBudget.status)) return res.status(409).json({error:true,message:'O orçamento precisa estar aprovado para abrir a OS.'});
         if (existingBudget.serviceOrderId) {
             return res.status(409).json({ error: true, message: `O orçamento ${existingBudget.code || ''} já está vinculado a outra OS.` });
         }
@@ -6124,31 +6296,21 @@ app.post('/api/services', verifyLogin, async (req, res) => {
     const firestorePayload = serviceOrderFirestorePayload(payload);
 
     try {
-        await db.create(SERVICE_ORDERS_COLLECTION, id, firestorePayload);
-        if (existingBudget) {
-            await db.update(BUDGETS_COLLECTION, existingBudget.id, {
-                serviceOrderId: id,
-                updatedAt: FieldValue.serverTimestamp()
-            });
-            budgetLink.budget = { ...existingBudget, serviceOrderId: id };
-        }
+        await firestore.runTransaction(async (tx) => {
+            const budgetRef = firestore.collection(BUDGETS_COLLECTION).doc(existingBudget.id);
+            const latest = await tx.get(budgetRef);
+            if (!latest.exists || latest.data().serviceOrderId || !['approved', 'acquiring_parts'].includes(latest.data().status)) {
+                throw Object.assign(new Error('O orçamento mudou ou já possui uma OS. Atualize a lista.'), {status:409});
+            }
+            tx.create(firestore.collection(SERVICE_ORDERS_COLLECTION).doc(id), firestorePayload);
+            tx.update(budgetRef, {serviceOrderId:id, updatedAt:FieldValue.serverTimestamp()});
+        });
+        db.invalidate(SERVICE_ORDERS_COLLECTION);
+        db.invalidate(BUDGETS_COLLECTION);
+        budgetLink.budget = { ...existingBudget, serviceOrderId: id };
     } catch (e) {
         console.error('[OS] Erro ao gravar ordem:', e);
-        if (budgetLink.created && budgetLink.budgetId) {
-            try {
-                await db.delete(BUDGETS_COLLECTION, budgetLink.budgetId);
-            } catch (cleanupErr) {
-                console.error(cleanupErr);
-            }
-        }
-        if (existingBudget) {
-            try {
-                await db.delete(SERVICE_ORDERS_COLLECTION, id);
-            } catch (cleanupErr) {
-                console.error(cleanupErr);
-            }
-        }
-        return res.status(500).json({ error: true, message: 'Erro ao criar ordem de serviço.' });
+        return res.status(e.status || 500).json({ error: true, message: e.status ? e.message : 'Erro ao criar ordem de serviço.' });
     }
 
     return res.json({
@@ -6174,6 +6336,7 @@ app.patch('/api/services/:id', verifyLogin, async (req, res) => {
     const prev = normalizeServiceOrderRow({ id, ...(snap.data() || {}) });
     const patch = {};
 
+    if (body.status === 'delivered' && !canDeliver(prev)) return res.status(400).json({error:true,message:'Confirme o checklist de entrega na ficha de atendimento.'});
     if (body.status != null) patch.status = String(body.status || '').trim();
     if (body.priority != null) patch.priority = String(body.priority || '').trim();
     if (Array.isArray(body.checklist)) patch.checklist = body.checklist.map(normalizeServiceChecklistItem).filter((item) => item.label);
@@ -6212,7 +6375,7 @@ app.patch('/api/services/:id', verifyLogin, async (req, res) => {
         return res.status(500).json({ error: true, message: 'Erro ao atualizar ordem de serviço.' });
     }
 
-    return res.json({ error: false, service: merged });
+    return res.json({ error: false, service: serviceForUser(merged, req.session.user) });
 });
 
 app.post('/api/services/:id/checklist/:itemKey/photos', verifyLogin, (req, res, next) => {
@@ -6330,50 +6493,24 @@ app.get('/api/sales/:id', verifyLogin, async (req, res) => {
     }
 });
 
-app.delete('/api/sales/pending/active', verifyLogin, async (req, res) => {
-    try {
-        const result = await releaseActivePointPayment();
-        return res.json(result);
-    } catch (e) {
-        console.error('Falha ao liberar terminal:', formatMpAxiosError(e));
-        return res.json({ error: false, cancelWarning: true });
-    }
+app.delete('/api/sales/pending/active', verifyLogin, (req,res) => {
+    return res.status(409).json({error:true,cancelWarning:true,message:'Aguarde a identificação da cobrança e cancele somente o pagamento deste atendimento.'});
 });
 
 app.delete('/api/sales/pending/:token', verifyLogin, async (req, res) => {
-    const token = String(req.params.token || '').trim();
-    return withPointPaymentLock(async () => {
-        const pending = pendingPointSales.get(token);
-        const trackedOrderIds = [];
-        let cancelWarning = false;
-
-        if (pending) {
-            if (pending?.pointOrderId) trackedOrderIds.push(pending.pointOrderId);
-            if (pending?.qrOrderId) trackedOrderIds.push(pending.qrOrderId);
-            try {
-                if (pending?.mode === 'point') await cancelPointOrder(pending.pointOrderId);
-                if (pending?.mode === 'mp_qr_instore') await cancelQrStoreOrder(pending.qrOrderId);
-                await waitForMpOrdersIdle(trackedOrderIds);
-            } catch (e) {
-                cancelWarning = true;
-                console.error('Falha ao cancelar pagamento pendente:', formatMpAxiosError(e));
-            } finally {
-                pendingPointSales.delete(token);
-            }
-        } else if (activePointOrderId) {
-            trackedOrderIds.push(activePointOrderId);
-            try {
-                await cancelPointOrder(activePointOrderId);
-                await waitForMpOrdersIdle(trackedOrderIds);
-            } catch (e) {
-                cancelWarning = true;
-                console.error('Falha ao cancelar order ativa (token ausente):', formatMpAxiosError(e));
-            }
-        }
-
-        await syncActivePointOrderTracking(trackedOrderIds);
-        return res.json({ error: false, cancelWarning });
-    });
+    const pending = await pendingPointSales.get(String(req.params.token));
+    if (!pending || (pending.owner !== String(req.session.user.email || req.session.user.id || '') && req.session.user.type !== 'admin')) {
+        return res.status(404).json({ error: true, message: 'Pagamento não encontrado.' });
+    }
+    try {
+        // Keep the durable record: cancellation can race with approval at the gateway.
+        if (pending.mode === 'point') await cancelPointOrder(pending.pointOrderId);
+        if (pending.mode === 'mp_qr_instore') await cancelQrStoreOrder(pending.qrOrderId);
+        if (pending.mode === 'pix_online') await api.put(`/v1/payments/${pending.pixPaymentId}`, { status: 'cancelled' });
+        return res.json({ error: false, cancelWarning: false });
+    } catch (e) {
+        return res.json({ error: false, cancelWarning: true, message: 'Cancelamento não confirmado. Consulte a pendência antes de cobrar novamente.' });
+    }
 });
 
 app.get('/sells', verifyLogin, (req, res) => res.redirect('/cash-flow'));
@@ -6452,20 +6589,7 @@ app.use((req, res) => {
     });
 });
 
-app.use((err, req, res, next) => {
-    console.error('Erro não tratado:', err);
-    if (res.headersSent) return next(err);
-    const isApi = String(req.path || '').startsWith('/api/');
-    if (isApi) {
-        return res.status(500).json({ error: true, message: 'Erro interno do servidor.' });
-    }
-    return res.status(500).render('error', {
-        status: 500,
-        title: 'Não foi possível concluir',
-        message: 'Ocorreu uma falha inesperada. Seus dados não foram alterados; tente novamente.',
-        appData: { user: publicSessionUser(req.session?.user || { name: 'Usuário', type: 'user' }) }
-    });
-});
+app.use(databaseAvailability.respond);
 
 let port = process.env.PORT || 3131;
 app.listen(port, () => {

@@ -6,10 +6,13 @@
       <p class="text-sm text-muted budget-hero-sub">Acompanhe propostas, itens, respostas e vendas em um fluxo mais direto.</p>
     </div>
     <div class="budget-hero-actions">
-      <a class="btn btn-ghost btn-sm" href="/budget-links">Links de propostas</a>
+      <button class="btn btn-ghost btn-sm" type="button" id="refreshBudgetsBtn">Atualizar lista</button>
+      <button class="btn btn-ghost btn-sm" type="button" id="btnOpenServiceIntakeModal">+ Solicitar análise</button>
+      <a class="btn btn-ghost btn-sm" href="/budget-requests">Acompanhar solicitações</a>
+      <a class="btn btn-ghost btn-sm admin-only-control" href="/budget-links">Links de propostas</a>
       <button class="btn btn-ghost btn-sm budget-export-btn admin-only-control" type="button" id="exportRecentBudgetsBtn" title="Baixa os orçamentos criados nos últimos 30 dias, incluindo os dados internos">↓ JSON · 30 dias</button>
       <button class="btn btn-ghost btn-sm admin-only-control" type="button" id="openTemplatesBtn">Modelos pré-montados</button>
-      <button class="btn btn-primary btn-sm" type="button" id="openCreateBudgetModalBtn">+ Novo orçamento</button>
+      <button class="btn btn-primary btn-sm" type="button" id="openCreateBudgetModalBtn" <%= appData.user.type !== 'admin' ? 'hidden' : '' %>>+ Novo orçamento</button>
     </div>
   </div>
 
@@ -76,6 +79,7 @@
     </nav>
 
     <div class="pdv-modal-body budget-editor-body">
+      <div id="budgetIntakeContext" class="budget-intake-context" hidden></div>
       <section class="budget-section budget-template-loader" id="budgetTemplateLoader" data-editor-section="1">
         <div class="section-title-row">
           <div><strong>Começar rápido</strong><div class="text-xs text-muted">Carregue um modelo; o orçamento gerado será uma cópia independente.</div></div>
@@ -186,10 +190,13 @@
           <div class="budget-add-actions"><button class="btn btn-ghost btn-sm" type="button" id="budgetAddProductBtn">+ Adicionar selecionado</button><button class="btn btn-ghost btn-sm" type="button" id="budgetAddCustomBtn">+ Item manual</button></div>
         </div>
 
+        <label class="budget-customer-edit"><input type="checkbox" id="budgetCustomerCanEdit" checked> Permitir que o cliente altere os itens no link compartilhado <small id="budgetPermissionsHint" aria-live="polite">Use os atalhos por item ou ajuste as três permissões individualmente.</small></label>
+
         <div class="budget-items-table-wrap">
           <div class="budget-items-table-head advanced"><span>Item</span><span>Estado</span><span>Qtd</span><span>Venda</span><span class="budget-internal-label" title="Este valor não aparece para o cliente">Custo 🔒</span><span>Modo</span><span>Encomenda</span><span>Total</span><span>Ações</span></div>
           <div id="budgetItemsList" class="budget-items-table-body"></div>
         </div>
+
         <div class="budget-internal-note"><span aria-hidden="true">🔒</span><span><strong>Informação interna</strong> Custos, lucro e margem ficam visíveis somente no sistema e no arquivo JSON administrativo.</span></div>
 
         <div class="budget-adjustments-row advanced">
@@ -216,7 +223,7 @@
       <button class="btn btn-ghost btn-sm" type="button" id="cancelCreateBudgetBtn">Cancelar</button>
       <div class="budget-editor-footer-main">
         <button class="btn btn-ghost btn-sm" type="button" id="budgetEditorPrevBtn">← Voltar</button>
-        <button class="btn btn-ghost btn-sm" type="button" id="budgetSaveAsTemplateBtn">Salvar opção como modelo</button>
+        <button class="btn btn-ghost btn-sm admin-only-control" type="button" id="budgetSaveAsTemplateBtn">Salvar opção como modelo</button>
         <button class="btn btn-primary btn-sm" type="button" id="budgetEditorNextBtn">Continuar →</button>
         <button class="btn btn-primary btn-sm" type="button" id="budgetSaveBtn">Salvar orçamento</button>
       </div>
@@ -299,7 +306,8 @@
       <div class="budget-alert budget-alert-warning"><strong>Atenção</strong><span>Esta ação registra uma venda já paga e baixa o estoque. Ela não inicia cobrança na maquininha nem gera PIX.</span></div>
       <label class="budget-field"><span>Opção aprovada</span><select class="form-input" id="convertOptionSelect"></select></label>
       <label class="budget-field"><span>Forma de pagamento</span><select class="form-input" id="convertPayment"><option value="money">Dinheiro</option><option value="pix">PIX</option><option value="debit_card">Débito</option><option value="credit_card">Crédito</option></select></label>
-      <label class="budget-field" id="convertCashReceivedField"><span>Valor recebido</span><input class="form-input" id="convertCashReceived" type="number" step="0.01" min="0" placeholder="R$ 0,00"></label>
+      <label class="budget-field"><span>Valor recebido / sinal (vazio = total da venda)</span><input class="form-input" id="convertInitialReceived" type="number" step="0.01" min="0" placeholder="Pagamento integral"><small>O restante ficará a receber no Fluxo de caixa.</small></label>
+      <label class="budget-field" id="convertCashReceivedField"><span>Dinheiro entregue para calcular troco (opcional)</span><input class="form-input" id="convertCashReceived" type="number" step="0.01" min="0" placeholder="R$ 0,00"></label>
       <label class="budget-check budget-check-card"><input type="checkbox" id="convertPaymentConfirmed"> <span>Confirmo que o pagamento já foi recebido/aprovado</span></label>
       <label class="budget-check budget-check-card budget-check-danger"><input type="checkbox" id="convertAllowStock"> <span>Permitir estoque insuficiente (pode deixar quantidade negativa)</span></label>
     </div>
@@ -312,7 +320,9 @@
   <div class="pdv-modal-card pdv-budget-template-card" role="document">
     <div class="pdv-modal-header"><div class="pdv-modal-title" id="budgetPreviewTitle">Pré-visualização do orçamento</div><button class="pdv-modal-close" type="button" id="closeBudgetTemplateModalBtn" aria-label="Fechar">✕</button></div>
     <div class="pdv-modal-body">
-      <div class="pdv-budget-template-actions"><button class="btn btn-ghost btn-sm" type="button" id="budgetCopyWhatsappBtn">Copiar WhatsApp</button><button class="btn btn-ghost btn-sm" type="button" id="budgetOpenWhatsappBtn">Abrir WhatsApp</button><button class="btn btn-ghost btn-sm" type="button" id="budgetCopyEmailBtn">Copiar Email</button><button class="btn btn-ghost btn-sm" type="button" id="budgetDownloadImageBtn">Baixar imagem</button><button class="btn btn-primary btn-sm" type="button" id="budgetGeneratePdfBtn">Gerar PDF</button></div>
+      <div class="pdv-budget-template-actions"><label class="budget-print-photos"><input type="checkbox" id="budgetPrintItemImages"> Incluir fotos dos itens no PDF / impressão</label>
+        <button class="btn btn-primary btn-sm" type="button" id="budgetPublicLinkBtn" <%= appData.user.type !== 'admin' ? 'hidden' : '' %>>Gerar / copiar link do cliente</button><button class="btn btn-ghost btn-sm" type="button" id="budgetCopyWhatsappBtn">Copiar WhatsApp</button><button class="btn btn-ghost btn-sm" type="button" id="budgetOpenWhatsappBtn">Abrir WhatsApp</button><button class="btn btn-ghost btn-sm" type="button" id="budgetCopyEmailBtn">Copiar Email</button><button class="btn btn-ghost btn-sm" type="button" id="budgetDownloadImageBtn">Baixar imagem</button><button class="btn btn-primary btn-sm" type="button" id="budgetGeneratePdfBtn">Gerar PDF</button></div>
+      <div id="budgetPublicLinkBox" hidden><label for="budgetPublicLinkValue">Link público — quem receber poderá visualizar e responder ao orçamento</label><input id="budgetPublicLinkValue" class="form-input" readonly><a id="budgetPublicLinkOpen" class="btn btn-ghost btn-sm" target="_blank" rel="noopener">Visualizar como cliente</a></div>
       <div class="pdv-budget-template-preview" id="budgetTemplatePreview"></div>
     </div>
     <div class="pdv-modal-footer"><button class="btn btn-primary btn-sm" type="button" id="budgetTemplateDoneBtn">Fechar</button></div>
@@ -356,3 +366,5 @@
     <div class="pdv-modal-footer"><button class="btn btn-ghost btn-sm" type="button" id="cancelBudgetConfirmBtn">Cancelar</button><button class="btn btn-danger-soft btn-sm" type="button" id="confirmBudgetConfirmBtn">Confirmar</button></div>
   </div>
 </div>
+
+<%- include('reusable/request-modal') %>

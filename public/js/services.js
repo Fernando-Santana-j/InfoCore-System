@@ -130,7 +130,7 @@ function renderServicesList() {
 function createBudgets() {
     const rows = Array.isArray(window.appData?.budgets) ? window.appData.budgets : [];
     return rows
-        .filter((budget) => budget?.id && !budget.serviceOrderId)
+        .filter((budget) => budget?.id && !budget.serviceOrderId && ["approved", "acquiring_parts"].includes(budget.status))
         .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
 }
 
@@ -174,7 +174,7 @@ function renderCreateBudgetResults(query = '') {
         return `${budget.code || ''} ${budget.customerName || ''} ${budget.customerPhone || ''}`.toLowerCase().includes(term);
     }).slice(0, 8);
     if (!rows.length) {
-        el.innerHTML = '<div class="svc-create-no-budget">Nenhum orçamento livre encontrado. Escolha “Novo rascunho” ou “Sem orçamento”.</div>';
+        el.innerHTML = '<div class="svc-create-no-budget">Nenhum orçamento aprovado disponível. Registre uma solicitação ou conclua a aprovação na Central de Orçamentos.</div>';
         return;
     }
     el.innerHTML = rows.map((budget) => `
@@ -204,6 +204,12 @@ function selectCreateBudget(id) {
     document.getElementById('svcCreateChangeBudgetBtn')?.addEventListener('click', clearCreateBudget);
     fillCreateCustomer(budget);
     document.getElementById('svcCreateCustomerSelect').value = budget.customerId || '';
+    const intake = budget.intake;
+    if (intake) {
+        const fields = {svcCreateDeviceType: intake.deviceType || 'Outro', svcCreateDeviceModel: intake.device, svcCreatePriority: intake.priority || 'normal', svcCreateAccessories: intake.accessories, svcCreateIssue: [intake.description, ...(intake.problems || [])].filter(Boolean).join('\n')};
+        Object.entries(fields).forEach(([id, value]) => {const el = document.getElementById(id); if (el) el.value = value || '';});
+        selected.insertAdjacentHTML('beforeend', '<p class="text-muted">Os dados e anexos originais serão preservados. Defina “OS após aprovação” na solicitação para continuar.</p>');
+    }
     syncCreateCustomerLock();
 }
 
@@ -223,12 +229,15 @@ function syncCreateCustomerLock() {
         const field = document.getElementById(id);
         if (field) field.readOnly = locked;
     });
+    const inherited = Boolean(createBudgets().find(row => String(row.id) === String(selectedCreateBudgetId))?.requestId);
+    ['svcCreateDeviceModel', 'svcCreateAccessories', 'svcCreateIssue'].forEach(id => { const el = document.getElementById(id); if (el) el.readOnly = inherited; });
+    ['svcCreateDeviceType', 'svcCreatePriority'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = inherited; });
     const picker = document.getElementById('svcCreateCustomerPickerWrap');
     if (picker) picker.hidden = locked;
 }
 
 function setCreateServiceMode(mode) {
-    createServiceMode = ['existing', 'new', 'none'].includes(mode) ? mode : 'none';
+    createServiceMode = 'existing';
     document.querySelectorAll('#svcCreateModes .svc-create-mode').forEach((button) => {
         const active = button.getAttribute('data-mode') === createServiceMode;
         button.classList.toggle('is-active', active);
@@ -237,22 +246,13 @@ function setCreateServiceMode(mode) {
     const picker = document.getElementById('svcCreateBudgetPicker');
     picker.hidden = createServiceMode !== 'existing';
     const note = document.getElementById('svcCreateModeNote');
-    if (createServiceMode === 'new') {
-        note.hidden = false;
-        note.innerHTML = '<span>🧾</span><div><strong>Um orçamento rascunho será criado automaticamente.</strong><small>Você poderá completar itens, valores e condições na página de Orçamentos.</small></div>';
-    } else if (createServiceMode === 'none') {
-        note.hidden = false;
-        note.innerHTML = '<span>📭</span><div><strong>A OS ficará independente.</strong><small>Você ainda poderá registrar etapas e fotos normalmente.</small></div>';
-    } else {
-        note.hidden = true;
-        note.innerHTML = '';
-    }
-    if (createServiceMode !== 'existing' && selectedCreateBudgetId) clearCreateBudget();
+    note.hidden = false;
+    note.textContent = 'A OS será aberta somente com orçamento aprovado. Para iniciar um atendimento, registre uma solicitação.';
     syncCreateCustomerLock();
     if (createServiceMode === 'existing') renderCreateBudgetResults();
 }
 
-function openCreateServiceModal() {
+async function openCreateServiceModal() {
     const modal = document.getElementById('svcCreateModal');
     const form = document.getElementById('svcCreateForm');
     if (!modal || !form) return;
@@ -262,16 +262,27 @@ function openCreateServiceModal() {
     document.getElementById('svcCreateBudgetSelected').hidden = true;
     populateCreateCustomers();
     setCreateServiceMode(createBudgets().length ? 'existing' : 'none');
+    try {
+        const draft = await WorkDrafts.restore('workshop-intake');
+        if (draft) {
+            setCreateServiceMode(draft.mode);
+            if (draft.budgetId) selectCreateBudget(draft.budgetId);
+            WorkDrafts.fill(draft.fields);
+            syncCreateCustomerLock();
+        }
+    } catch { showToast('Não foi possível recuperar o rascunho local.', 'error'); }
     modal.hidden = false;
     modal.setAttribute('aria-hidden', 'false');
     document.body.style.overflow = 'hidden';
+    WorkDrafts.watch('workshop-intake',modal,()=>({mode:createServiceMode,budgetId:selectedCreateBudgetId,fields:WorkDrafts.fields(modal)}));
     window.setTimeout(() => {
         const target = createServiceMode === 'existing' ? document.getElementById('svcCreateBudgetSearch') : document.getElementById('svcCreateCustomerName');
         target?.focus();
     }, 0);
 }
 
-function closeCreateServiceModal() {
+async function closeCreateServiceModal() {
+    await WorkDrafts.flush('workshop-intake');
     const modal = document.getElementById('svcCreateModal');
     if (!modal) return;
     modal.hidden = true;
@@ -326,6 +337,7 @@ async function submitCreateService(event) {
             const budgets = Array.isArray(window.appData.budgets) ? window.appData.budgets : [];
             window.appData.budgets = [data.budget, ...budgets.filter((row) => String(row.id) !== String(data.budget.id))];
         }
+        await WorkDrafts.clear('workshop-intake').catch(()=>showToast('OS salva; não foi possível remover a cópia local.','warning'));
         closeCreateServiceModal();
         showToast(`OS ${data.service.code} criada. Abrindo o fluxo livre...`, 'success');
         window.setTimeout(() => { window.location.href = `/services/${encodeURIComponent(data.service.id)}`; }, 250);

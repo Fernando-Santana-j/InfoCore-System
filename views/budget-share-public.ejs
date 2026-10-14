@@ -1,6 +1,6 @@
 <%
   const brandName = configs.storeName || configs.name || 'InfoCore';
-  const publicTitle = budget.title || 'Sua configuração personalizada';
+  const publicTitle = budget.title || 'Seu orçamento';
   const firstPublicOption = Array.isArray(budget.options) ? budget.options[0] : null;
   const socialImage = firstPublicOption && firstPublicOption.imageUrl ? firstPublicOption.imageUrl : '';
 %>
@@ -10,8 +10,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#08090d">
-  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="color-scheme" content="light">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="referrer" content="no-referrer">
   <meta name="description" content="Uma proposta personalizada preparada pela <%= brandName %>.">
@@ -21,10 +21,7 @@
   <meta property="og:description" content="Conheça a configuração, desempenho e condições da sua proposta personalizada.">
   <% if (socialImage) { %><meta property="og:image" content="<%= socialImage %>"><% } %>
   <title><%= publicTitle %> — <%= brandName %></title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/budget-share-public.css?v=3">
+  <link rel="stylesheet" href="/css/budget-share-public.css?v=7">
   <link rel="icon" href="/img/logo_bg.ico" type="image/x-icon">
 </head>
 
@@ -50,9 +47,9 @@
 
     <section class="share-hero" aria-labelledby="proposalTitle" data-reveal>
       <div class="hero-copy">
-        <span class="eyebrow"><span aria-hidden="true">✦</span> PREPARADO PARA VOCÊ</span>
-        <h1 id="proposalTitle">Olá, <span><%= budget.customerName || 'cliente' %></span>.</h1>
-        <p><%= budget.intro || 'Uma configuração pensada para o seu uso, com desempenho, componentes e condições apresentados de forma simples.' %></p>
+        <span class="eyebrow"><span aria-hidden="true">✦</span> ORÇAMENTO</span>
+        <h1 id="proposalTitle"><%= publicTitle %></h1>
+        <p>Preparado para <strong><%= budget.customerName || 'você' %></strong>. Confira os itens e as condições abaixo.</p>
         <div class="hero-meta">
           <span class="meta-pill"><span aria-hidden="true">#</span> <%= budget.code || 'PROPOSTA' %></span>
           <% if (budget.validUntil) { %>
@@ -65,26 +62,83 @@
       <div class="hero-gallery" id="heroGallery" aria-label="Fotos da configuração"></div>
     </section>
 
-    <nav class="journey-nav" aria-label="Etapas da proposta" data-reveal>
-      <a href="#optionsSection"><span>01</span> Configuração</a>
-      <a href="#performanceSection"><span>02</span> Desempenho</a>
-      <a href="#customizeSection"><span>03</span> Personalização</a>
-      <a href="#summaryCard"><span>04</span> Finalização</a>
-    </nav>
+    <div class="quote-overview"><div><span>Total da sua seleção</span><strong id="overviewTotal">R$ 0,00</strong><small>Alterações sujeitas à confirmação da loja.</small></div><a href="#customizeSection">Conferir itens ↓</a></div>
+    <nav class="journey-nav" aria-label="Navegação do orçamento"><a href="#conditionsSection" id="conditionsNav">Condições</a><a href="#customizeSection">Itens e serviços</a><a href="#summaryCard">Finalizar escolhas</a></nav>
 
+        <section id="conditionsSection" class="proposal-section" aria-labelledby="conditionsTitle" hidden data-reveal>
+          <div class="section-heading compact">
+            <div class="section-heading-copy">
+              <span class="section-number">05</span>
+              <div>
+                <p class="section-kicker">TUDO BEM EXPLICADO</p>
+                <h2 id="conditionsTitle">Condições do orçamento</h2>
+              </div>
+            </div>
+          </div>
+          <div class="conditions-card" id="conditionsCard"></div>
+        </section>
     <section id="optionsSection" class="proposal-section" aria-labelledby="optionsTitle" data-reveal>
       <div class="section-heading">
         <div class="section-heading-copy">
           <span class="section-number">01</span>
           <div>
             <p class="section-kicker">SUA PROPOSTA</p>
-            <h2 id="optionsTitle">Escolha a configuração</h2>
+            <h2 id="optionsTitle">Opções do orçamento</h2>
           </div>
         </div>
         <p id="optionsHint">Compare as opções e selecione a que combina com você.</p>
       </div>
       <div class="option-grid" id="optionGrid" role="radiogroup" aria-labelledby="optionsTitle"></div>
     </section>
+
+    <div class="proposal-workspace">
+      <div class="proposal-main-column">
+        <section id="customizeSection" class="proposal-section" aria-labelledby="customizeTitle" data-reveal>
+          <div class="section-heading compact">
+            <div class="section-heading-copy">
+              <span class="section-number">04</span>
+              <div>
+                <p class="section-kicker">DETALHAMENTO</p>
+                <h2 id="customizeTitle">Itens e serviços</h2>
+              </div>
+            </div>
+            <p id="customizeHint">Confira os itens da sua proposta.</p>
+          </div>
+          <div class="custom-card">
+            <div class="item-list" id="itemList" aria-live="polite"></div>
+            <button class="add-request" id="addRequestBtn" type="button">
+              <span aria-hidden="true">＋</span>
+              <span><strong>Pedir outra peça ou serviço</strong><small>Conte o que gostaria de adicionar ou alterar.</small></span>
+            </button>
+            <div class="request-list" id="requestList"></div>
+            <label class="notes-label" for="notes">
+              <span>Observações para a equipe</span>
+              <small>Informe dúvidas ou alterações que deseja solicitar.</small>
+              <textarea id="notes" rows="4" maxlength="3000" placeholder="Escreva sua dúvida ou solicitação..."></textarea>
+            </label>
+          </div>
+        </section>
+
+
+      </div>
+
+      <aside class="summary-card" id="summaryCard" aria-labelledby="summaryTitle" data-reveal>
+        <span class="summary-kicker">RESUMO DA SUA ESCOLHA</span>
+        <h2 id="summaryTitle">Revise e finalize</h2>
+        <div class="summary-option" id="summaryOption"></div>
+        <div class="summary-total-row">
+          <span>Total estimado</span>
+          <strong id="summaryTotal" aria-live="polite">R$ 0,00</strong>
+        </div>
+        <div class="summary-breakdown" id="summaryBreakdown"></div>
+        <div id="summaryPayments" class="summary-payments"></div>
+        <p class="summary-text" id="summaryText"></p>
+        <button class="finish-btn" id="finishBtn" type="button">Finalizar minhas escolhas <span aria-hidden="true">→</span></button>
+        <p class="finish-feedback" id="finishFeedback" role="status" aria-live="polite"></p>
+        <a class="whatsapp-btn" id="whatsappBtn" hidden target="_blank" rel="noopener noreferrer">Avisar no WhatsApp <span aria-hidden="true">↗</span></a>
+        <small class="optional-note">O WhatsApp é opcional. Quando a finalização for confirmada, suas respostas já estarão disponíveis para a loja.</small>
+      </aside>
+    </div>
 
     <section id="capabilitiesSection" class="proposal-section" aria-labelledby="capabilitiesTitle" hidden data-reveal>
       <div class="section-heading">
@@ -115,66 +169,6 @@
       <p class="performance-note" id="performanceNote"></p>
     </section>
 
-    <div class="proposal-workspace">
-      <div class="proposal-main-column">
-        <section id="customizeSection" class="proposal-section" aria-labelledby="customizeTitle" data-reveal>
-          <div class="section-heading compact">
-            <div class="section-heading-copy">
-              <span class="section-number">04</span>
-              <div>
-                <p class="section-kicker">COMPONENTES</p>
-                <h2 id="customizeTitle">Personalize os itens</h2>
-              </div>
-            </div>
-            <p>Retire itens ou ajuste as quantidades.</p>
-          </div>
-          <div class="custom-card">
-            <div class="item-list" id="itemList" aria-live="polite"></div>
-            <button class="add-request" id="addRequestBtn" type="button">
-              <span aria-hidden="true">＋</span>
-              <span><strong>Pedir outra peça ou serviço</strong><small>Conte o que gostaria de adicionar ou alterar.</small></span>
-            </button>
-            <div class="request-list" id="requestList"></div>
-            <label class="notes-label" for="notes">
-              <span>Observações para a equipe</span>
-              <small>Preferências de cor, armazenamento, acessórios ou qualquer outro detalhe.</small>
-              <textarea id="notes" rows="4" maxlength="3000" placeholder="Ex.: prefiro gabinete branco e preciso de mais armazenamento..."></textarea>
-            </label>
-          </div>
-        </section>
-
-        <section id="conditionsSection" class="proposal-section" aria-labelledby="conditionsTitle" hidden data-reveal>
-          <div class="section-heading compact">
-            <div class="section-heading-copy">
-              <span class="section-number">05</span>
-              <div>
-                <p class="section-kicker">TUDO BEM EXPLICADO</p>
-                <h2 id="conditionsTitle">Condições da proposta</h2>
-              </div>
-            </div>
-          </div>
-          <div class="conditions-card" id="conditionsCard"></div>
-        </section>
-      </div>
-
-      <aside class="summary-card" id="summaryCard" aria-labelledby="summaryTitle" data-reveal>
-        <span class="summary-kicker">RESUMO DA SUA ESCOLHA</span>
-        <h2 id="summaryTitle">Revise e finalize</h2>
-        <div class="summary-option" id="summaryOption"></div>
-        <div class="summary-total-row">
-          <span>Total estimado</span>
-          <strong id="summaryTotal" aria-live="polite">R$ 0,00</strong>
-        </div>
-        <div class="summary-breakdown" id="summaryBreakdown"></div>
-        <div id="summaryPayments" class="summary-payments"></div>
-        <p class="summary-text" id="summaryText"></p>
-        <button class="finish-btn" id="finishBtn" type="button">Finalizar minhas escolhas <span aria-hidden="true">→</span></button>
-        <p class="finish-feedback" id="finishFeedback" role="status" aria-live="polite"></p>
-        <a class="whatsapp-btn" id="whatsappBtn" hidden target="_blank" rel="noopener noreferrer">Avisar no WhatsApp <span aria-hidden="true">↗</span></a>
-        <small class="optional-note">O WhatsApp é opcional. Quando a finalização for confirmada, suas respostas já estarão disponíveis para a loja.</small>
-      </aside>
-    </div>
-
     <footer class="share-footer" data-reveal>
       <div class="footer-brand"><img src="/img/logo_bg.png" alt="" width="34" height="34"><span><strong><%= brandName %></strong><small>Proposta preparada com atenção a cada detalhe.</small></span></div>
       <p>Valores e disponibilidade respeitam a validade informada nesta proposta.</p>
@@ -183,7 +177,7 @@
 
   <div class="mobile-checkout" id="mobileCheckout" aria-label="Resumo e finalização">
     <div><small>Total estimado</small><strong id="mobileSummaryTotal">R$ 0,00</strong></div>
-    <button id="mobileFinishBtn" type="button">Finalizar <span aria-hidden="true">→</span></button>
+    <button id="mobileFinishBtn" type="button">Revisar <span aria-hidden="true">→</span></button>
   </div>
 
   <div class="gallery-lightbox" id="galleryLightbox" role="dialog" aria-modal="true" aria-labelledby="lightboxTitle" aria-hidden="true" hidden>
@@ -207,7 +201,8 @@
   <script id="publicBudgetData" type="application/json">
     <%- JSON.stringify({budget,response,token,apiBase:typeof publicApiBase!=='undefined'?publicApiBase:'/api/public/budgets',storeName:brandName,storePhone:configs.whatsapp||configs.phone||configs.telephone||configs.storePhone||''}).replace(/</g,'\\u003c') %>
   </script>
-  <script src="/js/budget-share-public.js?v=5"></script>
+  <script src="/js/budget-permissions.js?v=1"></script>
+  <script src="/js/budget-share-public.js?v=10"></script>
 </body>
 
 </html>

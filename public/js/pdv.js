@@ -11,7 +11,7 @@ let budgetCurrentRecord = null;
 let confirmAllowInsufficientStock = false;
 let selectedCreditInstallments = 1;
 const CREDIT_INSTALLMENT_MAX = 12;
-const PDV_HELD_SALE_KEY = 'infocore:pdv:held-sale:v2';
+const PDV_HELD_SALE_KEY = `infocore:pdv:held-sale:v3:${window.appData?.user?.email || window.appData?.user?.id || window.appData?.user?.name || 'local'}`;
 
 function isPdvAdmin() {
     return window.appData?.user?.type === 'admin';
@@ -30,6 +30,7 @@ function asNumber(value) {
 
 function normalizePaymentKey(payment) {
     const map = {
+        mixed: 'mixed',
         money: 'money',
         credit_card: 'credit_card',
         debit_card: 'debit_card',
@@ -566,6 +567,7 @@ function syncConfirmPaymentExtras(actionType, paymentUiKey) {
 
     if (cashSection && cashInput) {
         if (actionType === 'finalizar' && paymentUiKey === 'money') {
+            cashSection.hidden = false;
             cashSection.style.display = 'flex';
             cashInput.value = '';
             requestAnimationFrame(() => {
@@ -573,6 +575,7 @@ function syncConfirmPaymentExtras(actionType, paymentUiKey) {
                 cashInput.select();
             });
         } else {
+            cashSection.hidden = true;
             cashSection.style.display = 'none';
             cashInput.value = '';
         }
@@ -697,10 +700,11 @@ function updateHeldSaleControls() {
     }
 }
 
-function holdCurrentSale() {
+async function holdCurrentSale() {
     const cart = asArray(window.appData?.cart);
     if (!cart.length) return showToast('Adicione itens antes de suspender a venda.', 'info');
     const payload = {
+        id: crypto.randomUUID(),
         version: 2,
         heldAt: new Date().toISOString(),
         cart,
@@ -714,6 +718,11 @@ function holdCurrentSale() {
     } catch {
         return showToast('Não foi possível suspender a venda neste navegador.', 'error');
     }
+    try {
+        const response = await fetch('/api/work/held-sales', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const result = await response.json(); if(!response.ok || result.error) throw new Error(result.message || 'Falha ao sincronizar venda.');
+    } catch (e) { showToast('Cópia local salva, mas a sincronização falhou. O carrinho foi mantido. '+e.message,'error'); return; }
+    window.dispatchEvent(new Event('work-held-changed'));
     clearCartCore();
     const customer = document.getElementById('pdvCustomerName');
     const notes = document.getElementById('pdvSaleNote');
@@ -723,8 +732,8 @@ function holdCurrentSale() {
     showToast('Venda suspensa. O caixa está livre para outro atendimento.', 'success');
 }
 
-function resumeHeldSale() {
-    const held = readHeldSale();
+async function resumeHeldSale(selected) {
+    const held = selected?.cart ? selected : readHeldSale();
     if (!held) return showToast('Não há venda suspensa.', 'info');
     if (asArray(window.appData?.cart).length) return showToast('Finalize ou limpe a venda atual antes de retomar.', 'warning');
     const products = asArray(window.appData?.products);
@@ -742,7 +751,13 @@ function resumeHeldSale() {
     const notes = document.getElementById('pdvSaleNote');
     if (customer) customer.value = held.customer || '';
     if (notes) notes.value = held.notes || '';
+    // Restore before removing the durable copy; a network failure keeps it recoverable.
+    if (held.id) {
+        try { const r = await fetch(`/api/work/held-sales/${encodeURIComponent(held.id)}`, {method:'DELETE'}); if(!r.ok) throw new Error(); }
+        catch { showToast('Venda retomada; a cópia na conta não pôde ser removida. Evite retomá-la novamente.','warning'); }
+    }
     localStorage.removeItem(PDV_HELD_SALE_KEY);
+    window.dispatchEvent(new Event('work-held-changed'));
     renderPaymentButtons();
     renderCart();
     updateHeldSaleControls();
@@ -778,6 +793,11 @@ function bindPDVKeyboardShortcuts() {
             finalizarVenda();
             return;
         }
+        if (e.key === 'F2') {
+            e.preventDefault();
+            document.getElementById('pdvBarcodeCapture')?.focus();
+            return;
+        }
         if (e.key === 'F4') {
             e.preventDefault();
             document.getElementById('pdvSearch')?.focus();
@@ -799,7 +819,7 @@ function initPDV() {
     renderPaymentButtons();
     renderPDV();
     renderCart();
-    requestAnimationFrame(() => document.getElementById('pdvSearch')?.focus());
+    requestAnimationFrame(focusPdvBarcodeCapture);
 }
 
 function renderPdvPinnedCards() {
@@ -856,13 +876,13 @@ function renderPDV(filter) {
             ? `<div class="prod-thumb"><img src="${String(p.image).replace(/"/g, '&quot;')}" alt="" loading="lazy" decoding="async"></div>`
             : `<div class="prod-thumb"><span class="prod-emoji">${p.emoji || (isServiceProduct(p) ? '🔧' : '📦')}</span></div>`;
         const tracks = productTracksStock(p);
-        const isOutOfStock = tracks && asNumber(p.qty) <= 0;
+        const isOutOfStock = tracks && asNumber(p.availableQty ?? p.qty) <= 0;
         const shouldShowOutOfStock = isOutOfStock;
         const outOfStockClass = shouldShowOutOfStock ? ' pdv-product-out-of-stock' : '';
         const svcTag = isServiceProduct(p) ? '<span class="pdv-card-type-tag">Serviço</span>' : '';
         const stockStatus = isServiceProduct(p)
             ? 'Serviço'
-            : (shouldShowOutOfStock ? '❌ Sem estoque' : `${asNumber(p.qty)} em estoque`);
+            : (shouldShowOutOfStock ? '❌ Sem estoque' : `${asNumber(p.availableQty ?? p.qty)} disponíveis`);
         const partsHint = isServiceProduct(p) && asNumber(p.partsCost) > 0
             ? ` · peças ${formatCurrency(asNumber(p.partsCost))}`
             : '';
@@ -936,21 +956,6 @@ function addToCartByProductCode(code) {
     return true;
 }
 
-function tryAddFromSearchValue(rawValue, { clearSearch = true } = {}) {
-    const code = String(rawValue || '').trim();
-    if (!code) return false;
-    const product = findProductByProductCode(code);
-    if (!product) return false;
-    const searchEl = document.getElementById('pdvSearch');
-    if (clearSearch && searchEl) {
-        searchEl.value = '';
-        filterPDV('');
-    }
-    addToCart(product.id);
-    flashBarcodeScan();
-    return true;
-}
-
 function addCustomItemToCart(name, price, qty = 1) {
     const label = String(name || '').trim();
     const unitPrice = asNumber(price);
@@ -977,13 +982,6 @@ function addCustomItemToCart(name, price, qty = 1) {
     return true;
 }
 
-const PDV_SCAN_GAP_MS = 85;
-const PDV_SCAN_MIN_LEN = 3;
-let pdvScanBuf = '';
-let pdvScanPending = '';
-let pdvScanLastKeyAt = 0;
-let pdvSearchScanTimer = null;
-
 function isOnPDVPage() {
     return document.body?.dataset?.page === 'pdv';
 }
@@ -1005,102 +1003,114 @@ function isPDVModalOpen() {
     );
 }
 
-function clearPdvSearchField() {
-    const searchEl = document.getElementById('pdvSearch');
-    if (searchEl) {
-        searchEl.value = '';
-        filterPDV('');
-    }
-}
-
-function resolveBarcodeCode(fallbackFromSearch = true) {
-    let code = (pdvScanBuf || pdvScanPending || '').trim();
-    pdvScanBuf = '';
-    pdvScanPending = '';
-    if (!code && fallbackFromSearch) {
-        const searchEl = document.getElementById('pdvSearch');
-        code = String(searchEl?.value || '').trim();
-    }
-    return code;
+// Keep the reader ready without taking focus away from ongoing edits.
+function focusPdvBarcodeCapture() {
+    if (!isOnPDVPage() || isPDVModalOpen() || document.querySelector(
+        '.modal-overlay.open, .budget-modal-overlay.open:not([hidden]), .pdv-modal-overlay.open, .svc-create-overlay:not([hidden]), .svc-tpl-overlay:not([hidden]), [role="dialog"][aria-modal="true"]:not([hidden])'
+    )) return;
+    const active = document.activeElement;
+    if (active?.matches?.('input, textarea, select') || active?.isContentEditable) return;
+    document.getElementById('pdvBarcodeCapture')?.focus({ preventScroll: true });
 }
 
 function bindPDVBarcodeCapture() {
     if (!isOnPDVPage() || window.__pdvBarcodeBound) return;
+    const barcodeInput = document.getElementById('pdvBarcodeCapture');
+    if (!barcodeInput) return;
     window.__pdvBarcodeBound = true;
 
-    const searchEl = document.getElementById('pdvSearch');
+    const searchInput = document.getElementById('pdvSearch');
+    let barcodeTimer;
+    let searchTimer;
+    let searchScan = null;
+    const resetSearchScan = () => {
+        clearTimeout(searchTimer);
+        searchScan = null;
+    };
+    const recordScan = (code) => {
+        const lastScan = document.getElementById('pdvLastScan');
+        if (lastScan) lastScan.textContent = `Última leitura: ${code}`;
+        flashBarcodeScan();
+    };
+    const isBarcode = (code) => /^[0-9]{8}$/.test(code);
+    const submitBarcode = () => {
+        clearTimeout(barcodeTimer);
+        const code = barcodeInput.value;
+        if (isPDVModalOpen() || /^[0-9]{1,7}$/.test(code)) return;
+        barcodeInput.value = '';
+        if (!isBarcode(code)) return;
+        if (addToCartByProductCode(code)) recordScan(code);
+    };
+    barcodeInput.addEventListener('input', (e) => {
+        clearTimeout(barcodeTimer);
+        if (!e.isComposing) barcodeTimer = setTimeout(() => submitBarcode(), 180);
+    });
+    barcodeInput.addEventListener('compositionstart', () => clearTimeout(barcodeTimer));
+    barcodeInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        submitBarcode();
+    });
 
-    if (searchEl) {
-        searchEl.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
-            const code = String(searchEl.value || '').trim();
-            if (!code) return;
-            e.preventDefault();
-            e.stopPropagation();
-            pdvScanBuf = '';
-            pdvScanPending = '';
-            if (tryAddFromSearchValue(code)) return;
-            showToast('Nenhum produto com este código/SKU.', 'info');
-        }, true);
-
-        searchEl.addEventListener('input', () => {
-            clearTimeout(pdvSearchScanTimer);
-            pdvSearchScanTimer = setTimeout(() => {
-                const code = String(searchEl.value || '').trim();
-                if (code.length >= PDV_SCAN_MIN_LEN && findProductByProductCode(code)) {
-                    tryAddFromSearchValue(code);
-                }
-            }, 140);
-        });
-    }
-
-    window.addEventListener(
-        'keydown',
-        (e) => {
-            if (!isOnPDVPage() || isPDVModalOpen()) return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-            const now = Date.now();
-            const gap = now - pdvScanLastKeyAt;
-            pdvScanLastKeyAt = now;
-
-            if (e.key === 'Enter') {
-                const code = resolveBarcodeCode(true);
-                if (code.length >= PDV_SCAN_MIN_LEN) {
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    clearPdvSearchField();
-                    if (!tryAddFromSearchValue(code, { clearSearch: false })) {
-                        showToast('Produto não encontrado para este código.', 'error');
-                    }
-                }
-                return;
+    // The store uses exactly eight numeric digits. Typing speed is not evidence
+    // of a scan. Keep a snapshot of the numeric insertion, never of unrelated text.
+    const submitSearchScan = () => {
+        const scan = searchScan;
+        if (!scan || !isBarcode(scan.code)) return false;
+        resetSearchScan();
+        if (document.activeElement !== searchInput || isPDVModalOpen()) return false;
+        const expected = scan.value.slice(0, scan.start) + scan.code + scan.value.slice(scan.end);
+        if (searchInput.value !== expected) return false;
+        searchInput.value = scan.value;
+        searchInput.setSelectionRange(scan.start, scan.end);
+        filterPDV(scan.value);
+        if (addToCartByProductCode(scan.code)) recordScan(scan.code);
+        return true;
+    };
+    searchInput?.addEventListener('beforeinput', (e) => {
+        if (e.isComposing || e.inputType !== 'insertText' || !/^[0-9]$/.test(e.data || '')) {
+            resetSearchScan();
+            return;
+        }
+        const previous = searchScan;
+        const expected = previous && previous.value.slice(0, previous.start) + previous.code + previous.value.slice(previous.end);
+        if (!previous || searchInput.value !== expected
+            || searchInput.selectionStart !== previous.start + previous.code.length
+            || searchInput.selectionEnd !== searchInput.selectionStart) {
+            searchScan = {
+                value: searchInput.value, start: searchInput.selectionStart, end: searchInput.selectionEnd,
+                code: ''
+            };
+        }
+        searchScan.code += e.data;
+    });
+    searchInput?.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        if (searchScan) searchTimer = setTimeout(submitSearchScan, 120);
+    });
+    searchInput?.addEventListener('keydown', (e) => {
+        if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) {
+            resetSearchScan();
+        } else if (e.key === 'Enter') {
+            if (submitSearchScan()) {
+                e.preventDefault();
+                e.stopPropagation();
             }
+        } else if (e.key.length > 1 && e.key !== 'Shift') {
+            resetSearchScan();
+        }
+    });
+    searchInput?.addEventListener('blur', resetSearchScan);
+    searchInput?.addEventListener('compositionstart', resetSearchScan);
 
-            if (e.key.length !== 1) return;
-
-            if (gap > PDV_SCAN_GAP_MS) {
-                pdvScanPending = e.key;
-                pdvScanBuf = '';
-                return;
-            }
-
-            if (pdvScanPending) {
-                pdvScanBuf = pdvScanPending + e.key;
-                pdvScanPending = '';
-            } else {
-                pdvScanBuf += e.key;
-            }
-
-            if (searchEl && document.activeElement === searchEl) {
-                searchEl.value = '';
-            }
-
-            e.preventDefault();
-            e.stopImmediatePropagation();
-        },
-        true
-    );
+    // Restore scan readiness after pointer actions, without interrupting edits,
+    // navigation, modal dialogs or keyboard Tab navigation.
+    document.addEventListener('click', (e) => {
+        if (e.target.closest?.('input, textarea, select, label, a, [contenteditable]:not([contenteditable="false"])')) return;
+        requestAnimationFrame(focusPdvBarcodeCapture);
+    });
+    window.addEventListener('focus', () => requestAnimationFrame(focusPdvBarcodeCapture));
 }
 
 function addToCart(id) {
@@ -1184,6 +1194,7 @@ function getCartStockWarnings() {
 }
 
 function openConfirmActionModal(actionType) {
+    document.querySelectorAll('#toastContainer .toast.success').forEach(toast => toast.remove());
     confirmActionType = actionType;
     confirmAllowInsufficientStock = false;
     const title = document.getElementById('confirmActionTitle');
@@ -1204,7 +1215,7 @@ function openConfirmActionModal(actionType) {
             <div class="pdv-confirm-row"><span>Subtotal</span><strong>${formatCurrency(totals.subtotal)}</strong></div>
             <div class="pdv-confirm-row"><span>Desconto (${formatAdjustment(getAdjustmentType('discount'), getAdjustmentValue('discount'))})</span><strong>- ${formatCurrency(totals.discount)}</strong></div>
             <div class="pdv-confirm-row"><span>Acréscimo (${formatAdjustment(getAdjustmentType('extra'), getAdjustmentValue('extra'))})</span><strong>+ ${formatCurrency(totals.extra)}</strong></div>
-            <div class="pdv-confirm-row"><span>Pagamento</span><strong><span class="pdv-confirm-payment-icon">${getPaymentIcon(paymentUiKey)}</span> ${getPaymentLabel(paymentUiKey)}${payment === 'credit_card' ? ` · ${selectedCreditInstallments}x` : ''}</strong></div>
+            <div class="pdv-confirm-row"><span>Pagamento</span><strong><span id="confirmPaymentLabel"><span class="pdv-confirm-payment-icon">${getPaymentIcon(paymentUiKey)}</span> ${getPaymentLabel(paymentUiKey)}${payment === 'credit_card' ? ` · ${selectedCreditInstallments}x` : ''}</span></strong></div>
             ${payment === 'credit_card' ? '<div class="pdv-confirm-row"><span>Juros</span><strong>Cliente (na maquininha)</strong></div>' : ''}
             <div class="pdv-confirm-row"><span>Itens</span><strong>${totalItems}</strong></div>
             <div class="pdv-confirm-row total"><span>Total</span><strong>${formatCurrency(totals.total)}</strong></div>
@@ -1212,6 +1223,12 @@ function openConfirmActionModal(actionType) {
     }
 
     syncConfirmPaymentExtras(actionType, paymentUiKey);
+    document.getElementById('splitPaymentSection').hidden = actionType !== 'finalizar';
+    document.getElementById('splitPaymentEnabled').checked = false;
+    document.getElementById('splitPaymentFields').hidden = true;
+    document.getElementById('splitPaymentConfirmed').checked = false;
+    document.getElementById('workInitialReceived').value = '';
+    document.querySelectorAll('[data-split-method]').forEach(input => { input.value = ''; });
 
     if (itemsEl) {
         itemsEl.innerHTML = cart.length
@@ -1531,6 +1548,8 @@ function stopPendingPoll() {
 }
 
 function applySuccessfulSale(data, totals, payment) {
+    sessionStorage.removeItem(`infocore:sale-request:${window.appData?.user?.email || ''}`);
+    const initial = document.getElementById('workInitialReceived'); if (initial) initial.value = '';
     const sale = data.sale;
     if (Array.isArray(data.products)) {
         data.products.forEach((p) => {
@@ -1557,7 +1576,7 @@ function applySuccessfulSale(data, totals, payment) {
         toastMsg += ` · Troco: ${formatCurrency(asNumber(sale.change))}`;
     }
     showToast(toastMsg, 'success');
-    if (payment !== 'money') {
+    if (payment !== 'money' && payment !== 'mixed') {
         const paymentInfo = data?.payment || sale?.payment || {};
         showPaymentPopup('Compra paga com sucesso', [
             `Meio: ${getPaymentLabel(selectedPaymentMethod)}`,
@@ -1605,11 +1624,12 @@ async function pollPendingSaleStatus(token, totals, payment) {
             try { data = await res.json(); } catch { data = {}; }
 
             if (!res.ok || data.error) {
+                if (data.pending === false) sessionStorage.removeItem(`infocore:sale-request:${window.appData?.user?.email || ''}`);
                 stopPendingPoll();
                 currentPendingToken = null;
                 closePaymentWaitingModal();
                 const paymentInfo = data?.payment || {};
-                showPaymentPopup('Pagamento não aprovado', [
+                showPaymentPopup(data.pending ? 'Pagamento ainda não confirmado' : 'Pagamento não aprovado', [
                     `Meio: ${getPaymentLabel(selectedPaymentMethod)}`,
                     `Status: ${paymentInfo.status || 'não informado'}`,
                     `Motivo: ${paymentInfo.reason || data.message || 'Não informado'}`
@@ -1636,7 +1656,7 @@ async function pollPendingSaleStatus(token, totals, payment) {
             stopPendingPoll();
             currentPendingToken = null;
             closePaymentWaitingModal();
-            showToast('Erro ao consultar status do pagamento.', 'error');
+            showToast('Consulta indisponível. A cobrança pode ter sido aprovada; consulte as pendências antes de cobrar novamente.', 'error');
             finalizeSaleInFlight = false;
         }
     };
@@ -1657,7 +1677,7 @@ async function finalizeSaleCore() {
     }
 
     const totals = getCurrentTotals();
-    const payment = normalizePaymentKey(selectedPaymentMethod);
+    const payment = document.getElementById('splitPaymentEnabled')?.checked ? 'mixed' : normalizePaymentKey(selectedPaymentMethod);
     paymentAbortRequested = false;
     const payload = {
         items: cart.map((i) => {
@@ -1679,18 +1699,30 @@ async function finalizeSaleCore() {
         payment,
         client: String(document.getElementById('pdvCustomerName')?.value || '').trim() || 'Balcão',
         notes: String(document.getElementById('pdvSaleNote')?.value || '').trim().slice(0, 500),
+        customerId: asArray(window.appData?.customers).filter(c=>c.name===String(document.getElementById('pdvCustomerName')?.value||'').trim()).length===1 ? asArray(window.appData?.customers).find(c=>c.name===String(document.getElementById('pdvCustomerName')?.value||'').trim()).id : '',
         allowInsufficientStock: confirmAllowInsufficientStock
     };
+
+    if (payment === 'mixed') {
+        payload.payments = readSplitPayments();
+        payload.paymentsConfirmed = document.getElementById('splitPaymentConfirmed').checked;
+        if (payload.payments.length < 2 || splitRemainingCents() !== 0 || !payload.paymentsConfirmed) {
+            showToast('Informe pelo menos dois meios, confira a soma e confirme o recebimento.', 'error');
+            return false;
+        }
+    }
 
     if (payment === 'credit_card') {
         payload.installments = selectedCreditInstallments;
     }
 
     if (payment === 'money') {
+        const initial = document.getElementById('workInitialReceived')?.value;
+        if (initial != null && initial !== '') payload.initialReceived = Number(initial);
         const cashInput = document.getElementById('pdvCashReceivedInput');
         const raw = String(cashInput?.value || '').trim();
         if (raw === '') {
-            payload.cashReceived = roundMoney2(totals.total);
+            payload.cashReceived = roundMoney2(payload.initialReceived ?? totals.total);
             payload.change = 0;
         } else {
             const received = asNumber(cashInput?.value);
@@ -1698,16 +1730,16 @@ async function finalizeSaleCore() {
                 showToast('Valor recebido inválido. Deixe em branco se o cliente pagou o valor exato.', 'error');
                 return false;
             }
-            if (received + 1e-9 < totals.total) {
+            if (received + 1e-9 < (payload.initialReceived ?? totals.total)) {
                 showToast('O valor recebido é menor que o total da venda.', 'error');
                 return false;
             }
             payload.cashReceived = roundMoney2(received);
-            payload.change = roundMoney2(received - totals.total);
+            payload.change = roundMoney2(received - (payload.initialReceived ?? totals.total));
         }
     }
 
-    const isCardOrPix = payment !== 'money';
+    const isCardOrPix = payment !== 'money' && payment !== 'mixed';
     if (isCardOrPix) {
         closeConfirmActionModal();
         openPaymentWaitingModal(payment);
@@ -1724,9 +1756,16 @@ async function finalizeSaleCore() {
     }
 
     try {
+        const requestStorageKey = `infocore:sale-request:${window.appData?.user?.email || ''}`;
+        const fingerprint = JSON.stringify(payload);
+        let attempt = JSON.parse(sessionStorage.getItem(requestStorageKey) || 'null');
+        if (!attempt || attempt.fingerprint !== fingerprint) {
+            attempt = { fingerprint, id: crypto.randomUUID() };
+            sessionStorage.setItem(requestStorageKey, JSON.stringify(attempt));
+        }
         const res = await fetch('/api/sales', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Idempotency-Key': attempt.id },
             credentials: 'same-origin',
             body: JSON.stringify(payload)
         });
@@ -1750,7 +1789,7 @@ async function finalizeSaleCore() {
             if (payment !== 'money') {
                 closePaymentWaitingModal();
                 const paymentInfo = data?.payment || {};
-                showPaymentPopup('Pagamento não aprovado', [
+                showPaymentPopup(data.pending ? 'Pagamento ainda não confirmado' : 'Pagamento não aprovado', [
                     `Meio: ${getPaymentLabel(selectedPaymentMethod)}`,
                     `Status: ${paymentInfo.status || 'não informado'}`,
                     `Motivo: ${paymentInfo.reason || data.message || 'Não informado'}`
@@ -1760,6 +1799,9 @@ async function finalizeSaleCore() {
             return false;
         }
 
+        if (!data.pending) sessionStorage.removeItem(requestStorageKey);
+        else if (data.token) sessionStorage.setItem(requestStorageKey,JSON.stringify({...attempt,pendingToken:data.token}));
+        window.dispatchEvent(new Event('work-held-changed'));
         if (payment !== 'money' && data.pending && data.token) {
             if (paymentAbortRequested) {
                 try {
@@ -1790,7 +1832,7 @@ async function finalizeSaleCore() {
         return false;
     } finally {
         cardPaymentPostInFlight = false;
-        if (payment === 'money') finalizeSaleInFlight = false;
+        if (payment === 'money' || payment === 'mixed') finalizeSaleInFlight = false;
         if (confirmBtn) {
             confirmBtn.disabled = false;
             confirmBtn.textContent = prevBtnText || 'Confirmar';
@@ -1972,6 +2014,14 @@ function bootPDV() {
         bindBudgetTemplateModal();
         bindCustomItemModal();
         bindPdvOperationalActions();
+        bindSplitPayment();
+        const resumeId = new URLSearchParams(location.search).get('resume');
+        if (resumeId) fetch('/api/work/held-sales').then(r => { if (!r.ok) throw new Error('Falha ao carregar atendimentos.'); return r.json(); }).then(async data => {
+            const held = (data.sales || []).find(s => s.id === resumeId);
+            if (!held) throw new Error('Atendimento não encontrado ou já retomado.');
+            await resumeHeldSale(held);
+            history.replaceState(null, '', '/pdv');
+        }).catch(e => showToast(e.message, 'error'));
         bindPDVBarcodeCapture();
         bindPDVKeyboardShortcuts();
         const cashInput = document.getElementById('pdvCashReceivedInput');
@@ -1983,4 +2033,54 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bootPDV);
 } else {
     bootPDV();
+}
+
+function readSplitPayments() {
+    return [...document.querySelectorAll('[data-split-method]')].filter(input => input.value !== '' && Number(input.value) !== 0).map(input => ({method: input.dataset.splitMethod, amount: Number(input.value)}));
+}
+function splitRemainingCents() {
+    return Math.round(getCurrentTotals().total * 100) - readSplitPayments().reduce((sum, p) => sum + Math.round(p.amount * 100), 0);
+}
+function bindSplitPayment() {
+    const enabled = document.getElementById('splitPaymentEnabled');
+    const update = () => {
+        const remaining = splitRemainingCents();
+        document.getElementById('splitPaymentBalance').textContent = remaining === 0 ? 'Total conferido.' : `${remaining > 0 ? 'Falta distribuir' : 'Valor excedente'}: ${formatCurrency(Math.abs(remaining) / 100)}`;
+        const valid = readSplitPayments().every(p => p.amount > 0 && Number.isFinite(p.amount) && Math.abs(p.amount * 100 - Math.round(p.amount * 100)) < 1e-6);
+        const balanced = valid && remaining === 0 && readSplitPayments().length >= 2;
+        const status = document.getElementById('splitPaymentBalance');
+        status.dataset.state = balanced ? 'complete' : 'pending';
+        if (!valid) status.textContent = 'Use valores positivos com até duas casas decimais.';
+        else if (remaining === 0 && !balanced) status.textContent = 'Distribua o total entre pelo menos dois meios.';
+        document.getElementById('splitPaymentAllocated').textContent = `Distribuído: ${formatCurrency((Math.round(getCurrentTotals().total * 100) - remaining) / 100)} de ${formatCurrency(getCurrentTotals().total)}`;
+        const confirmation = document.getElementById('splitPaymentConfirmed');
+        confirmation.checked = false;
+        confirmation.disabled = !balanced;
+    };
+    enabled?.addEventListener('change', () => {
+        document.getElementById('splitPaymentFields').hidden = !enabled.checked;
+        syncConfirmPaymentExtras('finalizar', enabled.checked ? 'mixed' : selectedPaymentMethod);
+        const paymentLabel = document.getElementById('confirmPaymentLabel');
+        if (paymentLabel) paymentLabel.textContent = enabled.checked ? 'Pagamento dividido' : `${getPaymentLabel(selectedPaymentMethod)}${selectedPaymentMethod === 'credit_card' ? ` · ${selectedCreditInstallments}x` : ''}`;
+        update();
+    });
+    document.querySelectorAll('[data-split-method]').forEach(input => input.addEventListener('input', update));
+    document.getElementById('splitHalfBtn')?.addEventListener('click', () => {
+        const cents = Math.round(getCurrentTotals().total * 100);
+        document.querySelectorAll('[data-split-method]').forEach(input => {
+            input.value = input.dataset.splitMethod === 'pix' ? (Math.floor(cents / 2) / 100).toFixed(2) : input.dataset.splitMethod === 'money' ? ((cents - Math.floor(cents / 2)) / 100).toFixed(2) : '';
+        });
+        update();
+    });
+    document.getElementById('splitClearBtn')?.addEventListener('click', () => {
+        document.querySelectorAll('[data-split-method]').forEach(input => { input.value = ''; });
+        update();
+    });
+    document.querySelectorAll('[data-split-fill]').forEach(button => button.addEventListener('click', () => {
+        const input = document.querySelector(`[data-split-method="${button.dataset.splitFill}"]`);
+        const cents = Math.round((Number(input.value) || 0) * 100) + splitRemainingCents();
+        input.value = cents > 0 ? (cents / 100).toFixed(2) : '';
+        update();
+        input.focus();
+    }));
 }

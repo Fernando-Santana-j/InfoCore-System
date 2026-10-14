@@ -454,7 +454,7 @@ const Stock = (() => {
             <td class="mono text-muted">${escapeHtml(p.sku)}</td>
             <td><div class="catalog-item-cell">${productThumbCell(p)}<div><strong>${escapeHtml(p.name)}</strong><small>${escapeHtml(p.description || 'Produto físico')}</small></div></div></td>
             <td>${stockCategoryTagHtml(p.category)}</td>
-            <td><div class="editable-cell"><input aria-label="Estoque de ${escapeAttr(p.name)}" type="number" min="0" step="1" class="editable-input stock-qty-input" value="${asNumber(p.qty)}" data-product-id="${rowId(p)}"></div></td>
+            <td><div class="editable-cell"><input aria-label="Estoque de ${escapeAttr(p.name)}" type="number" min="0" step="1" class="editable-input stock-qty-input" value="${asNumber(p.qty)}" data-product-id="${rowId(p)}"></div><small class="text-muted">Reservado: ${asNumber(p.reservedQty)} · disponível: ${asNumber(p.availableQty ?? p.qty)}</small></td>
             <td class="mono text-muted">${asNumber(p.min)}</td>
             <td class="mono">${formatCurrency(asNumber(p.cost))}</td>
             <td><div class="editable-cell"><input aria-label="Preço de ${escapeAttr(p.name)}" type="text" inputmode="numeric" autocomplete="off" class="editable-input input-money stock-price-input" value="${formatMoneyFromNumber(p.price)}" data-product-id="${rowId(p)}"></div></td>

@@ -4,7 +4,7 @@ const Analytics = (() => {
     const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
     const money = (value) => formatCurrency(num(value));
     const colors = ['var(--accent)', 'var(--gold)', 'var(--blue)', 'var(--purple)', 'var(--green)', 'var(--red)'];
-    const paymentLabels = { money: 'Dinheiro', credit_card: 'Crédito', debit_card: 'Débito', pix: 'Pix' };
+    const paymentLabels = { mixed: 'Dividido', money: 'Dinheiro', credit_card: 'Crédito', debit_card: 'Débito', pix: 'Pix' };
 
     function saleDate(sale) {
         const date = new Date(sale?.createdAt || sale?.date || '');

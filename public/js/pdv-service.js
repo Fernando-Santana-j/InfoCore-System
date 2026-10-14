@@ -13,6 +13,7 @@ let svcBudgetSeeded = false;
 let svcSelectedBudgetProductId = '';
 let svcBudgetProductAcIndex = -1;
 let svcTemplatesLastRefresh = 0;
+let svcCreatedIntake = null;
 
 const SVC_NEXT_LABEL = 'Próximo →';
 const SVC_SUBMIT_LABEL = '✓ Finalizar ordem de serviço';
@@ -717,6 +718,7 @@ function svcSetStep(step) {
 }
 
 async function svcOpenModal() {
+    svcCreatedIntake = null;
     svcIntakeStep = 1;
     svcClearCustomer();
     document.getElementById('svcCustomerName').value = '';
@@ -735,13 +737,15 @@ async function svcOpenModal() {
     document.body.style.overflow = 'hidden';
     svcRenderWorkTemplatesPicker();
     svcRenderAppliedTemplatesSequence();
+    await svcRestoreDraft();
     svcSetStep(1);
     // O bootstrap já trouxe os modelos. Atualiza em segundo plano para que a
     // abertura do popup nunca dependa da rede.
     void svcRefreshWorkTemplates().then(() => svcRenderWorkTemplatesPicker());
 }
 
-function svcCloseModal() {
+async function svcCloseModal() {
+    await WorkDrafts.flush('service-intake');
     document.getElementById('serviceIntakeModal')?.classList.remove('open');
     document.body.style.overflow = '';
 }
@@ -790,10 +794,13 @@ async function svcUploadPendingPhotos(serviceId) {
         if (!files?.length) continue;
         const form = new FormData();
         files.forEach((f) => form.append('photos', f));
-        await fetch(`/api/services/${encodeURIComponent(serviceId)}/checklist/${encodeURIComponent(key)}/photos?phase=intake`, {
+        const response = await fetch(`/api/services/${encodeURIComponent(serviceId)}/checklist/${encodeURIComponent(key)}/photos?phase=intake`, {
             method: 'POST',
             body: form
         });
+        if (!response.ok) throw new Error('A OS foi criada, mas houve falha no envio das fotos. O rascunho foi mantido para tentar novamente na mesma OS.');
+        svcPendingPhotos.delete(key);
+        await WorkDrafts.flush('service-intake');
     }
 }
 
@@ -836,22 +843,28 @@ async function svcSubmit() {
         applyTemplateIds: svcAppliedTemplateOrder.slice()
     };
     try {
-        const res = await fetch('/api/services', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok || data.error) {
-            showToast(data.message || 'Erro ao registrar OS.', 'error');
-            return;
+        let data = svcCreatedIntake;
+        if (!data) {
+            const res = await fetch('/api/services', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload)
+            });
+            data = await res.json();
+            if (!res.ok || data.error) {
+                showToast(data.message || 'Erro ao registrar OS.', 'error');
+                return;
+            }
+            svcCreatedIntake = {service:data.service,budget:data.budget || null};
+            await WorkDrafts.flush('service-intake');
         }
         await svcUploadPendingPhotos(data.service.id);
         if (data.budget?.id) {
             const budgets = Array.isArray(window.appData?.budgets) ? window.appData.budgets : [];
             window.appData.budgets = [data.budget, ...budgets.filter((b) => String(b.id) !== String(data.budget.id))];
         }
+        await WorkDrafts.clear('service-intake').catch(()=>showToast('OS salva; não foi possível remover a cópia local.','warning'));
         svcCloseModal();
         const isAdmin = String(window.appData?.user?.type || '') === 'admin';
         showToast(`OS ${data.service.code} criada · Orçamento ${data.budget?.code || ''} em rascunho.`, 'success');
@@ -919,4 +932,27 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bootServiceIntake);
 } else {
     bootServiceIntake();
+}
+
+async function svcRestoreDraft() {
+    const root = document.getElementById('serviceIntakeModal');
+    try {
+        const draft = await WorkDrafts.restore('service-intake');
+        if (draft) {
+            WorkDrafts.fill(draft.fields);
+            svcCreatedIntake = draft.created || null;
+            svcSelectedCustomerId = draft.customerId;
+            svcChecklistState = draft.checklist;
+            svcBudgetItemsDraft = draft.budgetItems;
+            svcBudgetSeeded = draft.seeded;
+            svcAppliedTemplateOrder.splice(0, svcAppliedTemplateOrder.length, ...draft.templates);
+            svcPendingPhotos.clear(); draft.photos.forEach(([key, value]) => svcPendingPhotos.set(key, value));
+            svcRenderChecklist(); svcRenderAppliedTemplatesSequence();
+            showToast('Rascunho de OS recuperado, incluindo fotos selecionadas.', 'info');
+        }
+    } catch { showToast('Não foi possível recuperar o rascunho da OS.', 'error'); }
+    WorkDrafts.watch('service-intake', root, () => ({
+        created: svcCreatedIntake, fields: WorkDrafts.fields(root), customerId: svcSelectedCustomerId, checklist: svcChecklistState,
+        budgetItems: svcBudgetItemsDraft, seeded: svcBudgetSeeded, templates: svcAppliedTemplateOrder.slice(), photos: [...svcPendingPhotos]
+    }));
 }

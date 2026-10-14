@@ -206,6 +206,18 @@ function renderPhotos(photos, extraClass) {
 function renderTop() {
     const el = document.getElementById('svcWorkTop');
     if (!el || !service) return;
+    const origin = document.getElementById('serviceRequestOrigin');
+    if (origin) {
+        const intake = service.intake;
+        origin.hidden = !intake;
+        origin.innerHTML = intake ? `<details class="request-origin"><summary>Solicitação de origem · ${esc(intake.code || '')}</summary>
+          <dl class="request-facts">${[['Cliente', intake.customerName], ['Contato', [intake.customerPhone, intake.customerEmail].filter(Boolean).join(' · ')], ['Equipamento', intake.device], ['Identificação', intake.serialNumber], ['Acessórios', intake.accessories], ['Recebido por', intake.createdBy?.name]].filter(([,v]) => v).map(([k,v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+          <p class="request-description">${esc(intake.description || '')}</p><div class="request-tags">${(intake.problems || []).map(p => `<span>${esc(p)}</span>`).join('')}</div>
+          ${intake.physicalCondition ? `<p class="request-description"><strong>Estado físico:</strong> ${esc(intake.physicalCondition)}</p>` : ''}
+          <p class="request-description"><strong>Parecer técnico:</strong> ${esc(intake.reviewNotes || 'Não informado')}</p>
+          <div class="request-photos">${(intake.photos || []).filter(p => String(p.url).startsWith('/api/budget-requests/')).map(p => `<a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="${esc(p.caption || 'Foto da entrada')}" loading="lazy"><small>${esc(p.caption || 'Ampliar')}</small></a>`).join('')}</div>
+          <a href="/budget-requests?open=${encodeURIComponent(service.requestId)}">Consultar solicitação completa →</a><p class="text-muted">Contexto interno da entrada. As fotos não são publicadas no relatório do cliente.</p></details>` : '';
+    }
     const prog = repairProgress();
     el.innerHTML = `
         <a href="/services" class="svc-work-back btn btn-ghost btn-sm">← Oficina</a>
@@ -299,7 +311,7 @@ function renderSummary() {
                 <p class="form-label">Finalizar ordem de serviço</p>
                 <div class="svc-work-final-btns">
                     <button type="button" class="btn btn-primary btn-sm" id="svcWorkMarkDoneBtn">✓ OS concluída</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="svcWorkArchiveBtn">📦 Arquivar OS</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="svcWorkArchiveBtn">📦 Confirmar entrega</button>
                 </div>
                 ${budgetBtn}
                 <button type="button" class="btn btn-ghost btn-sm" id="svcWorkAddStageSummaryBtn">+ Adicionar outra etapa</button>
@@ -324,14 +336,11 @@ function renderSummary() {
             showToast('OS marcada como concluída.', 'success');
         }
     });
-    document.getElementById('svcWorkArchiveBtn')?.addEventListener('click', async () => {
-        if (!confirm('Arquivar esta OS? Ela ficará como entregue na lista.')) return;
-        const updated = await persistPatch({ status: 'delivered' });
-        if (updated) {
-            service = updated;
-            renderTop();
-            showToast('OS arquivada.', 'success');
-        }
+    document.getElementById('svcWorkArchiveBtn')?.addEventListener('click', () => {
+        const form = document.getElementById('workDeliveryForm');
+        const details = form?.closest('details');
+        if (details) { details.open = true; details.scrollIntoView({behavior:'smooth',block:'center'}); form.querySelector('input')?.focus(); }
+        else showToast('Consulte a confirmação de entrega na ficha do atendimento.', 'info');
     });
     document.getElementById('svcWorkReviewBtn')?.addEventListener('click', () => {
         phase = 'items';

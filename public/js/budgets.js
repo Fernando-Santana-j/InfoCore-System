@@ -1,3 +1,5 @@
+let budgetItemUploads = 0;
+function budgetCanEdit(b) { return window.appData?.user?.type === 'admin' || (window.appData?.user?.type === 'technician' && !!b?.requestId); }
 let editingBudgetId = '';
 let budgetOptionsDraft = [];
 let activeBudgetOptionId = '';
@@ -88,6 +90,7 @@ function openBudgetModal(id) {
     syncBudgetModalLock();
 }
 function closeBudgetModal(id) {
+    if(id==='budgetCreateModal' && typeof WorkDrafts !== 'undefined') void WorkDrafts.flush('budget');
     const modal = document.getElementById(id);
     if (!modal) return;
     modal.classList.remove('open');
@@ -266,6 +269,9 @@ function normalizeDraftItem(row, { forTemplate = false, refreshCost = false } = 
         unitPrice: Math.max(0, unitPrice),
         unitCost: Math.max(0, unitCost),
         condition: row?.condition || (row?.kind === 'custom' ? 'na' : 'new'),
+        images: [...new Set([...arr(row?.images),row?.imageUrl].map(safeBudgetMediaUrl).filter(Boolean))].slice(0,4),
+        imageUrl: safeBudgetMediaUrl(row?.images?.[0] || row?.imageUrl || ''),
+        customerPermissions: { remove: row?.customerPermissions?.remove !== false, decrease: row?.customerPermissions?.decrease !== false, increase: row?.customerPermissions?.increase !== false },
         warranty: String(row?.warranty || ''),
         note: String(row?.note || ''),
         // Modelos podem acompanhar o preço atual. Orçamentos são sempre snapshots.
@@ -484,6 +490,7 @@ function renderBudgetItems() {
     if (!option.items.length) el.innerHTML = '<div class="empty-state">Nenhum item nesta opção.</div>';
     else el.innerHTML = option.items.map((item, i) => itemRowHtml(item, i, 'budget')).join('');
     bindItemRowEvents('budget');
+    syncCustomerPermissions();
     renderBudgetTotals();
 }
 function itemRowHtml(item, i, context) {
@@ -498,7 +505,7 @@ function itemRowHtml(item, i, context) {
         : '<span class="budget-price-lock" title="O preço do orçamento não muda automaticamente depois de salvo.">Fixo no orçamento</span>';
     const priceReadonly = '';
     return `<div class="budget-items-row advanced" data-index="${i}">
-      <div class="budget-item-name-wrap"><input class="form-input item-name" value="${esc(item.name)}"><div class="budget-item-secondary"><input class="form-input item-warranty" value="${esc(item.warranty || '')}" placeholder="Garantia"><input class="form-input item-note" value="${esc(item.note || '')}" placeholder="Observação"></div><div class="budget-item-meta">${stockWarn}</div></div>
+      <div class="budget-item-name-wrap"><input class="form-input item-name" value="${esc(item.name)}"><div class="budget-item-secondary"><input class="form-input item-warranty" value="${esc(item.warranty || '')}" placeholder="Garantia"><input class="form-input item-note" value="${esc(item.note || '')}" placeholder="Observação"></div><div class="budget-item-image">${(item.images?.length ? item.images : [item.imageUrl]).filter(safeBudgetMediaUrl).map((url,index)=>`<span class="budget-item-thumb"><img src="${esc(safeBudgetMediaUrl(url))}" alt="Foto ${index+1} de ${esc(item.name)}" loading="lazy"><button type="button" class="item-image-remove" data-image-index="${index}" aria-label="Remover foto ${index+1} de ${esc(item.name)}">×</button></span>`).join('')}<label class="budget-image-picker">+ Fotos do item<input class="item-image-file" type="file" multiple accept="image/jpeg,image/png,image/webp"><small>Até 4 fotos · JPG, PNG ou WebP · 8 MB cada</small></label><span class="item-image-status" role="status"></span></div><div class="budget-item-meta">${stockWarn}</div><fieldset class="budget-item-permissions"><legend>Permissões no link do cliente</legend><div class="budget-permission-presets">${[['fixed','Fixo'],['optional','Opcional'],['flexible','Personalizável']].map(([key,label])=>`<button type="button" class="btn btn-ghost btn-sm" data-permission-preset="${key}" title="${key === 'fixed' ? 'Item obrigatório com quantidade fixa' : key === 'optional' ? 'Permite retirar, mantendo a quantidade original' : 'Permite retirar e ajustar a quantidade'}">${label}</button>`).join('')}</div>${[['remove','Retirar item'],['decrease','Diminuir quantidade'],['increase','Aumentar quantidade']].map(([key,label])=>`<label><input type="checkbox" data-customer-permission="${key}"${item.customerPermissions?.[key] !== false ? ' checked' : ''}> ${label}</label>`).join('')}</fieldset></div>
       <select class="form-input item-condition">${Object.entries(CONDITION_LABELS).map(([v,l]) => `<option value="${v}"${item.condition === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
       <input class="form-input item-qty" type="number" min="1" step="1" value="${Math.max(1, Math.trunc(num(item.qty) || 1))}">
       <input class="form-input item-price" type="number" min="0" step="0.01" value="${num(item.unitPrice).toFixed(2)}"${priceReadonly} aria-label="Preço de venda de ${esc(item.name)}">
@@ -521,6 +528,7 @@ function bindItemRowEvents(context) {
             item.name = row.querySelector('.item-name').value.trim();
             item.warranty = row.querySelector('.item-warranty').value.trim();
             item.note = row.querySelector('.item-note').value.trim();
+            item.customerPermissions = Object.fromEntries([...row.querySelectorAll('[data-customer-permission]')].map(el=>[el.dataset.customerPermission,el.checked]));
             item.condition = row.querySelector('.item-condition').value;
             item.qty = Math.max(1, Math.trunc(num(row.querySelector('.item-qty').value) || 1));
             item.unitPrice = Math.max(0, num(row.querySelector('.item-price').value));
@@ -538,6 +546,7 @@ function bindItemRowEvents(context) {
             if (context === 'template') renderTemplateItems(); else renderBudgetItems();
         };
         row.addEventListener('change', (e) => {
+            if (e.target.matches('.item-image-file')) return;
             if (e.target.matches('.item-price') && context === 'template') {
                 item.priceMode='snapshot';
                 const mode=row.querySelector('.item-price-mode');
@@ -550,6 +559,34 @@ function bindItemRowEvents(context) {
         row.querySelector('.item-warranty').onblur = update;
         row.querySelector('.item-note').onblur = update;
         const rerender = () => context === 'template' ? renderTemplateItems() : renderBudgetItems();
+        row.querySelectorAll('[data-permission-preset]').forEach(button => button.addEventListener('click', () => {
+            const preset = button.dataset.permissionPreset;
+            item.customerPermissions = {remove:preset !== 'fixed',decrease:preset === 'flexible',increase:preset === 'flexible'};
+            rerender();
+            document.querySelector(`#${context === 'template' ? 'templateItemsList' : 'budgetItemsList'} [data-index="${i}"] [data-permission-preset="${preset}"]`)?.focus();
+        }));
+        row.querySelectorAll('.item-image-remove').forEach(button=>button.addEventListener('click', () => {
+            item.images = (item.images?.length ? item.images : [item.imageUrl]).filter(Boolean).filter((_,index)=>index!==Number(button.dataset.imageIndex));item.imageUrl=item.images[0]||'';rerender();
+        }));
+        row.querySelector('.item-image-file')?.addEventListener('change', async event => {
+            const files = [...(event.target.files || [])]; if (!files.length) return;
+            const status = row.querySelector('.item-image-status');
+            item.images = (item.images?.length ? item.images : [item.imageUrl]).filter(Boolean);
+            if (files.length+item.images.length>4 || files.some(file=>file.size>8*1024*1024||!/^image\/(jpeg|png|webp)$/.test(file.type))) { status.textContent = 'Use até quatro fotos JPG, PNG ou WebP, com até 8 MB cada.'; event.target.value = ''; return; }
+            const saveButtons = ['budgetSaveBtn','saveTemplateBtn','budgetSaveAsTemplateBtn'].map(id=>document.getElementById(id)).filter(Boolean);
+            budgetItemUploads++;
+            saveButtons.forEach(button=>button.disabled=true); status.textContent='Enviando fotos…'; event.target.disabled=true;
+            try {
+                for(const file of files) {
+                    const data = new FormData(); data.append('image',file);
+                    const endpoint = context === 'template' ? '/api/budget-templates/image' : '/api/budgets/image?budgetId='+encodeURIComponent(editingBudgetId);
+                    const response = await fetch(endpoint,{method:'POST',body:data}); const result=await response.json();
+                    if(!response.ok||result.error)throw new Error(result.message||'Não foi possível enviar a foto.');
+                    item.images.push(result.imageUrl);item.imageUrl=item.images[0];
+                }
+            } catch(error) { showToast(error.message,'error'); }
+            finally { budgetItemUploads--; saveButtons.forEach(button=>button.disabled=budgetItemUploads>0); rerender(); }
+        });
         const up = row.querySelector('.budget-row-up');
         const down = row.querySelector('.budget-row-down');
         if (up) up.onclick = () => { if (i <= 0) return; [list[i - 1], list[i]] = [list[i], list[i - 1]]; rerender(); };
@@ -600,6 +637,7 @@ function renderTemplateItems() {
     const countEl = document.getElementById('templateItemsCount'); if (countEl) countEl.textContent = `${templateItemsDraft.length} ${templateItemsDraft.length === 1 ? 'item' : 'itens'}`;
     el.innerHTML = templateItemsDraft.length ? templateItemsDraft.map((x,i) => itemRowHtml(x,i,'template')).join('') : '<div class="template-items-empty"><span>📦</span><strong>Nenhum item adicionado</strong><small>Pesquise um produto acima ou crie um item manual.</small></div>';
     bindItemRowEvents('template');
+    syncCustomerPermissions();
     const subtotal = templateItemsDraft.reduce((s,x)=>s+itemTotal(x),0), cost = templateItemsDraft.reduce((s,x)=>s+num(x.qty)*num(x.unitCost),0), profit=subtotal-cost, margin=subtotal?profit/subtotal*100:0;
     document.getElementById('templateFinancialBox').innerHTML = `<div class="template-items-summary"><span>${templateItemsDraft.length} item(ns) no modelo</span></div><div class="budget-financial-box"><div class="budget-financial-cell"><small>Preço estimado</small><strong>${money(subtotal)}</strong></div><div class="budget-financial-cell"><small>Custo</small><strong>${money(cost)}</strong></div><div class="budget-financial-cell"><small>Lucro bruto</small><strong>${money(profit)}</strong></div><div class="budget-financial-cell"><small>Margem</small><strong class="${margin < 10 ? 'margin-low':'margin-good'}">${margin.toFixed(1)}%</strong></div></div>`;
 }
@@ -622,6 +660,7 @@ function templatePayload() {
     };
 }
 async function saveTemplate() {
+    if(budgetItemUploads) return showToast('Aguarde o envio das fotos dos itens.','info');
     const payload = templatePayload(); if (!payload.name) return showToast('Informe o nome do modelo.', 'error'); if (!payload.items.length) return showToast('Adicione pelo menos um item.', 'error');
     try { const data = await api(editingTemplateId ? `/api/budget-templates/${encodeURIComponent(editingTemplateId)}` : '/api/budget-templates', { method: editingTemplateId ? 'PATCH':'POST', body: JSON.stringify(payload) }); upsert('budgetTemplates', data.template); loadTemplateEditor(data.template); showToast('Modelo salvo.', 'success'); }
     catch(e){ console.error(e); showToast(e.message,'error'); }
@@ -704,6 +743,7 @@ function setBudgetEditorStep(step) {
 }
 
 function resetBudgetEditor() {
+    renderBudgetIntake(null);
     editingBudgetId = '';
     selectedBudgetCustomerId = '';
     selectedBudgetProductId = '';
@@ -719,6 +759,7 @@ function resetBudgetEditor() {
     document.getElementById('budgetSaveAsTemplateBtn').hidden = false;
     ['budgetCustomerId','budgetCustomerName','budgetCustomerPhone','budgetCustomerEmail','budgetCustomerDoc','budgetCustomerSearch','budgetRejectionNote','budgetDeadline','budgetPaymentTerms','budgetWarrantyText','budgetIncludedServices','budgetNotes','budgetInternalNotes','budgetProductSearch'].forEach((id)=>{const el=document.getElementById(id);if(el)el.value='';});
     ['budgetCustomerResults','budgetProductResults'].forEach((id)=>{const el=document.getElementById(id);if(el)el.hidden=true;});
+    document.getElementById('budgetCustomerCanEdit').checked = true;
     document.getElementById('budgetSource').value='';
     document.getElementById('budgetStatus').value='draft';
     document.getElementById('budgetRejectionReason').value='';
@@ -729,14 +770,16 @@ function resetBudgetEditor() {
     renderOptionTabs();
     renderBudgetItems();
 }
-function openNewBudget() { resetBudgetEditor(); setBudgetEditorStep(1); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
+async function openNewBudget() { if(window.appData?.user?.type !== 'admin') { location.assign('/budget-requests'); return; } resetBudgetEditor(); await restoreBudgetDraft(); setBudgetEditorStep(1); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
 function openEditBudget(b) {
+    if(!budgetCanEdit(b)) { if(b) openBudgetPreview(b); return; }
     if (!b) return;
     if (b.status === 'converted') {
         showToast('Orçamentos convertidos são somente leitura. Abrindo a pré-visualização.', 'info');
         openBudgetPreview(b);
         return;
     }
+    renderBudgetIntake(b);
     editingBudgetId = String(b.id);
     selectedBudgetCustomerId = String(b.customerId || '');
     selectedBudgetProductId = '';
@@ -754,6 +797,7 @@ function openEditBudget(b) {
     document.getElementById('budgetCustomerEmail').value = b.customerEmail || '';
     document.getElementById('budgetCustomerDoc').value = b.customerDoc || '';
     document.getElementById('budgetCustomerSearch').value = b.customerName || '';
+    document.getElementById('budgetCustomerCanEdit').checked = b.customerCanEdit !== false;
     document.getElementById('budgetSource').value = b.source || '';
     document.getElementById('budgetStatus').value = b.status || 'draft';
     document.getElementById('budgetRejectionReason').value = b.rejectionReason || '';
@@ -778,19 +822,21 @@ function openEditBudget(b) {
     renderBudgetItems();
     setBudgetEditorStep(1);
     openBudgetModal('budgetCreateModal');
+    watchBudgetDraft();
 }
 function budgetPayload() {
     syncOptionHeader(); syncAdjustmentsFromUi();
     const status=document.getElementById('budgetStatus').value; return {
         customerId:document.getElementById('budgetCustomerId').value.trim(), customerName:document.getElementById('budgetCustomerName').value.trim(), customerPhone:document.getElementById('budgetCustomerPhone').value.trim(), customerEmail:document.getElementById('budgetCustomerEmail').value.trim(), customerDoc:document.getElementById('budgetCustomerDoc').value.trim(),
         source:document.getElementById('budgetSource').value, status, rejectionReason:status==='rejected'?document.getElementById('budgetRejectionReason').value:'', rejectionNote:status==='rejected'?document.getElementById('budgetRejectionNote').value.trim():'',
-        issuedAt:document.getElementById('budgetIssuedAt').value, validUntil:document.getElementById('budgetValidUntil').value, deadline:document.getElementById('budgetDeadline').value.trim(), paymentTerms:document.getElementById('budgetPaymentTerms').value.trim(), warrantyText:document.getElementById('budgetWarrantyText').value.trim(), includedServices:document.getElementById('budgetIncludedServices').value.split('\n').map(x=>x.trim()).filter(Boolean), notes:document.getElementById('budgetNotes').value.trim(), internalNotes:document.getElementById('budgetInternalNotes').value.trim(),
+        issuedAt:document.getElementById('budgetIssuedAt').value, validUntil:document.getElementById('budgetValidUntil').value, deadline:document.getElementById('budgetDeadline').value.trim(), paymentTerms:document.getElementById('budgetPaymentTerms').value.trim(), customerCanEdit:document.getElementById('budgetCustomerCanEdit').checked, warrantyText:document.getElementById('budgetWarrantyText').value.trim(), includedServices:document.getElementById('budgetIncludedServices').value.split('\n').map(x=>x.trim()).filter(Boolean), notes:document.getElementById('budgetNotes').value.trim(), internalNotes:document.getElementById('budgetInternalNotes').value.trim(),
         templateId:document.getElementById('budgetTemplateSelect').value||'', selectedOptionId:activeBudgetOptionId, options:budgetOptionsDraft.map((o)=>({...clone(o),items:o.items.map((item)=>({...clone(item),priceMode:'snapshot'}))}))
     };
 }
 async function saveBudgetEditor() {
+    if(budgetItemUploads) return showToast('Aguarde o envio das fotos dos itens.','info');
     const payload=budgetPayload(); if(!payload.customerName)return showToast('Informe o nome do cliente.','error'); if(!payload.options.length||payload.options.every(o=>!o.items.length))return showToast('Adicione pelo menos um item.','error'); const emptyOption=payload.options.find(o=>!o.items.length); if(emptyOption)return showToast(`A opção \"${emptyOption.name||'sem nome'}\" está sem itens. Preencha ou exclua essa opção.`,'error'); if(payload.validUntil<payload.issuedAt)return showToast('A validade não pode ser anterior à emissão.','error');
-    try { const data=await api(editingBudgetId?`/api/budgets/${encodeURIComponent(editingBudgetId)}`:'/api/budgets',{method:editingBudgetId?'PATCH':'POST',body:JSON.stringify(payload)}); upsert('budgets',data.budget); if(data.customerCreated&&data.customer)upsert('customers',data.customer); closeBudgetModal('budgetCreateModal'); renderAll(); showToast('Orçamento salvo com sucesso.','success'); showNotificationStatus(data.notifications); }
+    try { const data=await api(editingBudgetId?`/api/budgets/${encodeURIComponent(editingBudgetId)}`:'/api/budgets',{method:editingBudgetId?'PATCH':'POST',body:JSON.stringify(payload)}); await WorkDrafts.clear('budget').catch(()=>showToast('Orçamento salvo; não foi possível remover a cópia local.','warning')); upsert('budgets',data.budget); if(data.customerCreated&&data.customer)upsert('customers',data.customer); closeBudgetModal('budgetCreateModal'); renderAll(); showToast('Orçamento salvo com sucesso.','success'); showNotificationStatus(data.notifications); }
     catch(e){console.error(e);showToast(e.message,'error');}
 }
 function toggleRejectionFields(){document.getElementById('budgetRejectionFields').hidden=document.getElementById('budgetStatus').value!=='rejected';}
@@ -848,7 +894,7 @@ function renderBudgetCard(b) {
     const followUp = isFollowUpPending(b);
     const reply = b.customerResponse;
     const converted = b.status === 'converted';
-    const statusControl = converted
+    const statusControl = converted || !budgetCanEdit(b)
         ? `<span class="budget-status status-converted">${esc(statusLabel(b.status))}</span>`
         : `<label class="budget-quick-status status-${esc(b.status || 'draft')}" title="Altere o estado sem abrir o orçamento">
             <span class="budget-status-dot" aria-hidden="true"></span>
@@ -896,18 +942,18 @@ function renderBudgetCard(b) {
         </div>
         <footer class="budget-card-actions">
             <div class="budget-card-primary-actions">
-                <button class="btn btn-primary btn-sm" type="button" data-action="share" data-id="${esc(b.id)}">Compartilhar</button>
+                <button class="btn btn-primary btn-sm" ${budgetCanEdit(b) ? '' : 'hidden'} type="button" data-action="share" data-id="${esc(b.id)}">Compartilhar</button>
                 <button class="btn btn-ghost btn-sm" type="button" data-action="preview" data-id="${esc(b.id)}">Visualizar</button>
-                ${!converted ? `<button class="btn btn-ghost btn-sm" type="button" data-action="edit" data-id="${esc(b.id)}">Editar</button>` : ''}
+                ${!converted && budgetCanEdit(b) ? `<button class="btn btn-ghost btn-sm" type="button" data-action="edit" data-id="${esc(b.id)}">Editar</button>` : ''}
             </div>
             <details class="budget-more-actions">
                 <summary>Mais ações <span aria-hidden="true">•••</span></summary>
                 <div class="budget-more-actions-menu">
                     ${reply ? `<button type="button" data-action="response" data-id="${esc(b.id)}">Ver respostas do cliente</button>` : ''}
-                    <button type="button" data-action="duplicate" data-id="${esc(b.id)}">Duplicar orçamento</button>
-                    ${followUp ? `<button type="button" data-action="followup" data-id="${esc(b.id)}">Marcar follow-up como feito</button>` : ''}
-                    ${['approved', 'acquiring_parts'].includes(b.status) ? `<button type="button" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>` : ''}
-                    ${!converted ? `<button class="is-danger" type="button" data-action="delete" data-id="${esc(b.id)}">Excluir orçamento</button>` : ''}
+                    <button class="admin-only-control" type="button" data-action="duplicate" data-id="${esc(b.id)}">Duplicar orçamento</button>
+                    ${followUp ? `<button class="admin-only-control" type="button" data-action="followup" data-id="${esc(b.id)}">Marcar follow-up como feito</button>` : ''}
+                    ${['approved', 'acquiring_parts'].includes(b.status) ? `<button class="admin-only-control" type="button" data-action="convert" data-id="${esc(b.id)}">Converter em venda</button>` : ''}
+                    ${!converted ? `<button class="is-danger admin-only-control" type="button" data-action="delete" data-id="${esc(b.id)}">Excluir orçamento</button>` : ''}
                 </div>
             </details>
         </footer>
@@ -1050,9 +1096,7 @@ function openDuplicateBudgetModal(b) {
 async function handleBudgetAction(action,id){
     const b=budgets().find(x=>String(x.id)===String(id));
     if(!b)return;
-    if(action==='share'){
-        try{const data=await api(`/api/budgets/${encodeURIComponent(id)}/public-link`,{method:'POST',body:JSON.stringify({})});if(data.budget)upsert('budgets',data.budget);await copyBudgetLink(data.url);renderBudgetCards();showToast('Link do cliente copiado.','success');}catch(e){showToast(e.message,'error');}return;
-    }
+    if(action==='share')return openBudgetPreview(b);
     if(action==='response')return showCustomerResponse(b);
     if(action==='preview')return openBudgetPreview(b);
     if(action==='edit')return openEditBudget(b);
@@ -1081,11 +1125,11 @@ async function handleBudgetAction(action,id){
 function showCustomerResponse(b){const r=b.customerResponse||{},o=arr(b.options).find(x=>String(x.id)===String(r.selectedOptionId)),choices=r.choices||{};const selected=arr(o?.items).filter(i=>choices[i.id]?.included!==false).map(i=>`<li>${esc(i.name)} · qtd. ${num(choices[i.id]?.qty||i.qty)}</li>`).join('');const removed=arr(o?.items).filter(i=>choices[i.id]?.included===false).map(i=>esc(i.name)).join(', ');const requested=arr(r.requestedItems).map(i=>`<li><strong>${esc(i.name)}</strong>${i.details?` — ${esc(i.details)}`:''}</li>`).join('');let modal=document.getElementById('budgetCustomerResponseModal');if(!modal){modal=document.createElement('div');modal.id='budgetCustomerResponseModal';modal.className='pdv-modal-overlay budget-modal-overlay';document.body.appendChild(modal);}modal.innerHTML=`<div class="pdv-modal-card small-modal-card"><div class="pdv-modal-header"><div class="pdv-modal-title">Resposta de ${esc(r.customerName||b.customerName)}</div><button class="pdv-modal-close" type="button">✕</button></div><div class="pdv-modal-body customer-response-body"><span class="budget-customer-live">${r.finalized?'✓ Finalizado pelo cliente':'● Preenchimento em andamento'}</span><h4>${esc(o?.name||'Opção selecionada')}</h4><p>${esc(o?.description||'')}</p><strong>Itens mantidos</strong><ul>${selected||'<li>Nenhum</li>'}</ul>${removed?`<strong>Itens removidos</strong><p>${removed}</p>`:''}${requested?`<strong>Itens solicitados</strong><ul>${requested}</ul>`:''}${r.notes?`<strong>Observações</strong><p>${esc(r.notes)}</p>`:''}</div></div>`;modal.querySelector('.pdv-modal-close').onclick=()=>closeBudgetModal(modal.id);modal.onclick=e=>{if(e.target===modal)closeBudgetModal(modal.id)};openBudgetModal(modal.id);}
 
 // ---------- Preview/share ----------
-function openBudgetPreview(b){budgetCurrentRecord=b;openBudgetModal('budgetTemplateModal');loadBudgetTemplatePreview(b,document.getElementById('budgetTemplatePreview'));}
+function openBudgetPreview(b){document.getElementById('budgetPublicLinkBtn').hidden=!budgetCanEdit(b);document.getElementById('budgetPublicLinkBox').hidden=true;budgetCurrentRecord=b;openBudgetModal('budgetTemplateModal');loadBudgetTemplatePreview(b,document.getElementById('budgetTemplatePreview'));}
 function closeBudgetPreview(){closeBudgetModal('budgetTemplateModal');}
 function showNotificationStatus(n){if(!n)return;if(n.email?.sent)showToast('Email enviado automaticamente.','success');if(n.whatsapp?.sent)showToast('WhatsApp enviado automaticamente.','success');}
 async function openWhatsappForBudget(){if(!budgetCurrentRecord)return;let phone=String(budgetCurrentRecord.customerPhone||'').replace(/\D/g,'');if(phone&&!phone.startsWith('55'))phone='55'+phone;if(!phone)return showToast('Cliente sem WhatsApp cadastrado.','error');const popup=window.open('about:blank','_blank');if(!popup)return showToast('Permita pop-ups para abrir o WhatsApp.','error');try{const data=await api('/api/budgets/template',{method:'POST',body:JSON.stringify({kind:'whatsapp',budget:budgetCurrentRecord})});popup.location.href=`https://wa.me/${phone}?text=${encodeURIComponent(data.html||'')}`;}catch(e){try{popup.close();}catch(_){}showToast(e.message,'error');}}
-function generatePdf(){if(budgetCurrentRecord)printBudgetTemplatePdf(budgetCurrentRecord);}function downloadImage(){if(budgetCurrentRecord)downloadBudgetTemplateImage(budgetCurrentRecord);}
+function generatePdf(){if(budgetCurrentRecord)printBudgetTemplatePdf({...budgetCurrentRecord,includeItemImages:document.getElementById('budgetPrintItemImages')?.checked === true});}function downloadImage(){if(budgetCurrentRecord)downloadBudgetTemplateImage(budgetCurrentRecord);}
 
 // ---------- Save as template ----------
 function openSaveCurrentBudgetAsTemplate() {
@@ -1101,6 +1145,7 @@ function openSaveCurrentBudgetAsTemplate() {
     setTimeout(()=>document.getElementById('saveTemplateFromBudgetName')?.focus(),80);
 }
 async function saveCurrentBudgetAsTemplate() {
+    if(budgetItemUploads) return showToast('Aguarde o envio das fotos dos itens.','info');
     syncOptionHeader();
     syncAdjustmentsFromUi();
     const o = activeOption();
@@ -1146,9 +1191,9 @@ async function saveCurrentBudgetAsTemplate() {
 }
 
 // ---------- Convert sale ----------
-function openConvertModal(b){convertBudgetId=String(b.id);const select=document.getElementById('convertOptionSelect');select.innerHTML=arr(b.options).map(o=>`<option value="${esc(o.id)}"${String(o.id)===String(b.selectedOptionId)?' selected':''}>${esc(o.name)} — ${money(o.total)}</option>`).join('');document.getElementById('convertPayment').value='money';document.getElementById('convertCashReceived').value='';document.getElementById('convertAllowStock').checked=false;document.getElementById('convertPaymentConfirmed').checked=false;toggleCashReceived();openBudgetModal('budgetConvertModal');}
+function openConvertModal(b){convertBudgetId=String(b.id);const select=document.getElementById('convertOptionSelect');select.innerHTML=arr(b.options).map(o=>`<option value="${esc(o.id)}"${String(o.id)===String(b.selectedOptionId)?' selected':''}>${esc(o.name)} — ${money(o.total)}</option>`).join('');document.getElementById('convertPayment').value='money';document.getElementById('convertCashReceived').value='';document.getElementById('convertInitialReceived').value='';document.getElementById('convertAllowStock').checked=false;document.getElementById('convertPaymentConfirmed').checked=false;toggleCashReceived();openBudgetModal('budgetConvertModal');}
 function toggleCashReceived(){const show=document.getElementById('convertPayment').value==='money';document.getElementById('convertCashReceivedField').hidden=!show;}
-async function confirmConvert(){if(!convertBudgetId)return;const paymentConfirmed=document.getElementById('convertPaymentConfirmed').checked;if(!paymentConfirmed)return showToast('Confirme que o pagamento já foi recebido/aprovado antes de registrar a venda.','error');const id=convertBudgetId;const payload={optionId:document.getElementById('convertOptionSelect').value,payment:document.getElementById('convertPayment').value,cashReceived:document.getElementById('convertCashReceived').value,paymentConfirmed:true,allowInsufficientStock:document.getElementById('convertAllowStock').checked};const btn=document.getElementById('confirmConvertBtn');btn.disabled=true;try{const data=await api(`/api/budgets/${encodeURIComponent(id)}/convert-sale`,{method:'POST',body:JSON.stringify(payload)});if(data.budget)upsert('budgets',data.budget);closeBudgetModal('budgetConvertModal');renderAll();showToast(`Venda ${data.saleCode||''} criada com sucesso.`,'success');}catch(e){if(e.data?.stockInsufficient&&!payload.allowInsufficientStock)showToast(`${e.message} Marque a opção de permitir estoque insuficiente apenas se tiver certeza.`,'error');else showToast(e.message,'error');}finally{btn.disabled=false;}}
+async function confirmConvert(){if(!convertBudgetId)return;const paymentConfirmed=document.getElementById('convertPaymentConfirmed').checked;if(!paymentConfirmed)return showToast('Confirme que o pagamento já foi recebido/aprovado antes de registrar a venda.','error');const id=convertBudgetId;const payload={optionId:document.getElementById('convertOptionSelect').value,payment:document.getElementById('convertPayment').value,initialReceived:document.getElementById('convertInitialReceived').value,cashReceived:document.getElementById('convertCashReceived').value,paymentConfirmed:true,allowInsufficientStock:document.getElementById('convertAllowStock').checked};const btn=document.getElementById('confirmConvertBtn');btn.disabled=true;try{const data=await api(`/api/budgets/${encodeURIComponent(id)}/convert-sale`,{method:'POST',body:JSON.stringify(payload)});if(data.budget)upsert('budgets',data.budget);closeBudgetModal('budgetConvertModal');renderAll();showToast(`Venda ${data.saleCode||''} criada com sucesso.`,'success');}catch(e){if(e.data?.stockInsufficient&&!payload.allowInsufficientStock)showToast(`${e.message} Marque a opção de permitir estoque insuficiente apenas se tiver certeza.`,'error');else showToast(e.message,'error');}finally{btn.disabled=false;}}
 
 // ---------- Events ----------
 function bindAutocompleteInput(inputId,resultId,context){
@@ -1174,6 +1219,7 @@ function bindAutocompleteInput(inputId,resultId,context){
     });
 }
 function bindEvents(){
+    document.getElementById('budgetCustomerCanEdit').addEventListener('change', syncCustomerPermissions);
     document.getElementById('templateUploadImageBtn').onclick=uploadTemplateImage; document.getElementById('templateImageUrl').oninput=(e)=>updateTemplateImagePreview(e.target.value.trim());
     document.getElementById('exportRecentBudgetsBtn').onclick=downloadRecentBudgetsJson;
     document.getElementById('openCreateBudgetModalBtn').onclick=openNewBudget; document.getElementById('closeCreateBudgetModalBtn').onclick=()=>closeBudgetModal('budgetCreateModal'); document.getElementById('cancelCreateBudgetBtn').onclick=()=>closeBudgetModal('budgetCreateModal'); document.getElementById('budgetSaveBtn').onclick=saveBudgetEditor; document.getElementById('budgetSaveAsTemplateBtn').onclick=openSaveCurrentBudgetAsTemplate;
@@ -1231,21 +1277,82 @@ function initBudgetsPage(){
     document.getElementById('budgetMonthFilter').value='';
     fillTemplateSelect(); renderAll(); bindEvents();
     budgetListRevision=budgetsRevision(budgets());
-    setInterval(async()=>{
+    document.getElementById('refreshBudgetsBtn').onclick=async()=>{
         if(document.hidden||budgetRefreshInFlight||document.querySelector('.budget-modal-overlay.open'))return;
         budgetRefreshInFlight=true;
         try{
-            const data=await api('/api/budgets'),revision=budgetsRevision(data.budgets);
+            const data=await api('/api/budgets?refresh=1'),revision=budgetsRevision(data.budgets);
             if(revision!==budgetListRevision){window.appData.budgets=data.budgets;budgetListRevision=revision;renderAll();}
             budgetRefreshErrorShown=false;
         }catch(error){
             console.error('Falha ao atualizar orçamentos:',error);
             if(!budgetRefreshErrorShown){showToast('Não foi possível atualizar a lista de orçamentos. Os dados atuais foram mantidos.','warning');budgetRefreshErrorShown=true;}
         }finally{budgetRefreshInFlight=false;}
-    },10000);
+    };
     const params=new URLSearchParams(location.search),customerId=params.get('customer');
     if(customerId){openNewBudget();const customer=customers().find((row)=>String(row.id)===String(customerId));if(customer)applyCustomer(customer);}
+    if(params.get('new')==='1' && window.appData?.user?.type==='admin') void openNewBudget();
     const openId=params.get('open');if(openId){const budget=budgets().find((row)=>String(row.id)===String(openId));if(budget)setTimeout(()=>openEditBudget(budget),100);}
 }
 function bootBudgets(){whenAppReady(()=>initBudgetsPage());}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootBudgets);else bootBudgets();
+
+function watchBudgetDraft() {
+    WorkDrafts.watch('budget', document.getElementById('budgetCreateModal'), () => ({
+        ...budgetPayload(), id: editingBudgetId, fields: WorkDrafts.fields(document.getElementById('budgetCreateModal'))
+    }));
+}
+async function restoreBudgetDraft() {
+    try {
+        const draft = await WorkDrafts.restore('budget');
+        if (draft) {
+            editingBudgetId = draft.id || '';
+            selectedBudgetCustomerId = draft.customerId || '';
+            budgetOptionsDraft = draft.options || [];
+            activeBudgetOptionId = draft.selectedOptionId;
+            WorkDrafts.fill(draft.fields); renderOptionTabs(); renderBudgetItems();
+            showToast('Rascunho recuperado. Revise antes de salvar.', 'info');
+        }
+    } catch { showToast('Não foi possível recuperar o rascunho local.', 'error'); }
+    watchBudgetDraft();
+}
+async function generateBudgetPublicLink() {
+    if (!budgetCurrentRecord?.id) return;
+    const button = document.getElementById('budgetPublicLinkBtn');
+    button.disabled = true;
+    try {
+        const data = await api(`/api/budgets/${encodeURIComponent(budgetCurrentRecord.id)}/public-link`, { method: 'POST' });
+        budgetCurrentRecord = data.budget; upsert('budgets', data.budget); renderAll();
+        const box = document.getElementById('budgetPublicLinkBox'); box.hidden = false;
+        const input = document.getElementById('budgetPublicLinkValue'); input.value = data.url;
+        const anchor = document.getElementById('budgetPublicLinkOpen'); anchor.href = data.url;
+        try { await navigator.clipboard.writeText(data.url); showToast('Link copiado. Envie ao cliente.', 'success'); }
+        catch { input.focus(); input.select(); showToast('Selecione e copie o link abaixo.', 'info'); }
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { button.disabled = false; }
+}
+document.getElementById('budgetPublicLinkBtn')?.addEventListener('click', generateBudgetPublicLink);
+
+function syncCustomerPermissions() {
+    const enabled = document.getElementById('budgetCustomerCanEdit')?.checked !== false;
+    document.querySelectorAll('#budgetItemsList .budget-item-permissions').forEach(group => { group.disabled = !enabled; });
+    const hint = document.getElementById('budgetPermissionsHint');
+    if (hint) hint.textContent = enabled ? 'Use os atalhos por item ou ajuste as três permissões individualmente.' : 'Edição bloqueada: todos os itens e quantidades ficam fixos. Suas permissões individuais serão preservadas.';
+    document.querySelectorAll('#budgetItemsList .budget-items-row, #templateItemsList .budget-items-row').forEach(row => {
+        const inputs = [...row.querySelectorAll('[data-customer-permission]')];
+        const flags = Object.fromEntries(inputs.map(el=>[el.dataset.customerPermission,el.checked]));
+        row.querySelectorAll('[data-permission-preset]').forEach(button => {
+            const preset = button.dataset.permissionPreset;
+            const active = preset === 'fixed' ? !flags.remove && !flags.decrease && !flags.increase : preset === 'optional' ? flags.remove && !flags.decrease && !flags.increase : flags.remove && flags.decrease && flags.increase;
+            button.setAttribute('aria-pressed', String(!!active));
+        });
+    });
+}
+
+function renderBudgetIntake(budget) {
+    let box=document.getElementById('budgetIntakeContext');
+    if(!box)return;
+    const intake=budget?.intake;box.hidden=!intake;
+    if(!intake){box.innerHTML='';return;}
+    box.innerHTML=`<details><summary>Solicitação de origem · ${esc(intake.code||'Atendimento')}</summary><p><strong>${esc(intake.customerName)}</strong> · ${esc(intake.device)}</p><p>${esc(intake.description)}</p><p>${esc((intake.problems||[]).join(' · '))}</p>${intake.reviewNotes?`<p><strong>Análise técnica:</strong> ${esc(intake.reviewNotes)}</p>`:''}<div class="budget-intake-photos">${(intake.photos||[]).map(photo=>`<a href="${esc(photo.url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(photo.url)}" alt="${esc(photo.caption||'Foto da solicitação')}" loading="lazy"></a>`).join('')}</div><a href="/budget-requests?open=${encodeURIComponent(budget.requestId||'')}">Consultar solicitação completa →</a><small>Dados internos da solicitação. No link do cliente aparecem o relato transferido para observações e as fotos anexadas aos itens.</small></details>`;
+}

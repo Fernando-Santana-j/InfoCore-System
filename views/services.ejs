@@ -32,7 +32,7 @@
       <div>
         <p class="svc-create-kicker">Entrada rápida na oficina</p>
         <h3 id="svcCreateTitle">Nova ordem de serviço</h3>
-        <p>Cadastre os dados essenciais. A OS será criada vazia para você montar as etapas durante o trabalho.</p>
+        <p>Selecione um orçamento aprovado. Os dados da solicitação acompanham a OS para você continuar o atendimento.</p>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="svcCreateCloseBtn" aria-label="Fechar">✕</button>
     </header>
@@ -41,18 +41,13 @@
       <section class="svc-create-section">
         <div class="svc-create-section-head">
           <span>1</span>
-          <div><strong>Vínculo financeiro</strong><small>Escolha como esta OS se relaciona com orçamentos.</small></div>
+          <div><strong>Vínculo financeiro</strong><small>A execução começa após a aprovação do orçamento.</small></div>
         </div>
         <div class="svc-create-modes" id="svcCreateModes" role="group" aria-label="Vínculo com orçamento">
           <button type="button" class="svc-create-mode is-active" data-mode="existing" aria-pressed="true">
-            <span class="svc-create-mode-icon">🔗</span><strong>Vincular existente</strong><small>Use um orçamento já cadastrado</small>
+            <span class="svc-create-mode-icon">🔗</span><strong>Vincular existente</strong><small>Use um orçamento aprovado</small>
           </button>
-          <button type="button" class="svc-create-mode" data-mode="new" aria-pressed="false">
-            <span class="svc-create-mode-icon">🧾</span><strong>Novo rascunho</strong><small>Cria um orçamento junto</small>
-          </button>
-          <button type="button" class="svc-create-mode" data-mode="none" aria-pressed="false">
-            <span class="svc-create-mode-icon">📭</span><strong>Sem orçamento</strong><small>Somente a ordem de serviço</small>
-          </button>
+          <a class="svc-create-mode" href="/budget-requests"><span class="svc-create-mode-icon">＋</span><strong>Nova solicitação</strong><small>Registrar entrada para análise</small></a>
         </div>
         <div class="svc-create-budget-picker" id="svcCreateBudgetPicker">
           <label class="form-label" for="svcCreateBudgetSearch">Orçamento disponível *</label>

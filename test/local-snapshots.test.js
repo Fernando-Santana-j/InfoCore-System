@@ -1,0 +1,36 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises');
+const os=require('node:os');
+const path=require('node:path');
+const {createSnapshots}=require('../lib/local-snapshots');
+const {verifyBackup}=require('../lib/backup-format');
+const {report}=require('../scripts/contingency');
+test('local contingency keeps valid snapshots, excludes authentication, and generates a safe offline report',async t=>{
+    const dir=await fs.mkdtemp(path.join(os.tmpdir(),'infocore-snapshot-'));
+    t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+    const s=createSnapshots({dir});
+    await s.capture('users',[{id:'u',pass:'secret'}]);
+    await s.capture('products',[{id:'p',name:'<script>alert(1)</script>',qty:4}]);
+    await s.capture('products',[{id:'p',name:'SSD',qty:3}]);
+    const latest=JSON.parse(await fs.readFile(path.join(dir,'products.json'),'utf8'));
+    assert.equal(verifyBackup(latest),1);
+    const daily=(await fs.readdir(dir)).find(name=>/^products\.\d/.test(name));
+    assert.match(await fs.readFile(path.join(dir,daily),'utf8'),/alert/);
+    assert.equal((await fs.readdir(dir)).some(name=>name.includes('users')),false);
+    const html=await fs.readFile(await report(dir),'utf8');
+    assert.match(html,/Somente leitura/);assert.match(html,/SSD/);
+    assert.match(html,/customers: ainda não copiada/);assert.doesNotMatch(html,/secret/);
+    await s.capture('products',[{id:'p',name:'<script>alert(1)</script>'}]);
+    const escaped=await fs.readFile(await report(dir),'utf8');
+    assert.match(escaped,/&lt;script&gt;/);assert.doesNotMatch(escaped,/<script>alert/);
+    await fs.writeFile(path.join(dir,'products.json'),'corrupted');
+    await assert.rejects(report(dir),/Nenhuma cópia local válida/);
+});
+test('snapshot disk failures do not reject successful remote reads',async t=>{
+    const dir=await fs.mkdtemp(path.join(os.tmpdir(),'infocore-snapshot-'));
+    t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+    const file=path.join(dir,'not-a-directory');await fs.writeFile(file,'test');
+    const logs=[];const s=createSnapshots({dir:file,log:m=>logs.push(m)});
+    await s.capture('products',[{id:'p'}]);await s.flush();assert.equal(logs.length,1);
+});

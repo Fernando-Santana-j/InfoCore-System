@@ -64,7 +64,7 @@ const Dashboard = (() => {
                 color: method.color || 'var(--border)'
             };
         }
-        const names = { money: 'Dinheiro', credit_card: 'Crédito', debit_card: 'Débito', pix: 'Pix', unknown: 'Não informado' };
+        const names = { mixed: 'Dividido', money: 'Dinheiro', credit_card: 'Crédito', debit_card: 'Débito', pix: 'Pix', unknown: 'Não informado' };
         return { icon: paymentIcon(paymentKey), name: names[paymentKey] || paymentKey, color: 'var(--border)' };
     };
 

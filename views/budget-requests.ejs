@@ -1,0 +1,36 @@
+<div class="page request-page">
+  <header class="request-hero card"><div><p class="request-kicker">Entrada → análise → orçamento → serviço</p><h2>Solicitações de orçamento</h2><p>Registre o atendimento uma vez. Técnico ou ADM prepara a proposta e decide sobre a abertura da OS.</p></div><a class="btn btn-primary" href="#requestCreate">+ Nova solicitação</a></header>
+  <div class="request-layout">
+    <section class="card request-card" id="requestCreate"><h3>O que o cliente precisa?</h3><p class="text-muted">A solicitação não abre uma OS. A equipe analisa e prepara o orçamento antes de iniciar o serviço.</p>
+      <form id="requestForm">
+        <h4 class="request-section-title"><span>1</span> Cliente</h4>
+        <div class="request-customer-picker">
+          <label class="request-field" for="requestCustomerSearch">Buscar cliente cadastrado</label>
+          <div class="request-ac-wrap" id="requestCustomerAcWrap">
+            <span class="request-ac-icon" aria-hidden="true">⌕</span>
+            <input id="requestCustomerSearch" class="form-input request-ac-input" type="search" placeholder="Nome, telefone, e-mail ou CPF/CNPJ…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="requestCustomerResults">
+            <div id="requestCustomerResults" class="request-ac-list" role="listbox" aria-label="Clientes cadastrados" hidden></div>
+          </div>
+          <input type="hidden" id="requestCustomerId" name="customerId">
+          <div class="request-customer-help"><small id="requestCustomerHint" role="status">Busque e selecione para preencher os contatos automaticamente.</small><button type="button" id="requestCustomerManual" class="request-customer-manual">Preencher manualmente</button></div>
+        </div>
+        <div class="request-fields"><label>Nome do cliente *<input class="form-input" name="customerName" required maxlength="120" autocomplete="name"></label><label>Telefone / WhatsApp *<input class="form-input" name="customerPhone" required maxlength="40" inputmode="tel" autocomplete="tel"></label><label>E-mail<input class="form-input" name="customerEmail" type="email" maxlength="180" autocomplete="email"></label></div>
+        <h4 class="request-section-title"><span>2</span> Equipamento</h4><div class="request-fields"><label>Equipamento / modelo *<input class="form-input" name="device" required maxlength="180" placeholder="Ex.: notebook Dell Inspiron"></label>
+          <label>Tipo de equipamento<select class="form-input" name="deviceType"><option>Celular</option><option>Notebook</option><option>Computador</option><option>Tablet</option><option>Impressora</option><option selected>Outro</option></select></label>
+          <label>Número de série / identificação<input class="form-input" name="serialNumber" maxlength="120" placeholder="Opcional"></label>
+          <label>Acessórios recebidos<input class="form-input" name="accessories" maxlength="500" placeholder="Carregador, capa, fonte…"></label>
+          <label>Prioridade<select class="form-input" name="priority"><option value="normal">Normal</option><option value="high">Alta</option><option value="urgent">Urgente</option></select></label>
+        </div>
+        <label class="request-field">Estado físico na entrada<textarea class="form-input" name="physicalCondition" rows="2" maxlength="1000" placeholder="Riscos, trincas, sinais de queda ou líquido…"></textarea></label>
+        <h4 class="request-section-title"><span>3</span> Problema relatado</h4>
+        <fieldset class="request-problems"><legend>Problemas relatados</legend><div id="requestProblems"></div></fieldset>
+        <label class="request-field">Relato do cliente<textarea class="form-input" name="description" rows="4" maxlength="3000" placeholder="O que acontece? Quando começou? Em quais situações ocorre?"></textarea></label>
+        <h4 class="request-section-title"><span>4</span> Fotos para análise</h4>
+        <label class="request-field">Fotos para análise<input class="form-input" id="requestPhotos" type="file" multiple accept="image/jpeg,image/png,image/webp"><small>Até 6 fotos, com no máximo 8 MB cada. Acesso interno da equipe.</small></label><div id="requestPhotoPreview" class="request-photos"></div>
+        <div class="request-submit"><p>Confira os dados e envie para análise. O orçamento e a OS serão definidos pela equipe.</p><button type="submit" class="btn btn-primary">Enviar solicitação</button></div><p id="requestCreateStatus" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section class="card request-card request-tracking"><div class="request-list-heading"><h3>Acompanhamento</h3><button type="button" class="btn btn-ghost btn-sm" id="requestRefresh">Atualizar</button></div><p class="text-muted">Últimas 150 solicitações, da mais recente para a mais antiga.</p><div class="request-filters"><label>Buscar<input class="form-input" id="requestSearch" type="search" placeholder="Cliente, código ou equipamento"></label><label>Etapa<select class="form-input" id="requestFilter"><option value="">Todas</option><option value="open">Aguardando análise</option><option value="in_review">Em análise</option><option value="approved">Aprovada</option><option value="converted">Orçamento criado</option><option value="rejected">Recusada</option></select></label></div><div id="requestList"></div><p id="requestListStatus" role="status"></p></section>
+  </div>
+  <section class="card request-card" id="requestDetail" hidden aria-label="Detalhes da solicitação"></section>
+</div>

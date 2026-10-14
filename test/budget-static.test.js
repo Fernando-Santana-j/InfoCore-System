@@ -300,7 +300,7 @@ test('budget list exposes separated items, compact actions and inline status cha
   assert.match(quickHandler, /__convert__/);
   assert.match(quickHandler, /openQuickRejectionModal/);
   assert.match(view, /id="budgetQuickStatusModal"/);
-  assert.match(server, /app\.patch\(['"]\/api\/budgets\/:id\/status['"],\s*verifyLogin/);
+  assert.match(server, /app\.patch\(['"]\/api\/budgets\/:id\/status['"],\s*verifyBudgetEditor/);
   assert.match(server, /requestedRawStatus === 'converted'/);
 });
 
@@ -418,7 +418,7 @@ test('budget image upload is authenticated, size-limited and image-only', () => 
   assert.match(signatureMiddleware, /image\/png/);
   assert.match(signatureMiddleware, /image\/webp/);
   assert.match(signatureMiddleware, /fs\.unlink\(req\.file\.path/);
-  assert.match(server, /app\.post\(["']\/api\/budgets\/image["']\s*,\s*verifyLogin\s*,\s*uploadBudgetImage\s*,\s*validateBudgetImageSignature\s*,/);
+  assert.match(server, /app\.post\(["']\/api\/budgets\/image["']\s*,\s*verifyBudgetEditor\s*,\s*uploadBudgetImage\s*,\s*validateBudgetImageSignature\s*,/);
   assert.match(server, /imageUrl\s*:\s*`\/uploads\/\$\{req\.file\.filename\}`/);
 });
 
