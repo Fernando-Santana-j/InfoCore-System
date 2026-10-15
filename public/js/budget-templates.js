@@ -1,4 +1,8 @@
 async function fetchBudgetTemplateHtml(kind, budget) {
+    if (window.appData?.offlineSavedAt || !navigator.onLine) {
+        if (kind !== 'image' && kind !== 'pdf') throw new Error('Esta ação exige conexão.');
+        return offlineBudgetPreview(budget);
+    }
     const res = await fetch('/api/budgets/template', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -176,4 +180,23 @@ async function writeBudgetTextToClipboard(text) {
 async function copyBudgetTemplateText(kind, budget) {
     const html = await fetchBudgetTemplateHtml(kind, budget);
     await writeBudgetTextToClipboard(html);
+}
+
+// Consulta local: usa os valores já calculados pelo servidor na última sincronização.
+function offlineBudgetPreview(budget) {
+    const esc = escapeBudgetTemplateHtml;
+    const currency = value => esc(new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL'}).format(Number(value) || 0));
+    const options = Array.isArray(budget?.options) ? budget.options : [];
+    return `<article style="padding:24px;background:#fff;color:#1e293b;font:14px/1.6 Arial,sans-serif;overflow-wrap:anywhere">
+        <h2>Orçamento ${esc(budget?.code)}</h2>
+        <p>Consulta offline — dados da última sincronização.</p>
+        <p><strong>Cliente:</strong> ${esc(budget?.customerName)}<br><strong>Telefone:</strong> ${esc(budget?.customerPhone || '—')}<br><strong>Emissão:</strong> ${esc(budget?.issuedAt || '—')}<br><strong>Validade:</strong> ${esc(budget?.validUntil || '—')}</p>
+        ${options.map(option => `<section><h3>${esc(option.name || 'Opção')}</h3><p>${esc(option.description || '')}</p>
+            <table style="width:100%;border-collapse:collapse;text-align:left"><thead><tr><th>Item</th><th>Qtd.</th><th>Unitário</th><th>Total</th></tr></thead><tbody>
+            ${(Array.isArray(option.items) ? option.items : []).map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.qty)}</td><td>${currency(item.unitPrice)}</td><td>${currency(item.total)}</td></tr>`).join('')}
+            </tbody></table><p>Subtotal: ${currency(option.subtotal)}<br><strong>Total da opção: ${currency(option.total)}</strong></p></section>`).join('')}
+        <p><strong>Total do orçamento:</strong> ${currency(budget?.total)}</p>
+        <p><strong>Prazo:</strong> ${esc(budget?.deadline || '—')}<br><strong>Garantia:</strong> ${esc(budget?.warrantyText || '—')}</p>
+        <p style="white-space:pre-wrap">${esc(budget?.notes || '')}</p>
+    </article>`;
 }

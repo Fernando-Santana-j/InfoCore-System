@@ -6,6 +6,7 @@ test('PDV reopens offline with saved prices and clears its copy on logout', asyn
     const count = await cards.count();
     expect(count).toBeGreaterThan(0);
     const productText = await cards.first().innerText();
+    await page.evaluate(() => window.__offlineReady);
     await context.setOffline(true);
     await page.reload();
     await expect(page.locator('#pdvOfflineStatus')).toContainText('Consulta offline');
@@ -17,4 +18,31 @@ test('PDV reopens offline with saved prices and clears its copy on logout', asyn
     await expect(cards).toHaveCount(count);
     await page.evaluate(() => fetch('/logout', {method:'POST'}).catch(() => {}));
     expect(await page.evaluate(() => caches.has('infocore-pdv-offline-v1'))).toBe(false);
+});
+
+test('offline menu opens unvisited pages and saved budgets from dashboard', async ({page, context}) => {
+    await page.goto('/dashboard');
+    await page.evaluate(() => window.__offlineReady);
+    await context.setOffline(true);
+    await expect(page.getByRole('heading', {name:'Você está offline'})).toBeVisible();
+    await page.goto('/analytics');
+    await expect(page.getByRole('heading', {name:'Você está offline'})).toBeVisible();
+    await page.locator('#appSidebar a[href="/pdv"]').click();
+    await expect(page.locator('#pdvGrid')).toContainText('SSD');
+    await page.locator('#appSidebar a[href="/budgets"]').click();
+    await expect(page.locator('#pdvOfflineStatus')).toContainText('Consulta offline');
+    await page.locator('#budgetSearchInput').fill('Maria');
+    await page.locator('[data-action="preview"]').first().click();
+    await expect(page.locator('#budgetTemplatePreview')).toContainText('Diagnóstico');
+    await expect(page.locator('#budgetTemplatePreview')).toContainText('100,00');
+    await expect(page.locator('#budgetTemplatePreview')).toContainText('Maria');
+    await page.reload();
+    await expect(page.locator('#pdvOfflineStatus')).toContainText('Consulta offline');
+    await page.goto('/services/unvisited');
+    await expect(page.getByRole('heading', {name:'Você está offline'})).toBeVisible();
+    await page.setViewportSize({width:390,height:844});
+    await page.locator('#mobileMenuBtn').click();
+    await expect(page.locator('#appSidebar a[href="/pdv"]')).toBeVisible();
+    await page.locator('#appSidebar a[href="/pdv"]').click();
+    await expect(page.locator('#pdvGrid')).toContainText('SSD');
 });

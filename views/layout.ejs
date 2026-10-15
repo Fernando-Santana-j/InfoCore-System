@@ -90,21 +90,21 @@
       }
     })();
   </script>
-  <script src="/js/shared.js?v=5"></script>
+  <script src="/js/shared.js?v=6"></script>
   <script src="/js/work-drafts.js?v=2"></script>
   <% if (body === 'budgets' || body === 'pdv') { %>
-  <script src="/js/budget-templates.js?v=5"></script>
+  <script src="/js/budget-templates.js?v=6"></script>
   <% } %>
   <% if (body === 'service-work') { %>
   <script src="/js/service-templates.js?v=1"></script>
   <% } %>
-  <script src="/js/<%= body %>.js?v=32"></script>
+  <script src="/js/<%= body %>.js?v=33"></script>
   <% if (body === 'pdv' || body === 'budgets') { %>
   <script src="/js/budget-requests.js?v=30"></script>
   <% } %>
   <% if (body === 'clients') { %><script src="/js/customer-interests.js?v=1"></script><% } %>
   <script src="/js/operations.js?v=4"></script>
-  <% if (body === 'pdv') { %><script src="/js/pdv-offline.js?v=1"></script><% } %>
+  <script src="/js/pdv-offline.js?v=2"></script>
   <%- include('reusable/script') %>
 </body>
 </html>

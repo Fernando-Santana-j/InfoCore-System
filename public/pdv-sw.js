@@ -7,22 +7,35 @@ let preparation = Promise.resolve();
 self.addEventListener('message', event => {
     if (event.data?.type !== 'PREPARE_PDV') return;
     preparation = preparation.catch(() => {}).then(async () => {
-        const urls = [...new Set(event.data.assets || [])].filter(value => {
+        const scope = event.data.scope === 'budgets' ? 'budgets' : 'pdv';
+        const pageUrl = '/' + scope;
+        const bootstrapUrl = '/api/bootstrap/' + scope;
+        const get = async url => {
+            const response = await fetch(url, {cache:'no-store', credentials:'same-origin'});
+            if (!response.ok || response.redirected) throw new Error('Preparação incompleta');
+            return response;
+        };
+        const [page, bootstrap] = await Promise.all([get(pageUrl), get(bootstrapUrl)]);
+        const html = await page.clone().text();
+        const data = await bootstrap.json();
+        if (!Array.isArray(data.products) || (scope === 'budgets' && !Array.isArray(data.budgets))) throw new Error('Dados indisponíveis');
+        const urls = [...new Set([...(event.data.assets || []), ...Array.from(html.matchAll(/(?:src|href)=["']([^"']+)["']/g), match => match[1])])].filter(value => {
             const url = new URL(value, self.location.origin);
             return url.origin === self.location.origin && /^\/(js|css|img)\//.test(url.pathname);
         });
-        const responses = await Promise.all(['/pdv', '/api/bootstrap/pdv', ...urls].map(async url => {
-            const response = await fetch(url, {cache: 'no-store', credentials: 'same-origin'});
-            if (!response.ok || response.redirected) throw new Error('Preparação incompleta');
-            return [url, response];
-        }));
-        const data = await responses[1][1].json();
-        if (!Array.isArray(data.products)) throw new Error('Catálogo indisponível');
+        const responses = await Promise.all(urls.map(async url => [url, await get(url)]));
         const savedAt = new Date().toISOString();
-        responses[1][1] = new Response(JSON.stringify({configs:data.configs, products:data.products, customers:[], offlineSavedAt:savedAt}), {headers:{'Content-Type':'application/json','X-PDV-Offline':'1'}});
-        await clear();
+        const saved = {configs:data.configs, products:data.products, customers:[], offlineSavedAt:savedAt};
+        if (scope === 'budgets') Object.assign(saved, {budgets:data.budgets, budgetTemplates:data.budgetTemplates || []});
         const cache = await caches.open(CACHE);
-        await Promise.all(responses.map(([url, response]) => cache.put(url, response)));
+        const owner = await cache.match('/__offline-owner');
+        if (owner && await owner.text() !== String(event.data.owner || '')) await clear();
+        const target = await caches.open(CACHE);
+        await Promise.all(responses.map(([url, response]) => target.put(url, response)));
+        await target.put(pageUrl, page);
+        await target.put(bootstrapUrl, new Response(JSON.stringify(saved), {headers:{'Content-Type':'application/json','X-PDV-Offline':'1'}}));
+        await target.put('/__offline-owner', new Response(String(event.data.owner || '')));
+        if (event.data.shell) await target.put('/__offline-shell', new Response(event.data.shell, {headers:{'Content-Type':'text/html; charset=utf-8'}}));
         event.ports[0]?.postMessage({ok:true, savedAt});
     }).catch(() => event.ports[0]?.postMessage({ok:false}));
     event.waitUntil(preparation);
@@ -34,22 +47,24 @@ self.addEventListener('fetch', event => {
         event.respondWith((async () => { await preparation; await clear(); return fetch(event.request); })());
         return;
     }
-    const page = url.pathname === '/pdv';
-    const bootstrap = url.pathname === '/api/bootstrap/pdv';
+    const page = ['/pdv', '/budgets'].includes(url.pathname);
+    const navigation = event.request.mode === 'navigate' && /^\/(dashboard|pdv|budgets|budget-links|budget-requests|equipment-sales|clients|stock|products|cash-flow|analytics|config|services|attendances)(\/|$)/.test(url.pathname);
+    const bootstrap = ['/api/bootstrap/pdv', '/api/bootstrap/budgets'].includes(url.pathname);
     const asset = /^\/(js|css|img)\//.test(url.pathname);
-    if (event.request.method !== 'GET' || (!page && !bootstrap && !asset)) return;
+    if (event.request.method !== 'GET' || (!page && !bootstrap && !asset && !navigation)) return;
     event.respondWith((async () => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 5000);
         try {
             const response = await fetch(event.request, {signal:controller.signal});
-            if ((page || bootstrap) && (response.redirected || response.status === 401 || response.status === 403)) await clear();
+            if ((page || bootstrap || navigation) && (response.redirected || response.status === 401 || response.status === 403)) { await preparation; await clear(); }
             if (response.status >= 500) throw new Error('Servidor indisponível');
             return response;
         } catch (error) {
             const cache = await caches.open(CACHE);
-            const cached = await cache.match(page ? '/pdv' : event.request);
+            const cached = await cache.match(page ? url.pathname : navigation ? '/__offline-shell' : event.request);
             if (cached) return cached;
+            if (navigation) { const shell = await cache.match('/__offline-shell'); if (shell) return shell; }
             throw error;
         } finally { clearTimeout(timer); }
     })());

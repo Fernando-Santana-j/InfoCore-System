@@ -1,5 +1,5 @@
 let budgetItemUploads = 0;
-function budgetCanEdit(b) { return window.appData?.user?.type === 'admin' || (window.appData?.user?.type === 'technician' && !!b?.requestId); }
+function budgetCanEdit(b) { if (window.appData?.offlineSavedAt || !navigator.onLine) return false; return window.appData?.user?.type === 'admin' || (window.appData?.user?.type === 'technician' && !!b?.requestId); }
 let editingBudgetId = '';
 let budgetOptionsDraft = [];
 let activeBudgetOptionId = '';
@@ -65,6 +65,7 @@ async function jsonResponse(res) {
     try { return JSON.parse(text); } catch { return { error: true, message: 'Resposta inválida do servidor.' }; }
 }
 async function api(url, options = {}) {
+    if ((window.appData?.offlineSavedAt || !navigator.onLine) && (options.method || 'GET').toUpperCase() !== 'GET') throw new Error('Consulta offline. Conecte-se e recarregue para alterar orçamentos.');
     const res = await fetch(url, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) } });
     const data = await jsonResponse(res);
     if (!res.ok || data.error) { const err = new Error(data.message || 'Erro na operação.'); err.data = data; err.status = res.status; throw err; }
@@ -785,7 +786,7 @@ function resetBudgetEditor() {
     renderOptionTabs();
     renderBudgetItems();
 }
-async function openNewBudget() { if(window.appData?.user?.type !== 'admin') { location.assign('/budget-requests'); return; } resetBudgetEditor(); await restoreBudgetDraft(); setBudgetEditorStep(1); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
+async function openNewBudget() { if (window.appData?.offlineSavedAt || !navigator.onLine) return showToast('Conecte-se para criar orçamentos.', 'info'); if(window.appData?.user?.type !== 'admin') { location.assign('/budget-requests'); return; } resetBudgetEditor(); await restoreBudgetDraft(); setBudgetEditorStep(1); openBudgetModal('budgetCreateModal'); setTimeout(()=>document.getElementById('budgetCustomerSearch')?.focus(),80); }
 function openEditBudget(b) {
     if(!budgetCanEdit(b)) { if(b) openBudgetPreview(b); return; }
     if (!b) return;
@@ -1109,6 +1110,7 @@ function openDuplicateBudgetModal(b) {
     openBudgetModal('budgetDuplicateModal');
 }
 async function handleBudgetAction(action,id){
+    if ((window.appData?.offlineSavedAt || !navigator.onLine) && !['preview','response'].includes(action)) return showToast('Consulta offline. Conecte-se e recarregue para alterar orçamentos.', 'info');
     const b=budgets().find(x=>String(x.id)===String(id));
     if(!b)return;
     if(action==='share')return openBudgetPreview(b);
@@ -1293,6 +1295,7 @@ function initBudgetsPage(){
     fillTemplateSelect(); renderAll(); bindEvents();
     budgetListRevision=budgetsRevision(budgets());
     document.getElementById('refreshBudgetsBtn').onclick=async()=>{
+        if(window.appData?.offlineSavedAt || !navigator.onLine) return showToast('Conecte-se e recarregue para atualizar os orçamentos.', 'info');
         if(document.hidden||budgetRefreshInFlight||document.querySelector('.budget-modal-overlay.open'))return;
         budgetRefreshInFlight=true;
         try{

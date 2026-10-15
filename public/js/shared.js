@@ -328,6 +328,9 @@ async function logoutCurrentUser() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Mantém a camada de fundo abaixo do menu dentro do mesmo contexto de empilhamento.
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (backdrop) document.querySelector('.app')?.appendChild(backdrop);
     // Modais dentro de .content seriam posicionados em relação ao scroll dessa área.
     document.querySelectorAll('.modal-overlay, .budget-modal-overlay, .link-modal, .pdv-modal-overlay, .svc-create-overlay, .svc-tpl-overlay, .svc-stage-overlay, .svc-delete-overlay, .svc-share-overlay').forEach((modal) => {
         if (modal.parentElement !== document.body) document.body.appendChild(modal);
