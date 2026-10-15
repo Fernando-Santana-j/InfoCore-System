@@ -2220,6 +2220,10 @@ const uploadStaticOpts = {
     etag: true,
     lastModified: true
 };
+app.get('/pdv-sw.js', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(__dirname, 'public/pdv-sw.js'));
+});
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), uploadStaticOpts));
 app.use('/public', express.static(path.join(__dirname, 'public'), publicStaticOpts));
 app.use(express.static(path.join(__dirname, 'public'), publicStaticOpts));
@@ -2917,6 +2921,7 @@ function verifyLogin(req, res, next) {
 require('./lib/operations-routes')(app, { firestore, models: db, verifyLogin, verifyAdminApi, normalizeService: normalizeServiceOrderRow, budgetForUser, saleForUser, QRCode, whatsapp:whatsappClient });
 require('./lib/register-routes')(app, { firestore, models: db, verifyLogin, verifyAdminApi });
 require('./lib/customer-interests')(app, {firestore,models:db,verifyLogin});
+require('./lib/equipment-contract-routes').install(app, {firestore, verifyLogin, getConfigs: getConfigsSafe});
 const requestWorkflow = require('./lib/budget-requests').install(app,{firestore,models:db,verifyLogin,verifyAdminApi,buildBudget:buildBudgetRecordFromBody,buildService:serviceOrderFirestorePayload});
 
 app.get('/api/work/database-usage', verifyAdminApi, (req, res) => {
@@ -3133,7 +3138,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
         }
         // Configurações e dados da página começam a carregar juntos, eliminando
         // uma ida sequencial ao Firestore em todo bootstrap.
-        if (!['dashboard','budget-requests','attendances','pdv','budgets','budget-links','stock','products','clients','services','cashflow','analytics','config'].includes(scope)) return res.status(404).json({error:true,message:'Página não suportada.'});
+        if (!['dashboard','equipment-sales','budget-requests','attendances','pdv','budgets','budget-links','stock','products','clients','services','cashflow','analytics','config'].includes(scope)) return res.status(404).json({error:true,message:'Página não suportada.'});
         const configsPromise = getConfigsSafe();
 
         if (scope === 'dashboard') {
@@ -3153,6 +3158,7 @@ app.get('/api/bootstrap/:scope', verifyLogin, async (req, res) => {
             return res.json({ configs, products: visibleProducts, sales, clients });
         }
 
+        if (scope === 'equipment-sales') return res.json({configs:await configsPromise});
         if (scope === 'budget-requests') return res.json({configs:await configsPromise});
         if (scope === 'attendances') return res.json({ configs: await configsPromise });
         if (scope === 'pdv') {
@@ -3384,6 +3390,7 @@ app.get('/attendances', verifyLogin, (req, res) => {
     renderAppShell(res, 'attendances', req.session.user);
 });
 
+app.get('/equipment-sales', verifyLogin, (req,res)=>renderAppShell(res,'equipment-sales',req.session.user));
 app.get('/budget-requests', verifyLogin, (req,res)=>renderAppShell(res,'budget-requests',req.session.user));
 
 app.get('/budgets', verifyLogin, (req, res) => {

@@ -129,6 +129,7 @@ app.use((req, res, next) => {
 });
 const verifyLogin = (q, r, n) => q.session.user ? n() : r.status(401).json({error:true});
 const verifyAdminApi = (q, r, n) => q.session.user?.type === 'admin' ? n() : r.status(403).json({error:true});
+require('../../lib/equipment-contract-routes').install(app,{firestore:proxy,verifyLogin,getConfigs:async()=>({storeName:'InfoCore Teste'})});
 const authContext={firestore:proxy,BUDGETS_COLLECTION:'budgets'};
 vm.runInNewContext(source.slice(source.indexOf('async function verifyBudgetEditor('),source.indexOf('function isBudgetFinalized(')),authContext);
 const deps = {
@@ -232,6 +233,7 @@ app.get("/services/os", async (req, res) =>
   }),
 );
 for (const page of [
+  "equipment-sales",
   "budgets",
   "budget-requests",
   "pdv",

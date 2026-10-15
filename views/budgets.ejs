@@ -193,7 +193,6 @@
         <label class="budget-customer-edit"><input type="checkbox" id="budgetCustomerCanEdit" checked> Permitir que o cliente altere os itens no link compartilhado <small id="budgetPermissionsHint" aria-live="polite">Use os atalhos por item ou ajuste as três permissões individualmente.</small></label>
 
         <div class="budget-items-table-wrap">
-          <div class="budget-items-table-head advanced"><span>Item</span><span>Estado</span><span>Qtd</span><span>Venda</span><span class="budget-internal-label" title="Este valor não aparece para o cliente">Custo 🔒</span><span>Modo</span><span>Encomenda</span><span>Total</span><span>Ações</span></div>
           <div id="budgetItemsList" class="budget-items-table-body"></div>
         </div>
 
@@ -287,8 +286,8 @@
           </label>
           <div class="budget-add-actions"><button class="btn btn-ghost btn-sm" type="button" id="templateAddProductBtn">+ Adicionar selecionado</button><button class="btn btn-ghost btn-sm" type="button" id="templateAddCustomBtn">+ Item manual</button></div>
         </div>
-        <div class="template-items-title"><div><strong>Itens do modelo</strong><small>Edite nomes, quantidades, preços e detalhes diretamente na tabela.</small></div><span id="templateItemsCount">0 itens</span></div>
-        <div class="budget-items-table-wrap template-items-table-wrap"><div class="budget-items-table-head advanced template"><span>Item</span><span>Estado</span><span>Qtd</span><span>Venda</span><span class="budget-internal-label" title="Este valor não aparece para o cliente">Custo 🔒</span><span>Modo</span><span>Encomenda</span><span>Total</span><span>Ações</span></div><div id="templateItemsList" class="budget-items-table-body"></div></div>
+        <div class="template-items-title"><div><strong>Itens do modelo</strong><small>Edite nomes, quantidades, preços e detalhes de cada item.</small></div><span id="templateItemsCount">0 itens</span></div>
+        <div class="budget-items-table-wrap template-items-table-wrap"><div id="templateItemsList" class="budget-items-table-body"></div></div>
         <div id="templateFinancialBox"></div>
         <div class="template-editor-actions"><button class="btn btn-danger-soft btn-sm" type="button" id="deleteTemplateBtn" hidden>Excluir</button><button class="btn btn-ghost btn-sm" type="button" id="duplicateTemplateBtn" hidden>Duplicar</button><button class="btn btn-primary btn-sm" type="button" id="saveTemplateBtn">Salvar modelo</button></div>
       </section>

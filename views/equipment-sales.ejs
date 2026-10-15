@@ -1,0 +1,21 @@
+<div class="page equipment-page" id="page-equipment-sales">
+  <header class="card equipment-hero"><div><p class="equipment-kicker">COMERCIAL · CONTRATOS</p><h2>Venda de equipamentos</h2><p>Novos ou usados. Preencha, confira e imprima para assinar.</p></div><button class="btn btn-primary" id="equipmentNew" type="button">+ Novo contrato</button></header>
+  <div class="equipment-workspace">
+    <aside class="card equipment-history"><div class="equipment-heading"><h3>Contratos</h3><button class="btn btn-ghost btn-sm" id="equipmentRefresh" type="button">Atualizar</button></div><label>Buscar cliente, equipamento ou código<input class="form-input" id="equipmentSearch" type="search" placeholder="Pesquisar contratos"></label><div id="equipmentList" aria-live="polite"></div></aside>
+    <dialog id="equipmentEditor" class="card equipment-editor" aria-labelledby="equipmentTitle">
+      <div class="equipment-heading"><div><p class="equipment-kicker" id="equipmentCode">NOVO CONTRATO</p><h3 id="equipmentTitle">Equipamento usado</h3></div><div class="equipment-heading-actions"><span class="equipment-status" id="equipmentStatus">Rascunho</span><button class="btn btn-ghost btn-sm" id="equipmentClose" type="button" aria-label="Fechar contrato">✕</button></div></div>
+      <p class="equipment-hint">O contrato documenta a venda. Registre o pagamento e a saída de estoque no <a href="/pdv">PDV</a>, depois vincule a venda abaixo.</p>
+      <p id="equipmentMessage" role="status" aria-live="polite"></p>
+      <form id="equipmentForm" novalidate>
+        <fieldset id="equipmentFields">
+          <div class="equipment-imports"><label>Preencher com cliente cadastrado<select class="form-input" id="equipmentCustomer"><option value="">Selecionar cliente (opcional)</option></select></label><label>Vincular venda do PDV<select class="form-input" id="equipmentSale" name="saleId"><option value="">Sem vínculo / registro manual</option></select></label></div>
+          <p class="equipment-hint" id="equipmentSaleHint">A vinculação não movimenta caixa ou estoque novamente.</p>
+          <div id="equipmentSections"></div>
+        </fieldset>
+        <div class="equipment-actions"><button class="btn btn-ghost" type="button" id="equipmentSave">Salvar rascunho</button><button class="btn btn-ghost" type="button" id="equipmentPreview">Prévia PDF</button><button class="btn btn-primary" type="button" id="equipmentIssue">Emitir contrato</button><a class="btn btn-primary" id="equipmentPdf" href="#" target="_blank" rel="noopener" hidden>Abrir PDF / imprimir</a><a class="btn btn-ghost" id="equipmentDownload" href="#" hidden>Baixar PDF</a></div>
+        <p class="equipment-hint">Revise os dados antes de emitir. Após a emissão, o documento fica protegido contra edição. As assinaturas do comprador, da loja e da testemunha são obrigatórias e feitas à mão. O PDF inclui a via do cliente com garantia e a via da loja sem a folha de garantia.</p>
+      </form>
+    </dialog>
+  </div>
+  <dialog id="equipmentConfirm" class="equipment-dialog"><h3 id="equipmentConfirmTitle">Confirmar emissão</h3><p id="equipmentConfirmText"></p><div class="equipment-actions"><button class="btn btn-ghost" type="button" id="equipmentConfirmCancel">Voltar</button><button class="btn btn-primary" type="button" id="equipmentConfirmOk">Confirmar</button></div></dialog>
+</div>

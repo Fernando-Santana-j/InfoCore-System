@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <%- include('reusable/head') %>
-  <link rel="stylesheet" href="/css/<%= body %>.css?v=25">
+  <link rel="stylesheet" href="/css/<%= body %>.css?v=<%= body === "pdv" ? "27" : "26" %>">
   <% if (body === "pdv" || body === "budgets" || body === "service-work") { %><link rel="stylesheet" href="/css/budget-requests.css?v=24"><% } %>
   <style>
     html.app-is-loading, html.app-is-loading body { overflow: hidden; }
@@ -98,12 +98,13 @@
   <% if (body === 'service-work') { %>
   <script src="/js/service-templates.js?v=1"></script>
   <% } %>
-  <script src="/js/<%= body %>.js?v=31"></script>
+  <script src="/js/<%= body %>.js?v=32"></script>
   <% if (body === 'pdv' || body === 'budgets') { %>
   <script src="/js/budget-requests.js?v=30"></script>
   <% } %>
   <% if (body === 'clients') { %><script src="/js/customer-interests.js?v=1"></script><% } %>
   <script src="/js/operations.js?v=4"></script>
+  <% if (body === 'pdv') { %><script src="/js/pdv-offline.js?v=1"></script><% } %>
   <%- include('reusable/script') %>
 </body>
 </html>

@@ -343,6 +343,18 @@ test('item image upload reaches editor payload and shared quote without overflow
  await page.goto('/budgets');await page.locator('[data-action="edit"]').first().click();await page.locator('#budgetEditorNextBtn').click();
  await page.locator('.item-image-file').first().setInputFiles({name:'ssd.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64')});
  await expect(page.locator('.budget-item-thumb img').first()).toBeVisible();
+ for (const width of [1440, 768, 390, 320]) {
+   await page.setViewportSize({width,height:900});
+   const row = page.locator('#budgetItemsList .budget-items-row').first();
+   await expect(row).toBeVisible();
+   expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
+   expect(await page.locator('#budgetItemsList').evaluate(el => el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1)).toBeTruthy();
+ }
+ const chooser = page.waitForEvent('filechooser');
+ await page.locator('.budget-item-cover').first().click();
+ await chooser;
+ await page.screenshot({path:'test-results/quote-editor-compact-mobile.png',fullPage:true,animations:'disabled'});
+
  const payload=await page.evaluate(()=>budgetPayload());expect(payload.options[0].items[0].imageUrl).toBe('/img/logo_bg.png');
  await request.post('/__budget',{data:{publicToken:'item-photo',options:payload.options}});
  await page.setViewportSize({width:390,height:844});await page.goto('/p/orcamento/item-photo');

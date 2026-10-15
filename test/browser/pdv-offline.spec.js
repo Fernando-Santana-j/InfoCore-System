@@ -1,0 +1,20 @@
+const {test, expect} = require('@playwright/test');
+test('PDV reopens offline with saved prices and clears its copy on logout', async ({page, context}) => {
+    await page.goto('/pdv');
+    await expect(page.locator('#pdvOfflineStatus')).toContainText('PDV disponível offline', {timeout:20000});
+    const cards = page.locator('.pdv-product-card:not(.pdv-product-card--pinned)');
+    const count = await cards.count();
+    expect(count).toBeGreaterThan(0);
+    const productText = await cards.first().innerText();
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator('#pdvOfflineStatus')).toContainText('Consulta offline');
+    await expect(cards).toHaveCount(count);
+    await expect(cards.first()).toHaveText(productText);
+    await page.locator('#pdvSearch').fill('produto que não existe xyz');
+    await expect(cards).toHaveCount(0);
+    await page.locator('#pdvSearch').fill('');
+    await expect(cards).toHaveCount(count);
+    await page.evaluate(() => fetch('/logout', {method:'POST'}).catch(() => {}));
+    expect(await page.evaluate(() => caches.has('infocore-pdv-offline-v1'))).toBe(false);
+});

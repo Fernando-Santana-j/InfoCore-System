@@ -327,7 +327,7 @@ test('item cost is editable internally, persisted and excluded from the customer
   const itemEvents = readFunction(js, 'bindItemRowEvents');
   const publicOption = readFunction(server, 'publicBudgetOption');
 
-  assert.match(view, /Custo 🔒/);
+  assert.match(itemRow, /Custo 🔒/);
   assert.match(itemRow, /item-cost budget-internal-input/);
   assert.match(itemRow, /Uso interno: não aparece para o cliente/);
   assert.match(itemEvents, /item\.unitCost\s*=\s*Math\.max/);
